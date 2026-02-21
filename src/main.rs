@@ -1,119 +1,115 @@
-/// CLI entry point for the multi-protocol trading bot
-use drift_multi_protocol::*;
+//! RedRobot HedgeBot - Autonomous Cryptocurrency Trading System
+//! Real-money trading on Solana DEX (Hyperliquid + Drift)
+
+mod config;
+mod data;
+mod indicators;
+mod signals;
+mod risk;
+mod exchange;
+mod monitoring;
+mod decision;
+mod db;
+
+use anyhow::Result;
+use log::{info, error};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Initialize logging
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .with_target(false)
-        .compact()
+    env_logger::Builder::from_default_env()
+        .format_timestamp_millis()
         .init();
 
-    tracing::info!("🚀 Drift Multi-Protocol Trading Bot v{}", VERSION);
-    tracing::info!("Initializing account manager...");
+    info!("🤖 RedRobot HedgeBot Starting (Real Money Mode)");
 
-    // Create account manager
-    let mut manager = AccountManager::new();
+    // Load config
+    let config = config::Config::from_env()?;
+    info!("✓ Configuration loaded: {:?}", config.mode);
 
-    // Set up trading accounts
-    let accounts = vec![
-        (
-            "drift-scalp-1",
-            Protocol::Drift,
-            AccountPurpose::Scalp,
-            0.30,
-        ),
-        (
-            "drift-swing-1",
-            Protocol::Drift,
-            AccountPurpose::Swing,
-            0.25,
-        ),
-        (
-            "drift-position-1",
-            Protocol::Drift,
-            AccountPurpose::Position,
-            0.20,
-        ),
-        (
-            "drift-hedge-1",
-            Protocol::Drift,
-            AccountPurpose::Hedge,
-            0.15,
-        ),
-        (
-            "drift-reserve-1",
-            Protocol::Drift,
-            AccountPurpose::Reserve,
-            0.10,
-        ),
-    ];
+    // Initialize database
+    let db = Arc::new(db::Database::new(&config).await?);
+    info!("✓ Database initialized");
 
-    tracing::info!("Registering accounts...");
-    for (id, protocol, purpose, allocation) in accounts {
-        let mut account = TradingAccount::new(
-            id.to_string(),
-            protocol,
-            format!("public_key_{}", id),
-            purpose,
-        );
-        account.capital_allocation = allocation;
+    // Initialize CEX client
+    let cex_client = Arc::new(data::CexClient::new(&config)?);
+    info!("✓ CEX client initialized");
 
-        match manager.register_account(account) {
-            Ok(registered_id) => {
-                tracing::info!("✅ Account registered: {}", registered_id);
+    // Initialize Hyperliquid client
+    let hl_client = Arc::new(exchange::HyperliquidClient::new(&config)?);
+    info!("✓ Hyperliquid client initialized");
+
+    // Shutdown signal
+    let running = Arc::new(RwLock::new(true));
+    let running_clone = running.clone();
+    tokio::spawn(async move {
+        let _ = tokio::signal::ctrl_c().await;
+        info!("Shutdown signal received");
+        *running_clone.write().await = false;
+    });
+
+    // Main trading loop
+    loop {
+        if !*running.read().await {
+            break;
+        }
+
+        match run_cycle(&config, &cex_client, &hl_client, &db).await {
+            Ok(_) => {
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             }
             Err(e) => {
-                tracing::error!("❌ Failed to register account: {}", e);
+                error!("Cycle error: {}", e);
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
             }
         }
     }
 
-    // Display account information
-    tracing::info!("\n📊 Account Summary:");
-    tracing::info!("Total Accounts: {}", manager.total_account_count());
-    tracing::info!("Active Accounts: {}", manager.active_account_count());
-    tracing::info!("Total Capital Allocated: {:.1}%", manager.total_capital_allocated() * 100.0);
+    info!("🛑 RedRobot shutdown complete");
+    Ok(())
+}
 
-    tracing::info!("\n📋 Account Details:");
-    for summary in manager.get_all_account_summaries() {
-        tracing::info!(
-            "  {} | Protocol: {:?} | Purpose: {:?} | Leverage: {:.1}x | Capital: {:.1}%",
-            summary.id,
-            summary.protocol,
-            summary.purpose,
-            summary.current_leverage,
-            summary.capital_allocation * 100.0
-        );
-    }
+async fn run_cycle(
+    config: &config::Config,
+    cex_client: &std::sync::Arc<data::CexClient>,
+    hl_client: &std::sync::Arc<exchange::HyperliquidClient>,
+    db: &std::sync::Arc<db::Database>,
+) -> Result<()> {
+    // Fetch market data
+    let market_data = cex_client.fetch_market_data(&config.trading_symbol).await?;
 
-    // Demonstrate rebalancing
-    tracing::info!("\n⚙️ Testing rebalancing...");
-    if let Ok(_) = manager.set_capital_allocation("drift-scalp-1", 0.40) {
-        if let Ok(_) = manager.set_capital_allocation("drift-swing-1", 0.15) {
-            tracing::info!("✅ Rebalancing complete");
-            tracing::info!("New total allocation: {:.1}%", manager.total_capital_allocated() * 100.0);
+    // Calculate indicators
+    let indicators = indicators::calculate_all(&market_data)?;
+
+    // Detect signals
+    let order_book = cex_client.fetch_order_book(&config.trading_symbol).await?;
+    let order_flow = signals::detect_order_flow(&order_book)?;
+
+    // Make decision
+    let decision = decision::make_decision(&market_data, &indicators, &order_flow)?;
+
+    // Risk management
+    let account = hl_client.get_account().await?;
+    if risk::should_trade(&decision, &account)? {
+        match hl_client.place_order(&decision).await {
+            Ok(order_id) => {
+                info!("✓ Order placed: {}", order_id);
+                db.log_trade(&decision, &order_id).await.ok();
+            }
+            Err(e) => {
+                error!("Order failed: {}", e);
+            }
         }
     }
 
-    // Demonstrate account filtering
-    tracing::info!("\n🔍 Drift Protocol Accounts:");
-    for account in manager.get_accounts_by_protocol(Protocol::Drift) {
-        tracing::info!("  {} | {}", account.id, account.public_key);
+    // Monitor positions
+    let positions = hl_client.get_positions().await?;
+    for pos in positions {
+        if pos.should_close() {
+            hl_client.close_position(&pos).await.ok();
+        }
     }
-
-    tracing::info!("\n🎯 Scalp Trading Accounts:");
-    for account in manager.get_accounts_by_purpose(AccountPurpose::Scalp) {
-        tracing::info!("  {} | Leverage: {:.1}x", account.id, account.current_leverage);
-    }
-
-    tracing::info!("\n✅ Bot initialized and ready for trading!");
-    tracing::info!("Next steps:");
-    tracing::info!("  1. Connect to Drift Protocol");
-    tracing::info!("  2. Integrate with Hyperliquid");
-    tracing::info!("  3. Deploy capital management system");
-    tracing::info!("  4. Enable liquidation prevention");
 
     Ok(())
 }

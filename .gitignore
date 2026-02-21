@@ -1,0 +1,42 @@
+# Rust
+/target
+Cargo.lock
+**/*.rs.bk
+
+# Environment
+.env
+.env.local
+.env*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Docker
+docker-compose.override.yml
+
+# Database
+*.sql
+postgres_data/
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Sensitive
+*.key
+*.pem
+secrets/
+credentials/
+
+# Build artifacts
+*.o
+*.a
