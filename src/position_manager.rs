@@ -319,6 +319,9 @@ pub struct DCAEntry {
 
 impl DCARules {
     /// Create default DCA rules for a position
+    /// NOTE: Uses FIXED leverage (10x) for all entries - most exchanges don't support
+    /// changing leverage on open positions. Risk is managed through capital staging,
+    /// not leverage reduction.
     pub fn default() -> Self {
         Self {
             max_entries: 4,
@@ -327,29 +330,29 @@ impl DCARules {
                     entry_number: 1,
                     price_drop_pct: 0.0,
                     position_size_pct: 0.25,
-                    leverage: 10.0,
+                    leverage: 10.0,  // Entry 1: High conviction, initial signal
                     confluence_requirement: 0.75,
                 },
                 DCAEntry {
                     entry_number: 2,
                     price_drop_pct: 5.0,
                     position_size_pct: 0.25,
-                    leverage: 8.0,
-                    confluence_requirement: 0.75,
+                    leverage: 10.0,  // Entry 2: SAME leverage (practical approach)
+                    confluence_requirement: 0.75,  // Must maintain confluence
                 },
                 DCAEntry {
                     entry_number: 3,
                     price_drop_pct: 10.0,
                     position_size_pct: 0.25,
-                    leverage: 5.0,
-                    confluence_requirement: 0.80,
+                    leverage: 10.0,  // Entry 3: SAME leverage, but higher confluence requirement
+                    confluence_requirement: 0.80,  // Higher bar for deeper dip
                 },
                 DCAEntry {
                     entry_number: 4,
                     price_drop_pct: 15.0,
                     position_size_pct: 0.25,
-                    leverage: 3.0,
-                    confluence_requirement: 0.85,
+                    leverage: 10.0,  // Entry 4: SAME leverage, but extreme conviction required
+                    confluence_requirement: 0.85,  // Very high bar for extreme dip
                 },
             ],
             min_confluence_for_add: 0.75,
