@@ -19,6 +19,7 @@ pub mod position_manager;
 pub mod dynamic_position_sizing;
 pub mod frameworks;
 pub mod ai_decision_engine;
+pub mod dashboard;
 
 pub use models::{AccountPurpose, HealthMetrics, LiquidationRisk, Protocol, TradingAccount};
 pub use modules::{AccountManager, AccountSummary};
@@ -34,6 +35,7 @@ pub use frameworks::{
     DrawdownTracker, StrategyAttributor, OrderFlowAnalysis, VolatilityScaler, MonteCarloResult,
 };
 pub use ai_decision_engine::{AIDecisionEngine, AIDecision, AIDecisionContext, AIDecisionValidator};
+pub use dashboard::{DashboardMetrics, DashboardBuilder, CompleteDashboard, SentimentAnalyzer, SentimentMetrics, AIThoughts, RecentTrade, SystemAlert, AlertLevel};
 
 /// Library version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
