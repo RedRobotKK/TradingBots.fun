@@ -1,14 +1,19 @@
-# Rust
-/target
-Cargo.lock
-**/*.rs.bk
-
-# Environment
+# Environment variables (NEVER commit these!)
 .env
 .env.local
-.env*.local
+.env.*.local
 
-# IDE
+# Configuration files with secrets
+deployment.toml
+config.toml
+secrets.json
+
+# Build artifacts
+/target
+/dist
+Cargo.lock
+
+# IDE files
 .vscode/
 .idea/
 *.swp
@@ -16,27 +21,30 @@ Cargo.lock
 *~
 .DS_Store
 
-# Docker
-docker-compose.override.yml
-
-# Database
-*.sql
-postgres_data/
-
 # Logs
 *.log
 logs/
+/var/log/
 
-# OS
+# Backups
+*.backup
+*.bak
+*~
+
+# OS specific
 .DS_Store
 Thumbs.db
 
-# Sensitive
-*.key
-*.pem
-secrets/
-credentials/
+# Testing
+test-results/
+coverage/
 
-# Build artifacts
-*.o
-*.a
+# Cache
+.cache/
+*.cache
+
+# API keys and credentials (extra safety)
+**/api_key
+**/secret_key
+**/credentials
+**/auth_token

@@ -22,6 +22,9 @@ pub mod ai_decision_engine;
 pub mod dashboard;
 pub mod strategy_attribution;
 pub mod strategy_analytics;
+pub mod scoring_system;
+pub mod strategies::institutional;
+pub mod dca_scoring_integration;
 
 pub use models::{AccountPurpose, HealthMetrics, LiquidationRisk, Protocol, TradingAccount};
 pub use modules::{AccountManager, AccountSummary};
@@ -40,6 +43,9 @@ pub use ai_decision_engine::{AIDecisionEngine, AIDecision, AIDecisionContext, AI
 pub use dashboard::{DashboardMetrics, DashboardBuilder, CompleteDashboard, SentimentAnalyzer, SentimentMetrics, AIThoughts, RecentTrade, SystemAlert, AlertLevel};
 pub use strategy_attribution::{StrategyAttributor, AttributedTrade, StrategyMetrics, MarketRegime, RegimeSpecificMetrics, StrategyCorrelation};
 pub use strategy_analytics::{StrategyAnalytics, StrategyViability, CryptoStrategyProfile, StrategyComparison, MarketSpecificPerformance};
+pub use scoring_system::{StrategyScore, StrategyScorer, ScoringAction, PortfolioScore, PortfolioAction, calculate_portfolio_score};
+pub use strategies::institutional::{InstitutionalConfig, FundingRateConfig, PairsTradingConfig, OrderFlowConfig, SentimentConfig, VolatilityConfig, evaluate_funding_rate, evaluate_pairs_trading, evaluate_order_flow, evaluate_sentiment, evaluate_volatility_surface};
+pub use dca_scoring_integration::{DCAPyramidDecision, CapitalStaging, PyramidStrategy, evaluate_dca_entry, create_pyramid_entry, get_pyramid_strategy_for_regime};
 
 /// Library version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
