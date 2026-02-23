@@ -25,6 +25,9 @@ pub mod strategy_analytics;
 pub mod scoring_system;
 pub mod strategies::institutional;
 pub mod dca_scoring_integration;
+pub mod price_action;
+pub mod price_action_backtest;
+pub mod price_action_scoring;
 
 pub use models::{AccountPurpose, HealthMetrics, LiquidationRisk, Protocol, TradingAccount};
 pub use modules::{AccountManager, AccountSummary};
@@ -46,6 +49,9 @@ pub use strategy_analytics::{StrategyAnalytics, StrategyViability, CryptoStrateg
 pub use scoring_system::{StrategyScore, StrategyScorer, ScoringAction, PortfolioScore, PortfolioAction, calculate_portfolio_score};
 pub use strategies::institutional::{InstitutionalConfig, FundingRateConfig, PairsTradingConfig, OrderFlowConfig, SentimentConfig, VolatilityConfig, evaluate_funding_rate, evaluate_pairs_trading, evaluate_order_flow, evaluate_sentiment, evaluate_volatility_surface};
 pub use dca_scoring_integration::{DCAPyramidDecision, CapitalStaging, PyramidStrategy, evaluate_dca_entry, create_pyramid_entry, get_pyramid_strategy_for_regime};
+pub use price_action::{PriceActionDetector, Candle, PriceActionPattern, PatternType};
+pub use price_action_backtest::{PriceActionBacktester, PatternTrade, PatternStatistics, PriceActionBacktestResults};
+pub use price_action_scoring::{PriceActionScorer, PriceActionScore, PatternConfluence};
 
 /// Library version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
