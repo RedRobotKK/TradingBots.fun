@@ -100,7 +100,7 @@ struct AuthenticatedRequest {
 }
 
 /// Order response from Hyperliquid
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct HyperliquidOrderResponse {
     pub order_id: String,
     pub status: String,

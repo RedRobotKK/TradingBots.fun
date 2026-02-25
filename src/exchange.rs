@@ -34,6 +34,7 @@ impl HyperliquidClient {
         let base_url = match config.mode {
             crate::config::Mode::Testnet => "https://api.hyperliquid-testnet.xyz".to_string(),
             crate::config::Mode::Mainnet => "https://api.hyperliquid.xyz".to_string(),
+            crate::config::Mode::Paper   => "https://api.hyperliquid.xyz".to_string(),
         };
 
         Ok(HyperliquidClient {

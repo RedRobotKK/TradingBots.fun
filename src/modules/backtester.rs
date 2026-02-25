@@ -384,7 +384,7 @@ impl Backtester {
         let win_rate = if self.trades.is_empty() {
             0.0
         } else {
-            (winning_trades as f64 / self.trades.len()) * 100.0
+            (winning_trades as f64 / self.trades.len() as f64) * 100.0
         };
 
         // Calculate Sharpe ratio (simplified)

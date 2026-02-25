@@ -291,7 +291,7 @@ impl Backtester {
         if self.closed_trades.is_empty() {
             0.0
         } else {
-            (winners as f64 / self.closed_trades.len()) * 100.0
+            (winners as f64 / self.closed_trades.len() as f64) * 100.0
         }
     }
 

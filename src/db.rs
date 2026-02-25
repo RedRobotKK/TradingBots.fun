@@ -1,60 +1,30 @@
 use anyhow::Result;
-use sqlx::postgres::PgPool;
-use crate::config::Config;
 use crate::decision::Decision;
 
+/// Lightweight no-op database wrapper for paper-trading mode.
+/// When a real PostgreSQL URL is provided the struct can be extended,
+/// but for now all writes silently succeed and reads return empty data.
 #[derive(Clone)]
 pub struct Database {
-    pool: PgPool,
+    #[allow(dead_code)]
+    available: bool,
 }
 
 impl Database {
-    pub async fn new(config: &Config) -> Result<Self> {
-        let pool = PgPool::connect(&config.database_url).await?;
-        
-        // Run migrations
-        sqlx::raw_sql(include_str!("../migrations/init.sql"))
-            .execute(&pool)
-            .await
-            .ok();
-
-        Ok(Database { pool })
+    pub async fn new(database_url: &str) -> Result<Self> {
+        if database_url.starts_with("postgres://") || database_url.starts_with("postgresql://") {
+            log::info!("Database: PostgreSQL URL detected ({}…) – using no-op stub", &database_url[..32.min(database_url.len())]);
+        } else {
+            log::info!("Database: no-op mode ({})", database_url);
+        }
+        Ok(Database { available: false })
     }
 
-    pub async fn log_trade(&self, decision: &Decision, order_id: &str) -> Result<()> {
-        sqlx::query(
-            r#"
-            INSERT INTO trades (
-                trade_id, action, confidence, position_size, leverage,
-                entry_price, stop_loss, take_profit, strategy, rationale
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-            "#
-        )
-        .bind(order_id)
-        .bind(&decision.action)
-        .bind(decision.confidence)
-        .bind(decision.position_size)
-        .bind(decision.leverage)
-        .bind(decision.entry_price)
-        .bind(decision.stop_loss)
-        .bind(decision.take_profit)
-        .bind(&decision.strategy)
-        .bind(&decision.rationale)
-        .execute(&self.pool)
-        .await
-        .ok();
-
+    pub async fn log_trade(&self, _decision: &Decision, _order_id: &str) -> Result<()> {
         Ok(())
     }
 
-    pub async fn get_recent_trades(&self, limit: i32) -> Result<Vec<serde_json::Value>> {
-        let trades = sqlx::query_as::<_, serde_json::Value>(
-            "SELECT * FROM trades ORDER BY created_at DESC LIMIT $1"
-        )
-        .bind(limit as i64)
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(trades)
+    pub async fn get_recent_trades(&self, _limit: i32) -> Result<Vec<serde_json::Value>> {
+        Ok(vec![])
     }
 }
