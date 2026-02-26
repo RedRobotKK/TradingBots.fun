@@ -658,6 +658,14 @@ async fn execute_paper_trade(
         // No existing: fall through to new entry
     }
 
+    // ── Minimum confidence gate ────────────────────────────────────────────
+    // Only enter trades where the signal is genuinely strong. Weak-confidence
+    // entries (< 0.68) generated 0W/14L in choppy markets — not worth the risk.
+    if dec.confidence < 0.68 {
+        info!("⚠ {} skipped — confidence {:.0}% below 68% minimum", symbol, dec.confidence * 100.0);
+        return;
+    }
+
     // ── Open new position ─────────────────────────────────────────────────
     let atr = ind.atr.max(dec.entry_price * 0.001);
 
@@ -667,15 +675,15 @@ async fn execute_paper_trade(
     let size_usd  = s.capital * pct;
     let equity    = s.capital + s.positions.iter().map(|p| p.size_usd + p.unrealised_pnl).sum::<f64>();
 
-    // Guard: max 8 concurrent positions
-    if s.positions.len() >= 8 {
-        info!("⚠ {} skipped — max 8 positions open", symbol);
+    // Guard: max 4 concurrent positions (reduced from 8 — quality over quantity)
+    if s.positions.len() >= 4 {
+        info!("⚠ {} skipped — max 4 positions open", symbol);
         return;
     }
-    // Guard: max 4 positions in the same direction (prevent directional overexposure)
+    // Guard: max 2 positions in the same direction (prevent directional overexposure)
     let same_dir = s.positions.iter().filter(|p| p.side == target_side).count();
-    if same_dir >= 4 {
-        info!("⚠ {} skipped — already {} {} positions (max 4 per direction)", symbol, same_dir, target_side);
+    if same_dir >= 2 {
+        info!("⚠ {} skipped — already {} {} positions (max 2 per direction)", symbol, same_dir, target_side);
         return;
     }
     // Guard: min position size

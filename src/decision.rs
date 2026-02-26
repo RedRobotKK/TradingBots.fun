@@ -84,19 +84,22 @@ impl Regime {
         }
     }
     /// Entry score threshold — minimum winner score to consider a trade.
+    /// Higher = fewer but higher-quality entries. Raised from ~0.42 to avoid
+    /// choppy-market noise that caused 0W/14L in ranging conditions.
     fn threshold(self) -> f64 {
         match self {
-            Regime::Trending => 0.44,  // cleaner signals in trends
-            Regime::Ranging  => 0.38,  // mean reversion at extremes is more predictable
-            Regime::Neutral  => 0.42,
+            Regime::Trending => 0.58,  // only strong, confirmed trend signals
+            Regime::Ranging  => 0.52,  // mean-reversion requires clear extremes
+            Regime::Neutral  => 0.55,  // balanced but still demanding
         }
     }
-    /// Dominance ratio — winner must exceed loser by this factor.
+    /// Dominance ratio — winning side must exceed losing side by this factor.
+    /// Higher = only enter when direction is unambiguous.
     fn dominance(self) -> f64 {
         match self {
-            Regime::Trending => 1.28,
-            Regime::Ranging  => 1.20,
-            Regime::Neutral  => 1.25,
+            Regime::Trending => 1.55,
+            Regime::Ranging  => 1.45,
+            Regime::Neutral  => 1.50,
         }
     }
 }
@@ -110,26 +113,25 @@ fn detect_regime(ind: &TechnicalIndicators) -> Regime {
 /// Confidence-scaled leverage, capped by market regime.
 ///
 /// Ranging markets: max 2× (false breakouts are common; stops get hit more)
-/// Neutral markets: max 3× (balanced conditions)
-/// Trending markets: max 5× (momentum carries positions; higher conviction warranted)
+/// Neutral markets: max 2× (conservative until win rate improves)
+/// Trending markets: max 3× (momentum carries positions; higher conviction warranted)
 ///
+/// Minimum entry confidence is 0.68 (gated in main.rs).
 /// Confidence scaling within the regime cap:
-///   < 0.62 → 1.5×  (minimum — marginal signal)
-///   0.62–0.70 → 2×
-///   0.70–0.78 → 3×
-///   0.78–0.86 → 4×
-///   0.86+     → regime max
+///   0.68–0.75 → 1.5×  (minimum — just above gate)
+///   0.75–0.82 → 2×
+///   0.82–0.90 → 2.5×
+///   0.90+     → regime max
 pub fn calc_leverage(confidence: f64, regime: Regime) -> f64 {
     let regime_cap: f64 = match regime {
         Regime::Ranging  => 2.0,
-        Regime::Neutral  => 3.0,
-        Regime::Trending => 5.0,
+        Regime::Neutral  => 2.0,   // reduced until win rate established
+        Regime::Trending => 3.0,   // reduced from 5× — protect capital
     };
-    let raw: f64 = if confidence < 0.62      { 1.5 }
-                   else if confidence < 0.70 { 2.0 }
-                   else if confidence < 0.78 { 3.0 }
-                   else if confidence < 0.86 { 4.0 }
-                   else                      { 5.0 };
+    let raw: f64 = if confidence < 0.75      { 1.5 }
+                   else if confidence < 0.82 { 2.0 }
+                   else if confidence < 0.90 { 2.5 }
+                   else                      { 3.0 };
     raw.min(regime_cap)
 }
 
