@@ -813,6 +813,8 @@ async fn execute_paper_trade(
         entry_time:       now_str(),
         unrealised_pnl:   0.0,
         contrib:          dec.signal_contribution.clone(),
+        ai_action:        None,
+        ai_reason:        None,
     });
 
     let kelly_str = if metrics.kelly_fraction() > 0.0 {
