@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use serde_json;
 
 // Refresh interval: 5 minutes (LunarCrush free tier is generous but not real-time)
@@ -113,9 +113,18 @@ struct CacheInner {
 /// Thread-safe, lazily-refreshed sentiment cache.
 /// Clone the `Arc` freely — one instance per bot.
 pub struct SentimentCache {
-    client:  Client,
-    api_key: String,
-    inner:   RwLock<CacheInner>,
+    client:         Client,
+    api_key:        String,
+    inner:          RwLock<CacheInner>,
+    /// Prevents concurrent refresh attempts (thundering-herd protection).
+    ///
+    /// Without this, all 18 candidate symbols calling `get()` simultaneously
+    /// would each detect a stale cache and fire their own `fetch_all()` request,
+    /// exhausting the LunarCrush rate limit in seconds.
+    ///
+    /// Pattern: acquire → double-check TTL → fetch if still stale → release.
+    /// Tasks waiting on the lock see a fresh cache after the leader updates it.
+    refresh_lock:   Mutex<()>,
 }
 
 pub type SharedSentiment = Arc<SentimentCache>;
@@ -132,6 +141,7 @@ impl SentimentCache {
                 data:       HashMap::new(),
                 last_fetch: None,
             }),
+            refresh_lock: Mutex::new(()),
         })
     }
 
@@ -139,7 +149,7 @@ impl SentimentCache {
     /// Transparently refreshes the cache when the TTL has expired.
     /// Returns `None` if the coin is not in the LunarCrush dataset or on error.
     pub async fn get(&self, symbol: &str) -> Option<SentimentData> {
-        // Fast path: cache is warm
+        // Fast path: cache is warm — no lock needed
         {
             let r = self.inner.read().await;
             if r.last_fetch
@@ -150,18 +160,40 @@ impl SentimentCache {
             }
         }
 
-        // Cache is stale — refresh
+        // Slow path: acquire the refresh mutex.
+        // Only ONE task refreshes at a time; the others wait here and then
+        // benefit from the fresh cache in the double-check below.
+        let _refresh_guard = self.refresh_lock.lock().await;
+
+        // Double-check: was the cache refreshed while we were waiting?
+        {
+            let r = self.inner.read().await;
+            if r.last_fetch
+                .map(|t| t.elapsed() < CACHE_TTL)
+                .unwrap_or(false)
+            {
+                return r.data.get(symbol).cloned();
+            }
+        }
+
+        // We hold the lock and the cache is still stale — we are the designated refresher.
         match self.fetch_all().await {
             Ok(map) => {
                 let result = map.get(symbol).cloned();
-                let mut w   = self.inner.write().await;
+                let mut w  = self.inner.write().await;
                 w.data       = map;
                 w.last_fetch = Some(Instant::now());
                 result
             }
             Err(e) => {
                 log::warn!("🌙 LunarCrush fetch error: {} — using stale cache", e);
-                // Serve stale data rather than blocking the trading cycle
+                // Mark as "recently attempted" even on failure so the 5-minute backoff
+                // prevents all 18 concurrent waiters from immediately re-attempting
+                // after the lock is released.
+                {
+                    let mut w  = self.inner.write().await;
+                    w.last_fetch = Some(Instant::now());
+                }
                 self.inner.read().await.data.get(symbol).cloned()
             }
         }
@@ -176,7 +208,12 @@ impl SentimentCache {
                 w.data       = map;
                 w.last_fetch = Some(Instant::now());
             }
-            Err(e) => log::warn!("🌙 LunarCrush warm-up failed: {}", e),
+            Err(e) => {
+                log::warn!("🌙 LunarCrush warm-up failed: {} — setting backoff", e);
+                // Set last_fetch on failure so the first cycle doesn't immediately retry.
+                let mut w  = self.inner.write().await;
+                w.last_fetch = Some(Instant::now());
+            }
         }
     }
 
