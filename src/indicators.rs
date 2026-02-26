@@ -87,12 +87,20 @@ pub struct TechnicalIndicators {
 ///
 /// Used as a multi-timeframe confirmation filter: a 1h signal that is also
 /// confirmed on the 4h chart has substantially higher IC than an unconfirmed one.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct HtfIndicators {
     /// RSI(14) on the 4h series.  <45 = oversold context; >55 = overbought context.
     pub rsi_4h:     f64,
     /// Z-score(20) on the 4h series.  |>1.2| = statistically extreme on higher TF.
     pub z_score_4h: f64,
+}
+
+impl Default for HtfIndicators {
+    fn default() -> Self {
+        // Neutral defaults: RSI=50 (no direction bias), Z=0.0 (at mean).
+        // Used when insufficient candles are available — avoids spurious scaling.
+        HtfIndicators { rsi_4h: 50.0, z_score_4h: 0.0 }
+    }
 }
 
 // ─────────────────────────── Public entry point ──────────────────────────────
