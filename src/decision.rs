@@ -374,22 +374,27 @@ pub fn make_decision(
         Regime::Neutral  => weights.ema_cross,
     };
 
+    // EMA gap filter: backtest showed "always-on" EMA direction is near-random noise.
+    // Only fire when the gap is *meaningful* — EMA8 clearly separated from EMA21.
+    // Dead-zone ±0.20 % prevents firing on every bar just because EMA8 is 0.01 % above EMA21.
     let ema_pct = ind.ema_cross_pct;
     if ema_pct > 0.5 {
         // Strong uptrend: fast EMA well above slow EMA
         bull += ema_w.min(weights.ema_cross * 1.40);
         contrib.ema_cross_bullish = true;
-    } else if ema_pct > 0.0 {
-        // Mild uptrend
+    } else if ema_pct > 0.20 {
+        // Moderate uptrend (was >0.0 — lowered floor to filter noise)
         bull += ema_w * 0.60;
         contrib.ema_cross_bullish = true;
     } else if ema_pct < -0.5 {
         bear += ema_w.min(weights.ema_cross * 1.40);
         contrib.ema_cross_bullish = false;
-    } else if ema_pct < 0.0 {
+    } else if ema_pct < -0.20 {
+        // Moderate downtrend (was <0.0 — lowered floor to filter noise)
         bear += ema_w * 0.60;
         contrib.ema_cross_bullish = false;
     } else {
+        // |ema_pct| < 0.20% — EMAs essentially flat, no clear signal
         contrib.ema_cross_bullish = ema_pct >= 0.0;
     }
 
@@ -442,6 +447,11 @@ pub fn make_decision(
     // ═════════════════════════════════════════════════════════════════════════
     //  7. Legacy trend (10-bar % change) — kept but at reduced weight
     //     The EMA cross is the better version of this signal.
+    //
+    //  BACKTEST FINDING: Trend 10-bar had T-stat -4.12 across 8 assets × 2 years.
+    //  Buying after a 10-bar run = buying tops at 15m. Thresholds raised to only
+    //  fire on extreme moves (>4.0%) where mean-reversion OR trend continuation
+    //  is more obvious. Below that it is pure noise at 15-minute granularity.
     // ═════════════════════════════════════════════════════════════════════════
     let trend_w = match regime {
         Regime::Trending => weights.trend * 0.80,  // partially replaced by EMA cross
@@ -449,19 +459,21 @@ pub fn make_decision(
         Regime::Neutral  => weights.trend * 0.60,
     };
 
-    if ind.trend > 1.2 {
+    if ind.trend > 4.0 {
+        // Extreme 10-bar move — strong momentum confirmation
         bull += trend_w;
         contrib.trend_bullish = true;
-    } else if ind.trend < -1.2 {
+    } else if ind.trend < -4.0 {
         bear += trend_w;
         contrib.trend_bullish = false;
-    } else if ind.trend > 0.4 {
+    } else if ind.trend > 2.0 {
         bull += trend_w * 0.50;
         contrib.trend_bullish = true;
-    } else if ind.trend < -0.4 {
+    } else if ind.trend < -2.0 {
         bear += trend_w * 0.50;
         contrib.trend_bullish = false;
     } else {
+        // ±2.0% within 10 bars is noise at 15m — no contribution
         contrib.trend_bullish = ind.trend > 0.0;
     }
 
@@ -471,24 +483,21 @@ pub fn make_decision(
     // Price above VWAP = institutions net bought; bias bull.
     // Price below VWAP = institutions net sold; bias bear.
     // Used as a DIRECTIONAL FILTER that modulates the volume weight.
-    let vwap_bull = ind.vwap_pct > 0.3;   // >0.3% above VWAP = bull bias
-    let vwap_bear = ind.vwap_pct < -0.3;  // <0.3% below VWAP = bear bias
+    // VWAP bias — kept as named booleans for potential future use / logging.
+    // Were previously used as a tie-breaker in the volume directional signal
+    // (removed after backtest showed T-stat -3.53 on directional volume).
+    let _vwap_bull = ind.vwap_pct > 0.3;   // >0.3% above VWAP = bull bias
+    let _vwap_bear = ind.vwap_pct < -0.3;  // <0.3% below VWAP = bear bias
 
     // ═════════════════════════════════════════════════════════════════════════
-    //  9. Volume conviction multiplier
+    //  9. Volume conviction multiplier  (amplifier only — no directional signal)
     // ═════════════════════════════════════════════════════════════════════════
-    // Two distinct roles:
+    // High volume → all other signals more reliable → amplify them.
+    // Low volume  → noise dominates                 → dampen them.
     //
-    //  a) GLOBAL MULTIPLIER — applied first to all preceding signals.
-    //     High volume → all signals more reliable → amplify everything.
-    //     Low volume  → noise dominates            → dampen everything.
-    //
-    //  b) DIRECTIONAL SIGNAL — added second, after the multiplier.
-    //     High volume confirming current direction = additional bullish/bearish
-    //     evidence (volume is a primary signal, not just an amplifier).
-    //
-    // ORDER MATTERS: multiplier is applied first so the directional volume
-    // score is NOT self-amplified (fixes double-counting bug).
+    // NOTE: Volume was previously also used as a DIRECTIONAL signal (step b).
+    // Removed after signal_quality_backtest.py showed T-stat -3.53 (harmful):
+    // high volume at price extremes = exhaustion, not confirmation.
     let vol_ratio = ind.volume_ratio;
 
     // Step a: apply global multiplier to all signals computed so far
@@ -501,20 +510,16 @@ pub fn make_decision(
     bull *= vol_mult;
     bear *= vol_mult;
 
-    // Step b: directional volume score (VWAP bias as tie-breaker)
-    // Added AFTER the multiplier so volume doesn't amplify its own signal.
-    let bull_vol_conf = vol_ratio > 1.3 && (vwap_bull || bull > bear);
-    let bear_vol_conf = vol_ratio > 1.3 && (vwap_bear || bear > bull);
-
-    if bull_vol_conf {
-        bull += weights.volume * vol_ratio.min(2.5) / 2.5;
-        contrib.volume_present = true;
-        contrib.volume_bullish = true;
-    } else if bear_vol_conf {
-        bear += weights.volume * vol_ratio.min(2.5) / 2.5;
-        contrib.volume_present = true;
-        contrib.volume_bullish = false;
-    }
+    // Step b: directional volume score — REMOVED based on backtest evidence.
+    //
+    // The signal_quality_backtest.py showed volume as a directional indicator
+    // had T-stat -3.53 across 8 assets × 2 years at 15m (actively harmful).
+    // Reason: high volume at price extremes signals EXHAUSTION, not continuation.
+    // The global multiplier (step a) is the correct role for volume — it amplifies
+    // other signals when conviction is high, rather than adding its own directional bet.
+    //
+    // Volume weight (weights.volume) is still tracked by the learner for future
+    // re-evaluation if market microstructure changes, but fires no directional signal.
 
     // ═════════════════════════════════════════════════════════════════════════
     //  10. LunarCrush Sentiment

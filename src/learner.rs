@@ -62,27 +62,44 @@ pub struct SignalWeights {
     pub trend:         f64,   // 0.07 — legacy trend signal
 }
 
-fn default_ema_cross_weight()    -> f64 { 0.14 }
-fn default_z_score_weight()      -> f64 { 0.08 }
-fn default_volume_weight()       -> f64 { 0.06 }
-fn default_sentiment_weight()    -> f64 { 0.09 }
-fn default_funding_rate_weight() -> f64 { 0.07 }
-fn default_trend_weight()        -> f64 { 0.07 }
+fn default_ema_cross_weight()    -> f64 { 0.07 }
+fn default_z_score_weight()      -> f64 { 0.17 }
+fn default_volume_weight()       -> f64 { 0.03 }
+fn default_sentiment_weight()    -> f64 { 0.10 }
+fn default_funding_rate_weight() -> f64 { 0.08 }
+fn default_trend_weight()        -> f64 { 0.03 }
 
 impl Default for SignalWeights {
     fn default() -> Self {
         // Weights sum to 1.0.
+        //
+        // Calibrated from signal_quality_backtest.py results
+        // (8 assets × 2 years × 15m, ~560K bars, Feb 2024–Feb 2026):
+        //
+        //   Z-Score:      T-stat +5.01  → best mean-reversion signal, boosted
+        //   RSI:          T-stat +2.91  → solid mean-reversion, boosted
+        //   Bollinger:    T-stat +1.49  → marginal but regime-aware, small boost
+        //   Order Flow:   live data     → backtest proxy was noisy, real signal better
+        //   Sentiment:    orthogonal    → unrelated to price, kept
+        //   Funding Rate: contrarian    → genuine edge, kept
+        //   MACD:         T-stat -4.02  → momentum chasing at 15m = buying tops, REDUCED
+        //   EMA Cross:    T-stat -6.00* → *partly backtest artifact; always-on is harmful, REDUCED
+        //   Trend 10-bar: T-stat -4.12  → consistently buys tops/sells bottoms, NEAR-ELIMINATED
+        //   Volume direct:T-stat -3.53  → high-vol at extremes = exhaustion, directional REMOVED
+        //
+        // * EMA Cross F grade was partly due to "always-on" backtest implementation.
+        //   Real bot uses ema_cross_pct threshold.  Weight reduced but not eliminated.
         SignalWeights {
-            rsi:          0.15,
-            bollinger:    0.12,
-            macd:         0.12,
-            ema_cross:    0.13,
-            order_flow:   0.11,
-            z_score:      0.08,
-            volume:       0.06,
-            sentiment:    0.09,
-            funding_rate: 0.07,
-            trend:        0.07,
+            rsi:          0.17,   // +0.02 — mean-reversion works
+            bollinger:    0.14,   // +0.02 — regime-aware, marginal boost
+            macd:         0.07,   // -0.05 — harmful at 15m, significantly reduced
+            ema_cross:    0.07,   // -0.06 — reduced; gap filter added in decision.rs
+            order_flow:   0.14,   // +0.03 — real order-book data outperforms candle proxy
+            z_score:      0.17,   // +0.09 — highest T-stat, significantly boosted
+            volume:       0.03,   // -0.03 — directional removed; amplifier role kept
+            sentiment:    0.10,   // +0.01 — orthogonal signal, slight boost
+            funding_rate: 0.08,   // +0.01 — contrarian edge, slight boost
+            trend:        0.03,   // -0.04 — near-eliminated; threshold raised in decision.rs
         }
     }
 }
@@ -163,13 +180,18 @@ impl SignalWeights {
     }
 
     pub fn clamp_and_normalise(&mut self) {
-        // Core signals: floor 0.04, ceiling 0.50
+        // Strong-evidence signals: floor 0.04, ceiling 0.50
+        // (These have meaningful real-time data each cycle)
         for w in [
             &mut self.rsi, &mut self.bollinger, &mut self.macd,
-            &mut self.ema_cross, &mut self.order_flow, &mut self.trend,
+            &mut self.ema_cross, &mut self.order_flow,
         ] {
             *w = w.max(0.04).min(0.50);
         }
+        // Trend 10-bar: floor lowered to 0.01 — backtest showed consistent harm,
+        // kept for backward-compat with weight files but near-eliminated.
+        self.trend = self.trend.max(0.01).min(0.30);
+
         // Optional signals: can go to 0 (no data = no contribution) or ceiling 0.40
         self.z_score      = self.z_score.max(0.0).min(0.40);
         self.volume       = self.volume.max(0.0).min(0.40);
