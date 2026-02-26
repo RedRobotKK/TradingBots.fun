@@ -23,7 +23,16 @@ pub struct OrderBook {
 
 /// Convert a Hyperliquid symbol to a Binance USDT pair symbol.
 /// e.g.  kBONK → 1000BONKUSDT,  BTC → BTCUSDT
+///
+/// Returns `None` for HL-specific instrument types that have no Binance listing:
+///   • `@N` symbols — HL price-level derivative contracts (e.g. @232, @7)
+///   • Any symbol containing `/`  — HL spot market pairs
 pub fn hl_to_binance(hl: &str) -> Option<String> {
+    // Price-level derivatives: HL uses @<price> as the symbol name.
+    // These are not listed on Binance and will always return HTTP 400.
+    if hl.starts_with('@') { return None; }
+    // Spot pairs (e.g. PURR/USDC) — not on Binance perps
+    if hl.contains('/') { return None; }
     // k-prefix on Hyperliquid means the coin trades in "1000x" units on Binance
     if let Some(base) = hl.strip_prefix('k') {
         Some(format!("1000{base}USDT"))
