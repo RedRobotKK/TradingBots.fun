@@ -622,15 +622,15 @@ async fn apply_ai_review(
 
         match rec.action.as_str() {
             "close_now" => {
-                // Guardrail: only close if position is losing (don't let AI cut winners)
+                // Execute AI close_now: AI reviewer already applies conservative criteria
+                // (stagnation, failed signal, or genuine loss). Trust it.
+                // Only skip if position is brand-new (< 15 min) to avoid noise.
                 let should_close = {
-                    let s = bot_state.read().await;
+                    let s = bot_state.lock().await;
                     s.positions.iter().find(|p| p.symbol == rec.symbol)
                         .map(|p| {
-                            let r = if p.r_dollars_risked > 1e-8 {
-                                p.unrealised_pnl / p.r_dollars_risked
-                            } else { 0.0 };
-                            r < -0.4  // only close when genuinely losing
+                            let hold_mins = (chrono::Utc::now() - p.opened_at).num_minutes();
+                            hold_mins >= 15  // give position 15 min before AI can close it
                         })
                         .unwrap_or(false)
                 };
@@ -638,7 +638,7 @@ async fn apply_ai_review(
                     info!("🤖 AI close: {} — {}", rec.symbol, rec.reason);
                     close_paper_position(&rec.symbol, cur_price, "AI-Close", bot_state, weights, trade_logger).await;
                 } else {
-                    info!("🤖 AI close {} REJECTED — position not sufficiently in loss (guardrail)", rec.symbol);
+                    info!("🤖 AI close {} SKIPPED — position too new (< 15 min hold time)", rec.symbol);
                 }
             }
 
