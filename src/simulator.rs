@@ -141,7 +141,7 @@ impl Simulator {
                         strategy_names
                     );
 
-                    if let Ok(trade) = backtester.execute_trade(
+                    if let Ok(_trade) = backtester.execute_trade(
                         symbol.to_string(),
                         TradeAction::Buy,
                         position_size / current_snapshot.close,

@@ -130,7 +130,7 @@ impl DynamicSizer {
 
         // Step 2: Calculate expected move
         let expected_move_pct = technical.expected_move_pct();
-        let expected_move_dollars = current * (expected_move_pct / 100.0);
+        let _expected_move_dollars = current * (expected_move_pct / 100.0);
 
         // Step 3: Determine position size based on "pain" (support distance)
         // If support is very close, position must be smaller

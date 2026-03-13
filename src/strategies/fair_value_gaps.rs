@@ -48,7 +48,7 @@ pub fn evaluate(ctx: &StrategyContext) -> Result<StrategySignal, Error> {
     // Price jumped above previous high, left a gap to fill
     // Trade: Price will likely retest the gap (previous high)
     if bullish_gap_size > 0.3 && price_change > 0.5 && volume_ratio > 1.2 {
-        let gap_midpoint = (previous.high + current.low) / 2.0;
+        let _gap_midpoint = (previous.high + current.low) / 2.0;
         let gap_fill_target = previous.high;  // Market will fill the gap
 
         // Confidence based on gap size and volume
@@ -79,7 +79,7 @@ pub fn evaluate(ctx: &StrategyContext) -> Result<StrategySignal, Error> {
     // Price jumped below previous low, left a gap to fill
     // Trade: Price will likely retest the gap (previous low)
     if bearish_gap_size > 0.3 && price_change < -0.5 && volume_ratio > 1.2 {
-        let gap_midpoint = (previous.low + current.high) / 2.0;
+        let _gap_midpoint = (previous.low + current.high) / 2.0;
         let gap_fill_target = previous.low;  // Market will fill the gap
 
         // Confidence based on gap size and volume

@@ -199,7 +199,7 @@ impl AIDecisionEngine {
 
         // Overall framework score
         let framework_valid = context.multi_timeframe.confidence_level >= 0.60;
-        let score = if framework_valid { 0.75 } else { 0.50 };
+        let _score = if framework_valid { 0.75 } else { 0.50 };
 
         (framework_valid, "Frameworks validated".to_string(), warnings)
     }

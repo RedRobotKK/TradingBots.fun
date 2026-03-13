@@ -99,8 +99,6 @@ impl MultiTimeframeAnalysis {
         one_h: TimeframeSignal,
         five_m: TimeframeSignal,
     ) -> Self {
-        let mut aligned_signals = 0;
-        let mut conflicting_signals = 0;
         let mut bullish_count = 0;
         let mut bearish_count = 0;
 
@@ -136,8 +134,8 @@ impl MultiTimeframeAnalysis {
         let (a2, c2) = check_alignment(four_h, one_h);
         let (a3, c3) = check_alignment(one_h, five_m);
 
-        aligned_signals = (a1 as i32) + (a2 as i32) + (a3 as i32);
-        conflicting_signals = (c1 as i32) + (c2 as i32) + (c3 as i32);
+        let aligned_signals = (a1 as i32) + (a2 as i32) + (a3 as i32);
+        let _conflicting_signals = (c1 as i32) + (c2 as i32) + (c3 as i32);
 
         // Determine direction bias
         let direction_bias = if bullish_count >= 3 {

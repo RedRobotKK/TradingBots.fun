@@ -178,7 +178,7 @@ impl FeeCalculator {
         entry_price: f64,
         target_profit_dollars: f64,
     ) -> RequiredMove {
-        let position_value = position_size * entry_price;
+        let _position_value = position_size * entry_price;
         let fees = self.calculate_round_trip_fees(position_size, entry_price, entry_price);
 
         // We need: (exit_price - entry_price) * position_size - fees.total_fees >= target_profit

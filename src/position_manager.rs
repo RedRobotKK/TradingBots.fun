@@ -157,7 +157,7 @@ impl ExitCalculator {
         let entry = position.average_entry_price;
         let ath = daily_context.high;
         let atl = daily_context.low;
-        let current = position.current_price;
+        let _current = position.current_price;
 
         // Check if ATH is above entry (bullish day)
         let is_bullish_day = ath > entry;
