@@ -1,7 +1,6 @@
 name: CI Quality Gate
 
-# Trigger on every push to master (and allow manual runs).
-# Replaces the daily scheduled check — this fires on every actual commit.
+# Fires on every push to master. Also supports manual trigger.
 on:
   push:
     branches: [master]
@@ -18,430 +17,175 @@ permissions:
 
 jobs:
   ci-gate:
-    name: "CI Gate — test / clippy / audit"
+    name: "test / clippy / audit"
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
     steps:
-      # ── 1. Checkout ──────────────────────────────────────────────────────────
-      - name: Checkout repo
+      # ── 1. Checkout ────────────────────────────────────────────────────────
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          # Use a PAT or the default GITHUB_TOKEN.
-          # GITHUB_TOKEN can push back to the repo when permissions: contents: write is set.
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      # ── 2. Set up SSH key ────────────────────────────────────────────────────
-      # Add secret VPS_SSH_KEY in GitHub → Settings → Secrets → Actions.
-      # Value: the full private key for root@165.232.160.43
-      # (same key you use for `ssh root@165.232.160.43`)
+      # ── 2. SSH key ─────────────────────────────────────────────────────────
+      # Requires secret: VPS_SSH_KEY (private key for root@165.232.160.43)
+      # Add at: Settings → Secrets and variables → Actions → New repository secret
       - name: Configure SSH
         run: |
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
-          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/vps_key
+          printf '%s\n' "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/vps_key
           chmod 600 ~/.ssh/vps_key
-          # Accept VPS host key without interactive prompt
           ssh-keyscan -H 165.232.160.43 >> ~/.ssh/known_hosts 2>/dev/null
           echo "SSH key configured"
 
-      # ── 3. Run CI gate on VPS, emit structured JSON ──────────────────────────
-      # The VPS script runs all three checks independently (no set -e so we always
-      # get the full picture), then uses Python 3 to emit a JSON object surrounded
-      # by sentinel markers. The JSON is the machine-readable source of truth for
-      # the log — Claude and any other tool can parse it directly.
-      - name: Run CI gate on VPS
-        id: ci
+      # ── 3. Copy CI script to VPS and run it ───────────────────────────────
+      # vps_ci_gate.sh runs cargo test / clippy / audit independently and
+      # emits delimited output that parse_ci.py turns into JSON.
+      # Separating the script from the YAML avoids nested heredoc issues.
+      - name: Upload CI script to VPS
         run: |
-          set +e  # Don't abort on SSH error — capture everything
+          scp -i ~/.ssh/vps_key \
+              -o StrictHostKeyChecking=no \
+              .github/scripts/vps_ci_gate.sh \
+              root@165.232.160.43:/tmp/vps_ci_gate.sh
+          ssh -i ~/.ssh/vps_key \
+              -o StrictHostKeyChecking=no \
+              root@165.232.160.43 "chmod +x /tmp/vps_ci_gate.sh"
 
+      - name: Run CI gate on VPS
+        id: ci_run
+        run: |
+          set +e
           ssh -i ~/.ssh/vps_key \
               -o StrictHostKeyChecking=no \
               -o ConnectTimeout=15 \
-              -o BatchMode=yes \
-              root@165.232.160.43 bash << 'REMOTE' > /tmp/ci_raw.txt 2>&1
-
-            set -uo pipefail
-            cd /RedRobot-HedgeBot
-            export PATH="$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
-            source "$HOME/.cargo/env" 2>/dev/null || true
-            swapon /swapfile 2>/dev/null || true
-
-            # ── Metadata ────────────────────────────────────────────────────────
-            COMMIT=$(git rev-parse --short HEAD)
-            COMMIT_FULL=$(git rev-parse HEAD)
-            COMMIT_MSG=$(git log -1 --format='%s')
-            BRANCH=$(git rev-parse --abbrev-ref HEAD)
-            RUN_AT=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
-            RUSTC_VER=$(rustc --version 2>/dev/null || echo "unknown")
-            CARGO_VER=$(cargo --version 2>/dev/null || echo "unknown")
-            OS_INFO=$(uname -r)
-            ARCH=$(uname -m)
-            RAM=$(free -h | awk '/^Mem:/{print $2}')
-            SWAP_ACTIVE=$(swapon --show --noheadings 2>/dev/null | grep -q . && echo true || echo false)
-
-            echo "=== CI GATE START === commit=${COMMIT} at=${RUN_AT}"
-
-            # ── Step 1: Tests ────────────────────────────────────────────────────
-            echo ""
-            echo "=== STEP tests ==="
-            T_START=$(date +%s)
-            TEST_OUT=$(cargo test --all 2>&1)
-            TEST_EXIT=$?
-            T_END=$(date +%s)
-            TEST_DUR=$((T_END - T_START))
-            echo "$TEST_OUT"
-            echo "=== STEP tests exit=${TEST_EXIT} duration=${TEST_DUR}s ==="
-
-            # ── Step 2: Clippy ───────────────────────────────────────────────────
-            echo ""
-            echo "=== STEP clippy ==="
-            C_START=$(date +%s)
-            CLIPPY_OUT=$(cargo clippy --all-targets -- -D warnings 2>&1)
-            CLIPPY_EXIT=$?
-            C_END=$(date +%s)
-            CLIPPY_DUR=$((C_END - C_START))
-            echo "$CLIPPY_OUT"
-            echo "=== STEP clippy exit=${CLIPPY_EXIT} duration=${CLIPPY_DUR}s ==="
-
-            # ── Step 3: Audit ────────────────────────────────────────────────────
-            echo ""
-            echo "=== STEP audit ==="
-            A_START=$(date +%s)
-            if ! command -v cargo-audit &>/dev/null; then
-              echo "Installing cargo-audit..."
-              cargo install cargo-audit 2>&1 | tail -5
-            fi
-            AUDIT_OUT=$(cargo audit 2>&1)
-            AUDIT_EXIT=$?
-            A_END=$(date +%s)
-            AUDIT_DUR=$((A_END - A_START))
-            echo "$AUDIT_OUT"
-            echo "=== STEP audit exit=${AUDIT_EXIT} duration=${AUDIT_DUR}s ==="
-
-            # ── Service health ───────────────────────────────────────────────────
-            echo ""
-            echo "=== STEP service ==="
-            SVC_STATUS=$(systemctl is-active hedgebot 2>/dev/null || echo "unknown")
-            SVC_SINCE=$(systemctl show hedgebot --property=ActiveEnterTimestamp --value 2>/dev/null || echo "")
-            SVC_LOGS=$(journalctl -u hedgebot -n 5 --no-pager --output=short 2>/dev/null || echo "")
-            echo "status=${SVC_STATUS}"
-            echo "since=${SVC_SINCE}"
-            echo "${SVC_LOGS}"
-            echo "=== STEP service ==="
-
-            # ── Emit machine-readable JSON ───────────────────────────────────────
-            # Python is available on all Ubuntu VPS. It builds the JSON from the
-            # captured variables, handling escaping correctly, then prints it between
-            # sentinel lines so the GHA runner can extract it unambiguously.
-            python3 - << PYEOF
-import json, re, sys
-
-def parse_test_output(out):
-    passed = sum(int(x) for x in re.findall(r'(\d+) passed', out))
-    failed = sum(int(x) for x in re.findall(r'(\d+) failed', out))
-    ignored = sum(int(x) for x in re.findall(r'(\d+) ignored', out))
-    # Extract failed test names from the 'failures:' section
-    failures = []
-    in_failures = False
-    for line in out.splitlines():
-        if line.strip() == 'failures:':
-            in_failures = True
-            continue
-        if in_failures:
-            stripped = line.strip()
-            if stripped and not stripped.startswith('----') and not stripped == 'failures:':
-                if stripped.startswith('test ') or (stripped and stripped[0].isalpha()):
-                    failures.append(stripped.lstrip('test ').strip())
-            if line.startswith('test result:'):
-                in_failures = False
-    return passed, failed, ignored, failures[:20]  # cap at 20
-
-def parse_clippy_output(out):
-    errors = []
-    current = {}
-    for line in out.splitlines():
-        m = re.match(r'^error(\[(\w+)\])?: (.+)', line)
-        if m:
-            if current:
-                errors.append(current)
-            current = {'code': m.group(2) or 'E', 'message': m.group(3)[:120]}
-        loc = re.match(r'^\s+-->\s+(.+):(\d+):(\d+)', line)
-        if loc and current and 'file' not in current:
-            current['file'] = loc.group(1)
-            current['line'] = int(loc.group(2))
-            current['col'] = int(loc.group(3))
-    if current:
-        errors.append(current)
-    return errors[:20]  # cap at 20
-
-def parse_audit_output(out):
-    vulns = []
-    current = {}
-    for line in out.splitlines():
-        if 'ID:' in line:
-            if current:
-                vulns.append(current)
-            current = {'id': line.split('ID:')[-1].strip()}
-        elif 'Crate:' in line and current:
-            current['crate'] = line.split('Crate:')[-1].strip()
-        elif 'Version:' in line and current:
-            current['version'] = line.split('Version:')[-1].strip()
-        elif 'Title:' in line and current:
-            current['title'] = line.split('Title:')[-1].strip()[:100]
-        elif 'Severity:' in line and current:
-            current['severity'] = line.split('Severity:')[-1].strip()
-        elif 'URL:' in line and current:
-            current['url'] = line.split('URL:')[-1].strip()
-    if current:
-        vulns.append(current)
-    return vulns[:20]
-
-test_out   = """${TEST_OUT}"""
-clippy_out = """${CLIPPY_OUT}"""
-audit_out  = """${AUDIT_OUT}"""
-
-t_passed, t_failed, t_ignored, t_failures = parse_test_output(test_out)
-c_errors = parse_clippy_output(clippy_out)
-a_vulns  = parse_audit_output(audit_out)
-
-test_exit   = int("${TEST_EXIT}")
-clippy_exit = int("${CLIPPY_EXIT}")
-audit_exit  = int("${AUDIT_EXIT}")
-
-overall = "PASSED" if (test_exit == 0 and clippy_exit == 0 and audit_exit == 0) else "FAILED"
-
-doc = {
-    "schema_version": "1.0",
-    "meta": {
-        "run_at":        "${RUN_AT}",
-        "commit":        "${COMMIT}",
-        "commit_full":   "${COMMIT_FULL}",
-        "commit_message":"${COMMIT_MSG}".replace('"', '\\"'),
-        "branch":        "${BRANCH}",
-        "overall_status": overall,
-        "triggered_by":  "push"
-    },
-    "environment": {
-        "rustc":       "${RUSTC_VER}",
-        "cargo":       "${CARGO_VER}",
-        "os_kernel":   "${OS_INFO}",
-        "arch":        "${ARCH}",
-        "ram_total":   "${RAM}",
-        "swap_active": ${SWAP_ACTIVE}
-    },
-    "steps": {
-        "tests": {
-            "status":           "PASSED" if test_exit == 0 else "FAILED",
-            "exit_code":        test_exit,
-            "duration_seconds": ${TEST_DUR},
-            "total_passed":     t_passed,
-            "total_failed":     t_failed,
-            "total_ignored":    t_ignored,
-            "failures":         t_failures
-        },
-        "clippy": {
-            "status":           "PASSED" if clippy_exit == 0 else "FAILED",
-            "exit_code":        clippy_exit,
-            "duration_seconds": ${CLIPPY_DUR},
-            "error_count":      len(c_errors),
-            "errors":           c_errors
-        },
-        "audit": {
-            "status":              "PASSED" if audit_exit == 0 else "ADVISORY",
-            "exit_code":           audit_exit,
-            "duration_seconds":    ${AUDIT_DUR},
-            "vulnerability_count": len(a_vulns),
-            "vulnerabilities":     a_vulns
-        }
-    },
-    "service": {
-        "name":         "hedgebot",
-        "status":       "${SVC_STATUS}",
-        "active_since": "${SVC_SINCE}",
-        "recent_logs":  [l for l in """${SVC_LOGS}""".splitlines() if l.strip()][-5:]
-    }
-}
-
-print("CI_JSON_START")
-print(json.dumps(doc, indent=2))
-print("CI_JSON_END")
-PYEOF
-
-          REMOTE
-
+              -o ServerAliveInterval=30 \
+              root@165.232.160.43 "bash /tmp/vps_ci_gate.sh" > /tmp/ci_raw.txt 2>&1
           SSH_EXIT=$?
-          echo "ssh_exit=${SSH_EXIT}" >> $GITHUB_OUTPUT
-
-          # Show raw output in the GHA log for human review
+          echo "ssh_exit=${SSH_EXIT}" >> "$GITHUB_OUTPUT"
+          echo "--- Raw VPS output ---"
           cat /tmp/ci_raw.txt
 
-          # Extract the JSON block between sentinels
-          python3 - << 'PYEOF'
-import re, sys, json
-
-raw = open('/tmp/ci_raw.txt').read()
-m = re.search(r'CI_JSON_START\n(.*?)\nCI_JSON_END', raw, re.DOTALL)
-if not m:
-    # SSH or script failed before producing JSON — emit a minimal failure record
-    import datetime
-    doc = {
-        "schema_version": "1.0",
-        "meta": {
-            "run_at": datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),
-            "commit": "unknown",
-            "commit_full": "unknown",
-            "commit_message": "unknown",
-            "branch": "master",
-            "overall_status": "ERROR",
-            "triggered_by": "push",
-            "error": "SSH connection failed or script did not produce JSON output"
-        },
-        "environment": {},
-        "steps": {
-            "tests":  {"status": "ERROR", "exit_code": -1, "total_passed": 0, "total_failed": 0, "total_ignored": 0, "failures": [], "duration_seconds": 0},
-            "clippy": {"status": "ERROR", "exit_code": -1, "error_count": 0, "errors": [], "duration_seconds": 0},
-            "audit":  {"status": "ERROR", "exit_code": -1, "vulnerability_count": 0, "vulnerabilities": [], "duration_seconds": 0}
-        },
-        "service": {"name": "hedgebot", "status": "unknown", "active_since": "", "recent_logs": []},
-        "raw_output_tail": raw[-2000:]
-    }
-    json_str = json.dumps(doc, indent=2)
-    overall = "ERROR"
-else:
-    json_str = m.group(1)
-    doc = json.loads(json_str)
-    overall = doc.get("meta", {}).get("overall_status", "UNKNOWN")
-
-with open('/tmp/ci_result.json', 'w') as f:
-    f.write(json_str)
-
-with open('/tmp/ci_overall.txt', 'w') as f:
-    f.write(overall)
-
-print(f"Extracted JSON: overall={overall}")
-PYEOF
-
-          OVERALL=$(cat /tmp/ci_overall.txt 2>/dev/null || echo "ERROR")
-          echo "overall=${OVERALL}" >> $GITHUB_OUTPUT
-          echo "CI gate overall: ${OVERALL}"
-
-      # ── 4. Commit JSON log to repo ────────────────────────────────────────────
-      - name: Write and commit JSON log
+      # ── 4. Parse raw output → JSON ─────────────────────────────────────────
+      - name: Parse CI output to JSON
+        id: parse
         run: |
-          OVERALL="${{ steps.ci.outputs.overall }}"
-          TIMESTAMP=$(date -u '+%Y-%m-%d_%H%M%S')
+          python3 .github/scripts/parse_ci.py /tmp/ci_raw.txt /tmp/ci_result.json
+          PARSE_EXIT=$?
 
-          # Get the commit that was actually deployed on the VPS
+          OVERALL=$(python3 -c "
+          import json, sys
+          try:
+              d = json.load(open('/tmp/ci_result.json'))
+              print(d['meta']['overall_status'])
+          except Exception as e:
+              print('ERROR')
+          ")
+          echo "overall=${OVERALL}" >> "$GITHUB_OUTPUT"
+          echo "CI gate overall: ${OVERALL}"
+          echo "--- JSON result ---"
+          cat /tmp/ci_result.json
+
+      # ── 5. Commit JSON log to repo ─────────────────────────────────────────
+      - name: Commit JSON log
+        if: always()
+        run: |
+          OVERALL="${{ steps.parse.outputs.overall }}"
+          TIMESTAMP=$(date -u '+%Y-%m-%d_%H%M%S')
           VPS_COMMIT=$(python3 -c "
-import json
-doc = json.load(open('/tmp/ci_result.json'))
-print(doc.get('meta', {}).get('commit', 'unknown'))
-          " 2>/dev/null || echo "${{ github.sha }}" | cut -c1-7)
+          import json
+          try:
+              d = json.load(open('/tmp/ci_result.json'))
+              print(d['meta']['commit'])
+          except:
+              print('unknown')
+          ")
 
           LOG_FILE="logs/ci/${TIMESTAMP}_${VPS_COMMIT}_${OVERALL}.json"
-
-          # Copy the JSON result into the repo
           cp /tmp/ci_result.json "${LOG_FILE}"
 
-          # Configure git identity for the bot commit
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add logs/ci/
 
-          git add "logs/ci/"
-
-          # Only commit if there are changes (idempotent)
           if git diff --cached --quiet; then
-            echo "No changes to log directory — skipping commit"
+            echo "No changes to commit"
           else
             EMOJI=$([ "$OVERALL" = "PASSED" ] && echo "✅" || [ "$OVERALL" = "ERROR" ] && echo "⚠️" || echo "❌")
-            git commit -m "ci-log: ${TIMESTAMP} ${VPS_COMMIT} ${EMOJI} ${OVERALL}
-
-Triggered by: ${{ github.actor }} → ${{ github.event.head_commit.message }}
-Run: ${{ github.run_id }}"
+            git commit -m "ci-log: ${TIMESTAMP} ${VPS_COMMIT} ${EMOJI} ${OVERALL}"
             git push origin master
-            echo "Log committed: ${LOG_FILE}"
+            echo "Committed: ${LOG_FILE}"
           fi
 
-      # ── 5. Annotate the GHA run with a summary ────────────────────────────────
+      # ── 6. Job summary ─────────────────────────────────────────────────────
       - name: Write job summary
         if: always()
         run: |
           python3 - << 'PYEOF'
-import json, os
+          import json, os
 
-try:
-    doc = json.load(open('/tmp/ci_result.json'))
-except Exception as e:
-    print(f"Could not parse CI result: {e}")
-    exit(0)
+          try:
+              doc = json.load(open('/tmp/ci_result.json'))
+          except Exception as e:
+              with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f:
+                  f.write(f"## CI Quality Gate — ⚠️ ERROR\n\nCould not parse result: {e}\n")
+              exit(0)
 
-meta  = doc.get('meta', {})
-steps = doc.get('steps', {})
-svc   = doc.get('service', {})
-env   = doc.get('environment', {})
+          meta  = doc.get('meta', {})
+          steps = doc.get('steps', {})
+          svc   = doc.get('service', {})
+          env   = doc.get('environment', {})
 
-def badge(status):
-    return {'PASSED': '✅ PASSED', 'FAILED': '❌ FAILED',
-            'ADVISORY': '⚠️ ADVISORY', 'ERROR': '⚠️ ERROR'}.get(status, status)
+          def badge(s):
+              return {'PASSED':'✅ PASSED','FAILED':'❌ FAILED','ADVISORY':'⚠️ ADVISORY','ERROR':'⚠️ ERROR'}.get(s, s)
 
-tests  = steps.get('tests', {})
-clippy = steps.get('clippy', {})
-audit  = steps.get('audit', {})
+          t = steps.get('tests', {})
+          c = steps.get('clippy', {})
+          a = steps.get('audit', {})
 
-summary = f"""## CI Quality Gate — {badge(meta.get('overall_status', '?'))}
+          out = f"""## CI Quality Gate — {badge(meta.get('overall_status','?'))}
 
-| | Check | Result | Detail |
-|---|---|---|---|
-| 🧪 | `cargo test` | {badge(tests.get('status','?'))} | {tests.get('total_passed',0)} passed · {tests.get('total_failed',0)} failed · {tests.get('duration_seconds',0)}s |
-| 🔍 | `cargo clippy` | {badge(clippy.get('status','?'))} | {clippy.get('error_count',0)} errors · {clippy.get('duration_seconds',0)}s |
-| 🔒 | `cargo audit` | {badge(audit.get('status','?'))} | {audit.get('vulnerability_count',0)} vulnerabilities · {audit.get('duration_seconds',0)}s |
-| 💚 | Service | {'✅ ' if svc.get('status')=='active' else '❌ '}{svc.get('status','?')} | hedgebot |
+          | | Check | Result | Detail |
+          |---|---|---|---|
+          | 🧪 | `cargo test` | {badge(t.get('status','?'))} | {t.get('total_passed',0)} passed · {t.get('total_failed',0)} failed · {t.get('duration_seconds',0)}s |
+          | 🔍 | `cargo clippy` | {badge(c.get('status','?'))} | {c.get('error_count',0)} errors · {c.get('duration_seconds',0)}s |
+          | 🔒 | `cargo audit` | {badge(a.get('status','?'))} | {a.get('vulnerability_count',0)} vulns · {a.get('duration_seconds',0)}s |
+          | 💚 | Service | {'✅ ' if svc.get('status')=='active' else '❌ '}{svc.get('status','?')} | hedgebot |
 
-**Commit:** `{meta.get('commit','?')}` — {meta.get('commit_message','')[:80]}
-**Environment:** {env.get('rustc','?')}
-"""
+          **Commit:** `{meta.get('commit','?')}` — {meta.get('commit_message','')[:80]}
+          **Environment:** {env.get('rustc','?')}
+          """
 
-# Append failure details if any
-if tests.get('failures'):
-    summary += "\n### ❌ Failing Tests\n```\n"
-    summary += "\n".join(tests['failures'])
-    summary += "\n```\n"
+          if t.get('failures'):
+              out += "\n### ❌ Failing Tests\n```\n" + "\n".join(t['failures']) + "\n```\n"
+          if c.get('errors'):
+              out += "\n### ❌ Clippy Errors\n```\n"
+              for e in c['errors'][:10]:
+                  loc = f"{e.get('file','?')}:{e.get('line','?')}" if 'file' in e else ''
+                  out += f"[{e.get('code','?')}] {e.get('message','?')}  {loc}\n"
+              out += "```\n"
+          if a.get('vulnerabilities'):
+              out += "\n### ⚠️ Vulnerabilities\n"
+              for v in a['vulnerabilities'][:10]:
+                  out += f"- **{v.get('id','?')}** `{v.get('crate','?')} {v.get('version','')}` — {v.get('title','?')} ({v.get('severity','?')})\n"
 
-if clippy.get('errors'):
-    summary += "\n### ❌ Clippy Errors\n```\n"
-    for e in clippy['errors'][:10]:
-        loc = f"{e.get('file','?')}:{e.get('line','?')}" if 'file' in e else ''
-        summary += f"[{e.get('code','?')}] {e.get('message','?')}  {loc}\n"
-    summary += "```\n"
+          out += "\n---\n*Log committed to `logs/ci/` in this repo.*"
 
-if audit.get('vulnerabilities'):
-    summary += "\n### ⚠️ Vulnerabilities\n"
-    for v in audit['vulnerabilities'][:10]:
-        summary += f"- **{v.get('id','?')}** `{v.get('crate','?')} {v.get('version','')}` — {v.get('title','?')} ({v.get('severity','?')})\n"
-        if v.get('url'):
-            summary += f"  {v['url']}\n"
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f:
+              f.write(out)
+          print("Summary written")
+          PYEOF
 
-summary += f"\n---\n*Log file committed to `logs/ci/` in this repo.*"
-
-with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f:
-    f.write(summary)
-print("Job summary written")
-PYEOF
-
-      # ── 6. Fail the workflow if CI gate failed ────────────────────────────────
-      # This marks the GitHub commit status as failed on the repo UI.
+      # ── 7. Fail workflow if gate didn't pass ───────────────────────────────
       - name: Assert CI gate passed
         if: always()
         run: |
-          OVERALL="${{ steps.ci.outputs.overall }}"
-          if [ "$OVERALL" = "PASSED" ]; then
-            echo "✅ CI gate passed — all checks clean."
-          elif [ "$OVERALL" = "ADVISORY" ]; then
-            echo "⚠️  Security advisories found — review logs/ci/ and update dependencies."
-            exit 1
-          else
-            echo "❌ CI gate FAILED — see job summary and logs/ci/ for full diagnostics."
-            exit 1
-          fi
+          OVERALL="${{ steps.parse.outputs.overall }}"
+          case "$OVERALL" in
+            PASSED)   echo "✅ All checks passed." ;;
+            ADVISORY) echo "⚠️  Security advisories found — review logs/ci/"; exit 1 ;;
+            *)        echo "❌ CI gate FAILED — see job summary and logs/ci/"; exit 1 ;;
+          esac
