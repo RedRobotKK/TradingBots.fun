@@ -26,7 +26,7 @@ pub fn evaluate(ctx: &StrategyContext) -> Result<StrategySignal, Error> {
 
     let prev = previous.as_ref().unwrap();
     let band_width = current.bollinger_upper - current.bollinger_lower;
-    let mid = current.bollinger_middle;
+    let _mid = current.bollinger_middle;
 
     // Breakout above upper band
     if current.close > current.bollinger_upper && prev.close <= prev.bollinger_upper {

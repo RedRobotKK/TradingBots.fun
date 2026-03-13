@@ -7,8 +7,8 @@
 //! - Support levels
 //! - Capital efficiency
 
-use crate::position_manager::{AggregatePosition, DCARules, PositionEntry, PositionStatus};
-use crate::scoring_system::{StrategyScore, PortfolioScore, PortfolioAction};
+use crate::position_manager::{AggregatePosition, DCARules, PositionEntry};
+use crate::scoring_system::{PortfolioScore, PortfolioAction};
 
 /// Determines if pyramid entry should be added based on scoring + DCA rules
 #[derive(Debug, Clone)]

@@ -3,7 +3,7 @@
 //! Integrates institutional price action patterns with the capital-efficient scoring system
 //! Allows patterns to be combined with technical strategies for confluence signals
 
-use crate::price_action::{PriceActionPattern, PriceActionDetector, PatternType};
+use crate::price_action::{PriceActionPattern, PriceActionDetector};
 use crate::scoring_system::{StrategyScore, ScoringAction};
 use serde::{Deserialize, Serialize};
 

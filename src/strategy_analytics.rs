@@ -11,7 +11,6 @@
 
 use crate::strategy_attribution::{StrategyMetrics, MarketRegime, AttributedTrade};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// Strategy viability score (0-100)
 #[derive(Debug, Clone, Serialize, Deserialize)]

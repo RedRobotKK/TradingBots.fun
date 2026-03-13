@@ -25,7 +25,7 @@ pub fn evaluate(ctx: &StrategyContext) -> Result<StrategySignal, Error> {
         }
     };
 
-    let price_change = ((current.close - previous.close) / previous.close) * 100.0;
+    let _price_change = ((current.close - previous.close) / previous.close) * 100.0;
     let volume_ratio = current.volume / (previous.volume.max(1.0));
     let candle_size = ((current.close - current.open).abs() / current.open) * 100.0;
 
@@ -37,7 +37,7 @@ pub fn evaluate(ctx: &StrategyContext) -> Result<StrategySignal, Error> {
     // BULLISH: Price retesting upward to old bullish order block
     if is_bullish_ob && current.close > current.resistance_level * 0.98 {
         let ob_level = current.open;  // Order block formed at open of large candle
-        let distance_above_ob = ((current.close - ob_level) / ob_level) * 100.0;
+        let _distance_above_ob = ((current.close - ob_level) / ob_level) * 100.0;
 
         return Ok(StrategySignal {
             strategy_name: "Order Block".to_string(),
@@ -56,7 +56,7 @@ pub fn evaluate(ctx: &StrategyContext) -> Result<StrategySignal, Error> {
     // BEARISH: Price retesting downward to old bearish order block
     if is_bearish_ob && current.close < current.support_level * 1.02 {
         let ob_level = current.open;  // Order block formed at open of large candle
-        let distance_below_ob = ((ob_level - current.close) / ob_level) * 100.0;
+        let _distance_below_ob = ((ob_level - current.close) / ob_level) * 100.0;
 
         return Ok(StrategySignal {
             strategy_name: "Order Block".to_string(),

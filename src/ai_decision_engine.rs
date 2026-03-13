@@ -6,7 +6,7 @@
 //! Decision flow: Technical Signals → Framework Validation → AI Scoring → Execute
 
 use crate::frameworks::*;
-use crate::dynamic_position_sizing::{DynamicPositionSize, SupportResistance, TechnicalSetup, DynamicSizer};
+use crate::dynamic_position_sizing::{SupportResistance, TechnicalSetup, DynamicSizer};
 use serde::{Deserialize, Serialize};
 
 // ============================================================================

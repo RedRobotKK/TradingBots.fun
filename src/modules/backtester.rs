@@ -27,7 +27,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 /// Configuration for backtesting
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -326,7 +326,7 @@ impl Backtester {
     }
 
     /// Run backtest simulation
-    pub async fn run(mut self) -> Result<BacktestResults> {
+    pub async fn run(self) -> Result<BacktestResults> {
         info!("Starting backtest simulation");
 
         if self.data.is_empty() {
@@ -334,7 +334,7 @@ impl Backtester {
         }
 
         // Initialize account states
-        let mut account_equity = vec![self.config.initial_capital; self.config.num_accounts];
+        let account_equity = vec![self.config.initial_capital; self.config.num_accounts];
 
         // Process candles chronologically
         let mut all_candles: Vec<_> = self

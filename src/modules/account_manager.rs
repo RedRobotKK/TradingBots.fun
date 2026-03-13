@@ -18,7 +18,7 @@ impl AccountManager {
     }
 
     /// Register a new trading account
-    pub fn register_account(&mut self, mut account: TradingAccount) -> Result<String> {
+    pub fn register_account(&mut self, account: TradingAccount) -> Result<String> {
         // Validate account configuration
         account.validate()?;
 

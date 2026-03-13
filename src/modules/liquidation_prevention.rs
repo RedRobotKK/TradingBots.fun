@@ -173,7 +173,7 @@ impl LiquidationPrevention {
     /// Estimate time to liquidation
     pub fn estimate_time_to_liquidation(
         &self,
-        current_price: f64,
+        _current_price: f64,
         liquidation_price: f64,
         mark_price: f64,
     ) -> Option<u64> {

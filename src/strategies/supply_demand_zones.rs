@@ -36,7 +36,7 @@ pub fn evaluate(ctx: &StrategyContext) -> Result<StrategySignal, Error> {
     // Signals institutional buyers stepping in at support
     if price_change < -0.5 && dist_to_support < 3.0 && volume_ratio > 1.3 {
         let zone_strength = (3.0 - dist_to_support) * volume_ratio;  // Closer to support + higher volume = stronger
-        let recovery_potential = dist_to_support.abs();
+        let _recovery_potential = dist_to_support.abs();
 
         let confidence = if zone_strength > 5.0 && current.rsi_14 < 40.0 {
             0.80
@@ -66,7 +66,7 @@ pub fn evaluate(ctx: &StrategyContext) -> Result<StrategySignal, Error> {
     // Signals institutional sellers appearing at resistance
     if price_change > 0.5 && dist_to_resistance < 3.0 && volume_ratio > 1.3 {
         let zone_strength = (3.0 - dist_to_resistance) * volume_ratio;  // Closer to resistance + higher volume = stronger
-        let decline_potential = dist_to_resistance.abs();
+        let _decline_potential = dist_to_resistance.abs();
 
         let confidence = if zone_strength > 5.0 && current.rsi_14 > 60.0 {
             0.80

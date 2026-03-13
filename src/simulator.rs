@@ -1,7 +1,7 @@
 //! 🎬 Historical Data Simulator
 //! Replays 3-7 days of historical market data to test strategies in isolation
 
-use crate::backtest::{Backtester, BacktestConfig, TradeAction, TradeStatus};
+use crate::backtest::{Backtester, BacktestConfig, TradeAction};
 use crate::strategies::{self, StrategyContext, SignalType, MarketSnapshot};
 use serde::{Deserialize, Serialize};
 
