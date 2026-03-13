@@ -6,12 +6,19 @@
 #   ./deploy.sh --push-only  – push to GitHub only, don't touch VPS
 #   ./deploy.sh --restart    – restart service on VPS without rebuilding
 #   ./deploy.sh --test-only  – run CI quality gate on VPS without deploying
+#   ./deploy.sh --no-test    – skip CI gate (emergency deploys only)
 #
 # CI Quality Gate (runs before every build):
 #   1. cargo test --all        – all unit + integration tests must pass
 #   2. cargo clippy -D warnings – no compiler warnings or lints
 #   3. cargo audit             – no known CVEs in dependencies (RustSec DB)
 #   Deploy is BLOCKED if any of the above fail.
+#
+# Logs:
+#   Every CI run appends a full timestamped report to:
+#     /var/log/hedgebot-ci.log   (on VPS — CI gate output)
+#     /var/log/hedgebot-deploy.log (on VPS — full deploy output)
+#   On failure, the last 60 lines of the CI log are printed here automatically.
 
 set -euo pipefail
 
@@ -21,22 +28,26 @@ VPS_USER="${VPS_USER:-root}"
 VPS_DIR="/RedRobot-HedgeBot"
 SERVICE="hedgebot"
 BRANCH="master"
+CI_LOG="/var/log/hedgebot-ci.log"
+DEPLOY_LOG="/var/log/hedgebot-deploy.log"
 
 # ── Colours ───────────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 CYAN='\033[0;36m'; BOLD='\033[1m'; RESET='\033[0m'
+DIM='\033[2m'
 
 info()    { echo -e "${CYAN}▸ $*${RESET}"; }
 success() { echo -e "${GREEN}✓ $*${RESET}"; }
 warn()    { echo -e "${YELLOW}⚠ $*${RESET}"; }
-error()   { echo -e "${RED}✗ $*${RESET}" >&2; exit 1; }
+error()   { echo -e "${RED}✗ $*${RESET}" >&2; }
 header()  { echo -e "\n${BOLD}── $* ──${RESET}"; }
+dim()     { echo -e "${DIM}$*${RESET}"; }
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
 DO_PUSH=true
 DO_DEPLOY=true
 DO_BUILD=true
-DO_TEST=true      # CI gate runs by default on every build
+DO_TEST=true
 
 for arg in "$@"; do
   case $arg in
@@ -44,7 +55,7 @@ for arg in "$@"; do
     --push-only)  DO_DEPLOY=false ;;
     --restart)    DO_BUILD=false; DO_TEST=false ;;
     --test-only)  DO_PUSH=false; DO_BUILD=false ;;
-    --no-test)    DO_TEST=false ;;
+    --no-test)    DO_TEST=false; warn "--no-test: skipping CI gate (emergency mode)" ;;
     --help|-h)
       echo "Usage: $0 [--vps-only | --push-only | --restart | --test-only | --no-test]"
       echo "  (no flags)    full deploy: CI gate + push to GitHub + build + restart VPS"
@@ -54,7 +65,7 @@ for arg in "$@"; do
       echo "  --test-only   run CI quality gate on VPS only (no build/restart)"
       echo "  --no-test     skip CI gate (emergency deploys only)"
       exit 0 ;;
-    *) error "Unknown argument: $arg" ;;
+    *) error "Unknown argument: $arg"; exit 1 ;;
   esac
 done
 
@@ -62,14 +73,12 @@ done
 if $DO_PUSH; then
   header "Git"
 
-  # Warn about any uncommitted changes
   if ! git diff --quiet || ! git diff --cached --quiet; then
     warn "You have uncommitted changes — they will NOT be deployed."
     warn "Run 'git add . && git commit -m \"...\"' first if you want them included."
     echo ""
   fi
 
-  LOCAL=$(git rev-parse HEAD)
   info "Pushing branch '${BRANCH}' to origin…"
   git push origin "$BRANCH" 2>&1 | sed 's/^/  /'
   success "GitHub up to date  ($(git rev-parse --short HEAD))"
@@ -81,14 +90,14 @@ if $DO_DEPLOY; then
 
   header "VPS  ${VPS_USER}@${VPS_IP}"
 
-  # Connectivity check
   info "Checking SSH connectivity…"
   if ! $SSH "echo ok" &>/dev/null; then
     error "Cannot reach ${VPS_USER}@${VPS_IP}. Check SSH keys or IP."
+    exit 1
   fi
   success "SSH OK"
 
-  # ── 2a. Pull latest code ────────────────────────────────────────────────────
+  # ── 2a. Pull latest code ──────────────────────────────────────────────────
   header "Git pull on VPS"
   $SSH bash <<ENDSSH
     set -euo pipefail
@@ -96,69 +105,199 @@ if $DO_DEPLOY; then
     export PATH="\$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin:\$PATH"
     source "\$HOME/.cargo/env" 2>/dev/null || true
 
-    echo "Current: \$(git rev-parse --short HEAD)  (\$(git log -1 --format='%s'))"
-    git fetch origin
-    git reset --hard origin/${BRANCH}
-    echo "Updated: \$(git rev-parse --short HEAD)  (\$(git log -1 --format='%s'))"
+    echo "Before: \$(git rev-parse --short HEAD)  (\$(git log -1 --format='%s'))"
+    git fetch origin 2>&1
+    git reset --hard origin/${BRANCH} 2>&1
+    echo "After:  \$(git rev-parse --short HEAD)  (\$(git log -1 --format='%s'))"
+    echo ""
+    echo "Files changed vs previous:"
+    git diff --stat HEAD@{1} HEAD 2>/dev/null || echo "  (first pull — no previous ref)"
 ENDSSH
   success "Code pulled"
 
-  # ── 2b. CI Quality Gate ─────────────────────────────────────────────────────
-  # Runs on the VPS after pull, before build.
-  # Blocks deploy if any check fails (matches Rust Book + RustSec best practice).
+  # ── 2b. CI Quality Gate ───────────────────────────────────────────────────
+  # Each step is run independently with full error capture.
+  # On any failure: full diagnostics are printed AND appended to CI_LOG.
+  # The log persists on the VPS at /var/log/hedgebot-ci.log for post-mortem.
   if $DO_TEST; then
     header "CI Quality Gate"
-    info "Step 1/3 — cargo test (unit + integration)…"
-    info "Step 2/3 — cargo clippy -D warnings (lint gate)…"
-    info "Step 3/3 — cargo audit (RustSec CVE scan)…"
+    dim "  Full output → ${CI_LOG} on VPS"
+    echo ""
 
-    $SSH bash <<ENDSSH
-      set -euo pipefail
-      cd ${VPS_DIR}
-      export PATH="\$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin:\$PATH"
-      source "\$HOME/.cargo/env" 2>/dev/null || true
+    $SSH bash <<'ENDSSH'
+      set -uo pipefail  # Note: NOT -e here — we capture each step's exit code manually
 
-      # Ensure swap is active (needed on 1 GB RAM droplets)
+      VPS_DIR="/RedRobot-HedgeBot"
+      CI_LOG="/var/log/hedgebot-ci.log"
+      export PATH="$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+      source "$HOME/.cargo/env" 2>/dev/null || true
+      cd "$VPS_DIR"
+
+      # Ensure swap active on low-RAM VPS
       if ! swapon --show 2>/dev/null | grep -q .; then
         swapon /swapfile 2>/dev/null || true
       fi
 
-      echo ""
-      echo "── Step 1/3: Tests ─────────────────────────────────────────────"
-      # Run all unit tests (src/#[cfg(test)]) + integration tests (tests/)
-      # Reference: Rust Book §11 — cargo test is the standard gate
-      cargo test --all 2>&1
-      echo "✓ All tests passed"
+      COMMIT=$(git rev-parse --short HEAD)
+      RUN_AT=$(date '+%Y-%m-%d %H:%M:%S %Z')
+      PASS=0; FAIL=0
+      STEP1="⏳"; STEP2="⏳"; STEP3="⏳"
 
-      echo ""
-      echo "── Step 2/3: Clippy lint gate ──────────────────────────────────"
-      # -D warnings treats all warnings as errors — blocks deploy on any lint
-      # Reference: https://doc.rust-lang.org/clippy/
-      # For financial code: catches integer arithmetic issues, unwrap panics, etc.
-      cargo clippy --all-targets -- -D warnings 2>&1
-      echo "✓ Clippy clean"
+      # ── Log header ─────────────────────────────────────────────────────────
+      {
+        echo "════════════════════════════════════════════════════════════════"
+        echo "CI RUN  ${RUN_AT}  commit=${COMMIT}"
+        echo "════════════════════════════════════════════════════════════════"
+      } | tee -a "$CI_LOG"
 
-      echo ""
-      echo "── Step 3/3: Security audit (RustSec) ──────────────────────────"
-      # Scans Cargo.lock against the RustSec advisory database
-      # Reference: https://rustsec.org / cargo-audit
-      # Install if missing (silent if already present)
-      cargo install cargo-audit --quiet 2>/dev/null || true
-      cargo audit 2>&1
-      echo "✓ No known CVEs in dependencies"
+      # ── Step 1: Tests ───────────────────────────────────────────────────────
+      {
+        echo ""
+        echo "── Step 1/3: cargo test --all ──────────────────────────────────"
+        echo "   Rust Book §11: unit (#[cfg(test)]) + integration (tests/) gate"
+        echo "   Started: $(date '+%H:%M:%S')"
+      } | tee -a "$CI_LOG"
 
-      echo ""
-      echo "══════════════════════════════════════════════════════════════"
-      echo "CI GATE PASSED — safe to build and deploy"
-      echo "══════════════════════════════════════════════════════════════"
+      TEST_OUT=$(cargo test --all 2>&1)
+      TEST_EXIT=$?
+      echo "$TEST_OUT" | tee -a "$CI_LOG"
+
+      if [ $TEST_EXIT -eq 0 ]; then
+        # Extract test count from output line like "test result: ok. 42 passed; 0 failed"
+        PASSED=$(echo "$TEST_OUT" | grep -oP '\d+ passed' | awk '{s+=$1} END{print s}')
+        FAILED=$(echo "$TEST_OUT" | grep -oP '\d+ failed' | awk '{s+=$1} END{print s}')
+        PASSED=${PASSED:-0}; FAILED=${FAILED:-0}
+        echo "✓ PASS  ${PASSED} passed, ${FAILED} failed  ($(date '+%H:%M:%S'))" | tee -a "$CI_LOG"
+        STEP1="✅ PASS (${PASSED} tests)"
+        PASS=$((PASS+1))
+      else
+        {
+          echo ""
+          echo "✗ FAIL  cargo test exited with code ${TEST_EXIT}"
+          echo ""
+          echo "── FAILING TESTS ──────────────────────────────────────────────"
+          # Show only the FAILED lines and their immediate context
+          echo "$TEST_OUT" | grep -A 20 "^failures:" || true
+          echo ""
+          echo "── FULL TEST OUTPUT (last 80 lines) ───────────────────────────"
+          echo "$TEST_OUT" | tail -80
+        } | tee -a "$CI_LOG"
+        STEP1="❌ FAIL"
+        FAIL=$((FAIL+1))
+      fi
+
+      # ── Step 2: Clippy ──────────────────────────────────────────────────────
+      {
+        echo ""
+        echo "── Step 2/3: cargo clippy --all-targets -D warnings ────────────"
+        echo "   Ref: https://doc.rust-lang.org/clippy/"
+        echo "   Started: $(date '+%H:%M:%S')"
+      } | tee -a "$CI_LOG"
+
+      CLIPPY_OUT=$(cargo clippy --all-targets -- -D warnings 2>&1)
+      CLIPPY_EXIT=$?
+      echo "$CLIPPY_OUT" | tee -a "$CI_LOG"
+
+      if [ $CLIPPY_EXIT -eq 0 ]; then
+        WARN_COUNT=$(echo "$CLIPPY_OUT" | grep -c "^warning:" || true)
+        echo "✓ PASS  0 errors, ${WARN_COUNT} suppressed warnings  ($(date '+%H:%M:%S'))" | tee -a "$CI_LOG"
+        STEP2="✅ PASS"
+        PASS=$((PASS+1))
+      else
+        {
+          echo ""
+          echo "✗ FAIL  clippy exited with code ${CLIPPY_EXIT}"
+          echo ""
+          echo "── LINT ERRORS ────────────────────────────────────────────────"
+          echo "$CLIPPY_OUT" | grep -E "^error|^ --> |^  \|" | head -60 || true
+          echo ""
+          echo "── FILES WITH ERRORS ──────────────────────────────────────────"
+          echo "$CLIPPY_OUT" | grep -oP '(?<= --> ).*(?=:\d+:\d+)' | sort -u || true
+        } | tee -a "$CI_LOG"
+        STEP2="❌ FAIL"
+        FAIL=$((FAIL+1))
+      fi
+
+      # ── Step 3: cargo audit ─────────────────────────────────────────────────
+      {
+        echo ""
+        echo "── Step 3/3: cargo audit (RustSec CVE scan) ────────────────────"
+        echo "   Ref: https://rustsec.org — scans Cargo.lock"
+        echo "   Started: $(date '+%H:%M:%S')"
+      } | tee -a "$CI_LOG"
+
+      # Install cargo-audit if not present (idempotent, quiet)
+      if ! command -v cargo-audit &>/dev/null; then
+        echo "  Installing cargo-audit…" | tee -a "$CI_LOG"
+        cargo install cargo-audit 2>&1 | tail -3 | tee -a "$CI_LOG"
+      fi
+
+      AUDIT_OUT=$(cargo audit 2>&1)
+      AUDIT_EXIT=$?
+      echo "$AUDIT_OUT" | tee -a "$CI_LOG"
+
+      if [ $AUDIT_EXIT -eq 0 ]; then
+        VULN_COUNT=$(echo "$AUDIT_OUT" | grep -c "Vulnerability found" || true)
+        echo "✓ PASS  0 vulnerabilities  ($(date '+%H:%M:%S'))" | tee -a "$CI_LOG"
+        STEP3="✅ PASS"
+        PASS=$((PASS+1))
+      else
+        {
+          echo ""
+          echo "✗ FAIL  cargo audit found vulnerabilities (exit ${AUDIT_EXIT})"
+          echo ""
+          echo "── VULNERABILITIES FOUND ──────────────────────────────────────"
+          echo "$AUDIT_OUT" | grep -A 8 "Vulnerability\|Advisory\|error\[" || true
+        } | tee -a "$CI_LOG"
+        STEP3="⚠️  ADVISORY"
+        FAIL=$((FAIL+1))
+      fi
+
+      # ── Summary ─────────────────────────────────────────────────────────────
+      {
+        echo ""
+        echo "════════════════════════════════════════════════════════════════"
+        echo "CI SUMMARY  commit=${COMMIT}  ${RUN_AT}"
+        echo "────────────────────────────────────────────────────────────────"
+        echo "  cargo test   │ ${STEP1}"
+        echo "  cargo clippy │ ${STEP2}"
+        echo "  cargo audit  │ ${STEP3}"
+        echo "────────────────────────────────────────────────────────────────"
+        echo "  Passed: ${PASS}/3   Failed: ${FAIL}/3"
+        echo "════════════════════════════════════════════════════════════════"
+      } | tee -a "$CI_LOG"
+
+      # Exit non-zero if any step failed — this blocks the deploy on the host
+      if [ $FAIL -gt 0 ]; then
+        echo ""
+        echo "CI GATE FAILED — deploy blocked. Fix the issues above and retry."
+        echo "Full log: ${CI_LOG}"
+        exit 1
+      else
+        echo ""
+        echo "CI GATE PASSED — safe to build and deploy."
+      fi
 ENDSSH
+
+    CI_EXIT=$?
+    if [ $CI_EXIT -ne 0 ]; then
+      echo ""
+      error "CI gate failed — fetching last 80 lines of ${CI_LOG} from VPS…"
+      echo ""
+      $SSH "tail -80 ${CI_LOG} 2>/dev/null || echo '(no CI log found)'"
+      echo ""
+      error "Deploy aborted. Fix the failures above, then re-run ./deploy.sh"
+      exit 1
+    fi
     success "CI quality gate passed (tests ✓  clippy ✓  audit ✓)"
   fi
 
-  # ── 2c. Build ───────────────────────────────────────────────────────────────
+  # ── 2c. Build ─────────────────────────────────────────────────────────────
   if $DO_BUILD; then
     header "cargo build --release"
     info "This takes ~2 min on the VPS…"
+    dim "  Output also appended to ${DEPLOY_LOG}"
+    echo ""
 
     $SSH bash <<ENDSSH
       set -euo pipefail
@@ -166,65 +305,128 @@ ENDSSH
       export PATH="\$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin:\$PATH"
       source "\$HOME/.cargo/env" 2>/dev/null || true
 
-      # Ensure swap is active (needed on 1 GB RAM droplets)
       if ! swapon --show 2>/dev/null | grep -q .; then
         swapon /swapfile 2>/dev/null || true
       fi
 
-      echo "rustc: \$(rustc --version)"
-      echo "cargo: \$(cargo --version)"
-      echo ""
+      {
+        echo ""
+        echo "── Build $(date '+%Y-%m-%d %H:%M:%S')  commit=\$(git rev-parse --short HEAD) ──"
+        echo "   rustc: \$(rustc --version)"
+        echo "   cargo: \$(cargo --version)"
+        echo "   host:  \$(uname -m)  \$(free -h | awk '/^Mem:/{print \$2}') RAM  swap=\$(swapon --show --noheadings | awk '{print \$3}' | head -1)"
+        echo ""
+      } | tee -a ${DEPLOY_LOG}
 
-      cargo build --release 2>&1
-      echo ""
-      echo "Binary: \$(ls -lh target/release/redrobot-hedgebot | awk '{print \$5, \$9}')"
+      cargo build --release 2>&1 | tee -a ${DEPLOY_LOG}
+      BUILD_EXIT=\${PIPESTATUS[0]}
+
+      if [ \$BUILD_EXIT -ne 0 ]; then
+        {
+          echo ""
+          echo "✗ BUILD FAILED (exit \${BUILD_EXIT})"
+          echo "── Last 30 lines of build output ──────────────────────────────"
+          tail -30 ${DEPLOY_LOG}
+        }
+        exit 1
+      fi
+
+      echo "" | tee -a ${DEPLOY_LOG}
+      BIN_INFO=\$(ls -lh target/release/redrobot-hedgebot | awk '{print \$5, \$9}')
+      echo "✓ Binary: \${BIN_INFO}" | tee -a ${DEPLOY_LOG}
 ENDSSH
     success "Build complete"
   fi
 
-  # ── 2c. Restart service ─────────────────────────────────────────────────────
+  # ── 2d. Restart service ───────────────────────────────────────────────────
   header "Restart ${SERVICE}"
 
   $SSH bash <<ENDSSH
     set -euo pipefail
+    cd ${VPS_DIR}
+
+    {
+      echo ""
+      echo "── Restart \$(date '+%Y-%m-%d %H:%M:%S')  commit=\$(git rev-parse --short HEAD) ──"
+    } | tee -a ${DEPLOY_LOG}
 
     if systemctl is-enabled ${SERVICE} &>/dev/null; then
       systemctl restart ${SERVICE}
-      sleep 2
+      sleep 3
+
       STATUS=\$(systemctl is-active ${SERVICE})
-      echo "Service status: \${STATUS}"
+      UPTIME=\$(systemctl show ${SERVICE} --property=ActiveEnterTimestamp --value 2>/dev/null || echo "unknown")
+
+      echo "Service status : \${STATUS}" | tee -a ${DEPLOY_LOG}
+      echo "Active since   : \${UPTIME}"  | tee -a ${DEPLOY_LOG}
+
       if [ "\${STATUS}" != "active" ]; then
-        echo ""
-        echo "=== Journal (last 20 lines) ==="
-        journalctl -u ${SERVICE} -n 20 --no-pager
+        {
+          echo ""
+          echo "✗ SERVICE FAILED TO START"
+          echo ""
+          echo "── systemctl status ────────────────────────────────────────────"
+          systemctl status ${SERVICE} --no-pager -l
+          echo ""
+          echo "── Journal (last 60 lines) ─────────────────────────────────────"
+          journalctl -u ${SERVICE} -n 60 --no-pager
+          echo ""
+          echo "── Binary info ─────────────────────────────────────────────────"
+          ls -lh ${VPS_DIR}/target/release/redrobot-hedgebot 2>/dev/null || echo "Binary not found"
+          echo ""
+          echo "── Environment (sensitive values redacted) ─────────────────────"
+          systemctl show ${SERVICE} --property=Environment --value 2>/dev/null \
+            | tr ' ' '\n' | sed 's/=.*/=***/' | head -20
+        } | tee -a ${DEPLOY_LOG}
         exit 1
       fi
     else
-      echo "systemd service '${SERVICE}' not found — falling back to pkill+nohup"
+      echo "systemd service '${SERVICE}' not found — falling back to pkill+nohup" | tee -a ${DEPLOY_LOG}
       pkill -f redrobot-hedgebot 2>/dev/null || true
       sleep 2
-      cd ${VPS_DIR}
+
       set -a
       [ -f /etc/environment ] && source /etc/environment 2>/dev/null || true
       set +a
+
       nohup env \
         ANTHROPIC_API_KEY="\${ANTHROPIC_API_KEY}" \
         LUNARCRUSH_API_KEY="\${LUNARCRUSH_API_KEY}" \
         PAPER_TRADING="\${PAPER_TRADING:-true}" \
-        ./target/release/redrobot-hedgebot >> /var/log/hedgebot.log 2>&1 &
-      echo "Bot PID: \$!"
+        ${VPS_DIR}/target/release/redrobot-hedgebot >> ${DEPLOY_LOG} 2>&1 &
+      BOT_PID=\$!
+      echo "Bot PID: \${BOT_PID}" | tee -a ${DEPLOY_LOG}
+      sleep 3
+      if ! kill -0 \${BOT_PID} 2>/dev/null; then
+        echo "✗ Process \${BOT_PID} exited immediately — check ${DEPLOY_LOG}" | tee -a ${DEPLOY_LOG}
+        tail -30 ${DEPLOY_LOG}
+        exit 1
+      fi
+      echo "✓ Bot running (PID \${BOT_PID})" | tee -a ${DEPLOY_LOG}
     fi
 ENDSSH
   success "Service restarted"
 
-  # ── 2d. Tail logs ───────────────────────────────────────────────────────────
-  header "Last 10 log lines"
+  # ── 2e. Post-deploy log tail ───────────────────────────────────────────────
+  header "Post-deploy health check"
   $SSH bash <<ENDSSH
+    echo "── Service status ──────────────────────────────────────────────────"
     if systemctl is-enabled ${SERVICE} &>/dev/null; then
-      journalctl -u ${SERVICE} -n 10 --no-pager
+      systemctl status ${SERVICE} --no-pager -l | head -20
+      echo ""
+      echo "── Journal (last 30 lines) ─────────────────────────────────────────"
+      journalctl -u ${SERVICE} -n 30 --no-pager
     else
-      tail -10 /var/log/hedgebot.log 2>/dev/null || echo "(no log file yet)"
+      echo "── Deploy log (last 30 lines) ──────────────────────────────────────"
+      tail -30 ${DEPLOY_LOG} 2>/dev/null || echo "(no deploy log yet)"
     fi
+    echo ""
+    echo "── CI log tail (last 20 lines) ─────────────────────────────────────"
+    tail -20 ${CI_LOG} 2>/dev/null || echo "(no CI log yet)"
+    echo ""
+    echo "── Disk & memory ───────────────────────────────────────────────────"
+    df -h ${VPS_DIR} | tail -1
+    free -h | grep Mem
 ENDSSH
 
 fi
@@ -232,3 +434,8 @@ fi
 # ── Done ──────────────────────────────────────────────────────────────────────
 echo ""
 success "Deploy complete  🚀  Dashboard → http://${VPS_IP}:3000"
+echo ""
+dim "  Logs on VPS:"
+dim "    CI gate  : ${CI_LOG}"
+dim "    Deploy   : ${DEPLOY_LOG}"
+dim "    Service  : journalctl -u ${SERVICE} -f"
