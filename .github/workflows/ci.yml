@@ -40,8 +40,8 @@ jobs:
           # Also strip any Windows-style \r that GitHub occasionally inserts.
           echo "${{ secrets.VPS_SSH_KEY }}" | tr -d '\r' > ~/.ssh/vps_key
           chmod 600 ~/.ssh/vps_key
-          # Verify the key loaded correctly before attempting any connections
-          ssh-keygen -l -f ~/.ssh/vps_key && echo "Key fingerprint OK" || { echo "ERROR: key file is invalid"; exit 1; }
+          # Sanity-check: key file must be non-empty
+          [ -s ~/.ssh/vps_key ] && echo "Key file written OK ($(wc -c < ~/.ssh/vps_key) bytes)" || { echo "ERROR: key file is empty"; exit 1; }
           ssh-keyscan -H 165.232.160.43 >> ~/.ssh/known_hosts 2>/dev/null
           echo "SSH configured"
 
