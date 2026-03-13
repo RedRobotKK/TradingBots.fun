@@ -1,0 +1,209 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-03-13T23:03:31Z",
+    "commit": "3766b4d",
+    "commit_full": "3766b4d173a70d84dc3ae4e370ce9edac5e2234c",
+    "commit_message": "fix(clippy): resolve 10 more unused variable warnings",
+    "branch": "master",
+    "overall_status": "FAILED",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
+    "cargo": "cargo 1.93.1 (083ac5135 2025-12-15)",
+    "os_kernel": "6.8.0-101-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 9,
+      "total_passed": 0,
+      "total_failed": 0,
+      "total_ignored": 0,
+      "failures": []
+    },
+    "clippy": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 15,
+      "error_count": 20,
+      "errors": [
+        {
+          "code": "E",
+          "message": "unused variable: `technical_score`",
+          "file": "src/ai_decision_engine.rs",
+          "line": 268,
+          "col": 9
+        },
+        {
+          "code": "E",
+          "message": "unused variable: `context`",
+          "file": "src/ai_decision_engine.rs",
+          "line": 382,
+          "col": 64
+        },
+        {
+          "code": "E",
+          "message": "unused variable: `metrics`",
+          "file": "src/strategy_analytics.rs",
+          "line": 275,
+          "col": 9
+        },
+        {
+          "code": "E",
+          "message": "unused variable: `account_size`",
+          "file": "src/scoring_system.rs",
+          "line": 494,
+          "col": 5
+        },
+        {
+          "code": "E",
+          "message": "unused variable: `stop_distance`",
+          "file": "src/price_action_scoring.rs",
+          "line": 51,
+          "col": 13
+        },
+        {
+          "code": "E",
+          "message": "unused variable: `score`",
+          "file": "src/price_action_scoring.rs",
+          "line": 142,
+          "col": 9
+        },
+        {
+          "code": "E",
+          "message": "unused variable: `bearish_patterns`",
+          "file": "src/price_action_scoring.rs",
+          "line": 249,
+          "col": 13
+        },
+        {
+          "code": "E",
+          "message": "type `modules::hyperliquid_protocol::OrderState` is more private than the item `modules::hyperliquid_protocol::Hyperliqu",
+          "file": "src/modules/hyperliquid_protocol.rs",
+          "line": 867,
+          "col": 5
+        },
+        {
+          "code": "E",
+          "message": "constant `HYPERLIQUID_WS_URI` is never used",
+          "file": "src/modules/hyperliquid_protocol.rs",
+          "line": 28,
+          "col": 7
+        },
+        {
+          "code": "E",
+          "message": "field `last_request_time` is never read",
+          "file": "src/modules/hyperliquid_protocol.rs",
+          "line": 59,
+          "col": 5
+        },
+        {
+          "code": "E",
+          "message": "multiple fields are never read",
+          "file": "src/modules/hyperliquid_protocol.rs",
+          "line": 65,
+          "col": 9
+        },
+        {
+          "code": "E",
+          "message": "struct `HyperliquidRequest` is never constructed",
+          "file": "src/modules/hyperliquid_protocol.rs",
+          "line": 76,
+          "col": 8
+        },
+        {
+          "code": "E",
+          "message": "struct `AuthenticatedRequest` is never constructed",
+          "file": "src/modules/hyperliquid_protocol.rs",
+          "line": 94,
+          "col": 8
+        },
+        {
+          "code": "E",
+          "message": "method `send_request` is never used",
+          "file": "src/modules/hyperliquid_protocol.rs",
+          "line": 768,
+          "col": 14
+        },
+        {
+          "code": "E",
+          "message": "field `monitoring_interval_ms` is never read",
+          "file": "src/modules/liquidation_prevention.rs",
+          "line": 11,
+          "col": 5
+        },
+        {
+          "code": "E",
+          "message": "fields `account_manager`, `decision_interval_ms`, `rebalance_interval_ms`, and `health_check_interval_ms` are never read",
+          "file": "src/modules/autonomous_runner.rs",
+          "line": 13,
+          "col": 5
+        },
+        {
+          "code": "E",
+          "message": "methods `calculate_pnl` and `calculate_pnl_percentage` are never used",
+          "file": "src/modules/backtester.rs",
+          "line": 116,
+          "col": 8
+        },
+        {
+          "code": "E",
+          "message": "fields `account_states` and `current_timestamp` are never read",
+          "file": "src/modules/backtester.rs",
+          "line": 179,
+          "col": 5
+        },
+        {
+          "code": "E",
+          "message": "methods `simulate_trade` and `finalize_trade` are never used",
+          "file": "src/modules/backtester.rs",
+          "line": 262,
+          "col": 8
+        },
+        {
+          "code": "E",
+          "message": "left-hand side of `&&` operator has no effect",
+          "file": "src/models/market.rs",
+          "line": 201,
+          "col": 9
+        }
+      ]
+    },
+    "audit": {
+      "status": "PASSED",
+      "exit_code": 0,
+      "duration_seconds": 2,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2021-0141",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2021-0141",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "hedgebot",
+    "status": "active",
+    "active_since": "Thu 2026-03-12 07:15:10 UTC",
+    "recent_logs": [
+      "Mar 12 07:15:10 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Started hedgebot.service - RedRobot HedgeBot.",
+      "Mar 12 07:15:13 ubuntu-s-1vcpu-1gb-sgp1-01 redrobot-hedgebot[217810]: [2026-03-12T07:15:13.533Z ERROR redrobot_hedgebot] Dashboard: Address already in use (os error 98)"
+    ]
+  }
+}
