@@ -305,7 +305,20 @@ async fn run_cycle(
         let committed: f64 = s.positions.iter().map(|p| p.size_usd).sum();
         let unrealised: f64 = s.positions.iter().map(|p| p.unrealised_pnl).sum();
         let equity = s.capital + committed + unrealised;
+
+        // All-time peak (for display)
         if equity > s.peak_equity { s.peak_equity = equity; }
+
+        // Rolling 7-day window for circuit breaker (prevents one lucky spike
+        // from permanently throttling position sizes months later)
+        const SEVEN_DAYS_SECS: i64 = 7 * 24 * 3600;
+        let now_ts = chrono::Utc::now().timestamp();
+        s.equity_window.push_back((now_ts, equity));
+        // Trim entries older than 7 days
+        while s.equity_window.front().map(|&(ts, _)| now_ts - ts > SEVEN_DAYS_SECS).unwrap_or(false) {
+            s.equity_window.pop_front();
+        }
+
         for pos in s.positions.iter_mut() { pos.cycles_held += 1; }
     }
 
@@ -1010,17 +1023,21 @@ async fn execute_paper_trade(
     let equity    = s.capital + s.positions.iter().map(|p| p.size_usd + p.unrealised_pnl).sum::<f64>();
 
     // ── Circuit breaker ───────────────────────────────────────────────────
-    // When peak→current drawdown exceeds CB_DRAWDOWN_THRESHOLD (8%), new
-    // position sizes are scaled to CB_SIZE_MULT (0.35×) to limit further
-    // exposure during adverse market conditions.
-    let drawdown = if s.peak_equity > 0.0 {
-        (s.peak_equity - equity) / s.peak_equity
+    // Uses rolling 7-day peak (not all-time) so a single lucky spike long
+    // ago doesn't permanently throttle sizing.  When drawdown from the
+    // 7-day high exceeds CB_DRAWDOWN_THRESHOLD (8%), new position sizes are
+    // scaled to CB_SIZE_MULT (0.35×).
+    let rolling_peak = s.equity_window.iter()
+        .map(|&(_, e)| e)
+        .fold(equity, f64::max); // fallback to current equity if window empty
+    let drawdown = if rolling_peak > 0.0 {
+        (rolling_peak - equity) / rolling_peak
     } else {
         0.0
     };
     let in_cb = drawdown > CB_DRAWDOWN_THRESHOLD;
     if in_cb {
-        info!("🔴 CB ACTIVE — drawdown {:.1}% (>{:.0}%), sizing ×{:.2}",
+        info!("🔴 CB ACTIVE — 7d drawdown {:.1}% (>{:.0}%), sizing ×{:.2}",
               drawdown * 100.0, CB_DRAWDOWN_THRESHOLD * 100.0, CB_SIZE_MULT);
         trade_logger.lock().await.log(&TradeEvent::CircuitBreaker {
             ts:             ts_now(),
@@ -1028,7 +1045,7 @@ async fn execute_paper_trade(
             drawdown_pct:   drawdown * 100.0,
             threshold_pct:  CB_DRAWDOWN_THRESHOLD * 100.0,
             size_mult:      CB_SIZE_MULT,
-            peak_equity:    s.peak_equity,
+            peak_equity:    rolling_peak,
             current_equity: equity,
         });
     }

@@ -83,7 +83,8 @@ pub struct DecisionInfo {
 pub struct BotState {
     pub capital:          f64,
     pub initial_capital:  f64,
-    pub peak_equity:      f64,       // for circuit breaker: highest total equity seen
+    pub peak_equity:      f64,       // all-time equity high (display only)
+    pub equity_window:    std::collections::VecDeque<(i64, f64)>, // (unix_ts, equity) rolling 7-day
     pub pnl:              f64,
     pub cycle_count:      u64,
     pub candidates:       Vec<CandidateInfo>,
@@ -101,6 +102,7 @@ impl Default for BotState {
     fn default() -> Self {
         BotState {
             capital: 1000.0, initial_capital: 1000.0, peak_equity: 1000.0,
+            equity_window: std::collections::VecDeque::new(),
             pnl: 0.0, cycle_count: 0,
             candidates: vec![], positions: vec![], closed_trades: vec![],
             recent_decisions: vec![],
