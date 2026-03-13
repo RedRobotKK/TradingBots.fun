@@ -85,6 +85,7 @@ pub struct BotState {
     pub initial_capital:  f64,
     pub peak_equity:      f64,       // all-time equity high (display only)
     pub equity_window:    std::collections::VecDeque<(i64, f64)>, // (unix_ts, equity) rolling 7-day
+    pub cb_active:        bool,      // true when rolling-equity CB is firing (set by main loop)
     pub pnl:              f64,
     pub cycle_count:      u64,
     pub candidates:       Vec<CandidateInfo>,
@@ -103,6 +104,7 @@ impl Default for BotState {
         BotState {
             capital: 1000.0, initial_capital: 1000.0, peak_equity: 1000.0,
             equity_window: std::collections::VecDeque::new(),
+            cb_active: false,
             pnl: 0.0, cycle_count: 0,
             candidates: vec![], positions: vec![], closed_trades: vec![],
             recent_decisions: vec![],
@@ -136,10 +138,11 @@ async fn dashboard_handler(State(state): State<SharedState>) -> Html<String> {
     // ── Metric strings ────────────────────────────────────────────────────
     let kelly     = m.kelly_fraction();
     let kelly_str = if kelly < 0.0 { "learning…".to_string() } else { format!("{:.1}%", kelly * 100.0) };
-    let cb_active = m.in_circuit_breaker();
+    // Use the rolling-equity CB flag set by main loop — this is the same signal
+    // that actually controls position sizing, avoiding a stale metrics-based read.
+    let cb_active = s.cb_active;
     let cb_label  = if cb_active { "⚡ CB Active" } else { "● Normal" };
     let cb_colour = if cb_active { "#f85149" } else { "#3fb950" };
-    // Explain what the circuit breaker does so it's not a mystery
     let cb_desc   = if cb_active {
         format!("0.35× sizes (DD {:.1}%)", m.current_dd)
     } else {

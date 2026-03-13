@@ -676,10 +676,16 @@ async fn apply_ai_review(
                         let add_usd = s.positions[idx].size_usd * (factor - 1.0);
                         let lev     = s.positions[idx].leverage;
                         if s.capital >= add_usd && add_usd >= 1.0 {
-                            let add_qty = add_usd * lev / cur_price;
-                            s.capital                  -= add_usd;
-                            s.positions[idx].quantity  += add_qty;
-                            s.positions[idx].size_usd  += add_usd;
+                            let add_qty   = add_usd * lev / cur_price;
+                            let old_qty   = s.positions[idx].quantity;
+                            let old_entry = s.positions[idx].entry_price;
+                            let new_qty   = old_qty + add_qty;
+                            // Update weighted average entry so unrealised_pnl stays correct
+                            let avg_entry = (old_entry * old_qty + cur_price * add_qty) / new_qty;
+                            s.capital                   -= add_usd;
+                            s.positions[idx].quantity    = new_qty;
+                            s.positions[idx].size_usd   += add_usd;
+                            s.positions[idx].entry_price = avg_entry;
                             info!("🤖 AI scale-up {} ×{:.2}  +${:.2} — {}", rec.symbol, factor, add_usd, rec.reason);
                         }
                     }
@@ -1036,6 +1042,7 @@ async fn execute_paper_trade(
         0.0
     };
     let in_cb = drawdown > CB_DRAWDOWN_THRESHOLD;
+    s.cb_active = in_cb; // keep dashboard in sync with actual sizing CB
     if in_cb {
         info!("🔴 CB ACTIVE — 7d drawdown {:.1}% (>{:.0}%), sizing ×{:.2}",
               drawdown * 100.0, CB_DRAWDOWN_THRESHOLD * 100.0, CB_SIZE_MULT);
@@ -1171,11 +1178,23 @@ async fn pyramid_position(
         let add_size = s.positions[idx].size_usd * 0.5;
         if s.capital < add_size || add_size < 1.0 { return; }
 
-        let add_qty = add_size / dec.entry_price;
+        // Apply the same leverage as the original position so the new shares
+        // carry the same notional exposure per dollar of margin.
+        let lev     = s.positions[idx].leverage;
+        let add_qty = add_size * lev / dec.entry_price;
+
+        // Weighted average entry — pyramid price is higher than original,
+        // so avg_entry rises. Needed for correct unrealised_pnl tracking.
+        let old_qty   = s.positions[idx].quantity;
+        let old_entry = s.positions[idx].entry_price;
+        let new_qty   = old_qty + add_qty;
+        let avg_entry = (old_entry * old_qty + dec.entry_price * add_qty) / new_qty;
+
         s.capital -= add_size;
 
-        s.positions[idx].quantity         += add_qty;
+        s.positions[idx].quantity         = new_qty;
         s.positions[idx].size_usd         += add_size;
+        s.positions[idx].entry_price      = avg_entry;
         s.positions[idx].r_dollars_risked += (dec.entry_price - s.positions[idx].stop_loss).abs() * add_qty;
         // Tighten stop to pyramided entry's stop if it's better
         if dec.stop_loss > s.positions[idx].stop_loss && s.positions[idx].side == "LONG" {
@@ -1227,7 +1246,9 @@ async fn dca_position(
             return;
         }
 
-        let add_qty   = add_size / dec.entry_price;
+        // Apply leverage so DCA shares have the same notional-per-dollar as the original.
+        let lev       = s.positions[idx].leverage;
+        let add_qty   = add_size * lev / dec.entry_price;
         let old_qty   = s.positions[idx].quantity;
         let old_entry = s.positions[idx].entry_price;
         let new_qty   = old_qty + add_qty;
