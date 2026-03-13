@@ -1,0 +1,209 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-03-13T23:17:59Z",
+    "commit": "012b2fd",
+    "commit_full": "012b2fd8dad9e8bf22b3465540f5476e59fb3d82",
+    "commit_message": "fix(clippy): batch fix Run #7 warnings + add crate-level style allows",
+    "branch": "master",
+    "overall_status": "FAILED",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
+    "cargo": "cargo 1.93.1 (083ac5135 2025-12-15)",
+    "os_kernel": "6.8.0-101-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 18,
+      "total_passed": 0,
+      "total_failed": 0,
+      "total_ignored": 0,
+      "failures": []
+    },
+    "clippy": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 16,
+      "error_count": 20,
+      "errors": [
+        {
+          "code": "E",
+          "message": "type `modules::hyperliquid_protocol::OrderState` is more private than the item `modules::hyperliquid_protocol::Hyperliqu",
+          "file": "src/modules/hyperliquid_protocol.rs",
+          "line": 871,
+          "col": 5
+        },
+        {
+          "code": "E",
+          "message": "struct `AuthenticatedRequest` is never constructed",
+          "file": "src/modules/hyperliquid_protocol.rs",
+          "line": 98,
+          "col": 8
+        },
+        {
+          "code": "E",
+          "message": "method `send_request` is never used",
+          "file": "src/modules/hyperliquid_protocol.rs",
+          "line": 772,
+          "col": 14
+        },
+        {
+          "code": "E",
+          "message": "field `monitoring_interval_ms` is never read",
+          "file": "src/modules/liquidation_prevention.rs",
+          "line": 11,
+          "col": 5
+        },
+        {
+          "code": "E",
+          "message": "fields `account_manager`, `decision_interval_ms`, `rebalance_interval_ms`, and `health_check_interval_ms` are never read",
+          "file": "src/modules/autonomous_runner.rs",
+          "line": 13,
+          "col": 5
+        },
+        {
+          "code": "E",
+          "message": "fields `account_states` and `current_timestamp` are never read",
+          "file": "src/modules/backtester.rs",
+          "line": 179,
+          "col": 5
+        },
+        {
+          "code": "E",
+          "message": "clamp-like pattern without using clamp function",
+          "file": "src/modules/capital_manager.rs",
+          "line": 112,
+          "col": 9
+        },
+        {
+          "code": "E",
+          "message": "use of `or_insert_with` to construct default value",
+          "file": "src/modules/backtester.rs",
+          "line": 246,
+          "col": 18
+        },
+        {
+          "code": "E",
+          "message": "this method chain can be written more clearly with `if .. else ..`",
+          "file": "src/modules/backtester.rs",
+          "line": 274,
+          "col": 13
+        },
+        {
+          "code": "E",
+          "message": "unnecessary closure used with `bool::then`",
+          "file": "src/modules/backtester.rs",
+          "line": 274,
+          "col": 13
+        },
+        {
+          "code": "E",
+          "message": "match expression looks like `matches!` macro",
+          "file": "src/utils/error_handling.rs",
+          "line": 73,
+          "col": 9
+        },
+        {
+          "code": "E",
+          "message": "this `impl` can be derived",
+          "file": "src/strategies/institutional.rs",
+          "line": 29,
+          "col": 1
+        },
+        {
+          "code": "E",
+          "message": "this expression creates a reference which is immediately dereferenced by the compiler",
+          "file": "src/strategies/mod.rs",
+          "line": 133,
+          "col": 50
+        },
+        {
+          "code": "E",
+          "message": "this expression creates a reference which is immediately dereferenced by the compiler",
+          "file": "src/strategies/mod.rs",
+          "line": 136,
+          "col": 49
+        },
+        {
+          "code": "E",
+          "message": "this expression creates a reference which is immediately dereferenced by the compiler",
+          "file": "src/strategies/mod.rs",
+          "line": 139,
+          "col": 46
+        },
+        {
+          "code": "E",
+          "message": "this expression creates a reference which is immediately dereferenced by the compiler",
+          "file": "src/strategies/mod.rs",
+          "line": 142,
+          "col": 54
+        },
+        {
+          "code": "E",
+          "message": "this expression creates a reference which is immediately dereferenced by the compiler",
+          "file": "src/strategies/mod.rs",
+          "line": 145,
+          "col": 44
+        },
+        {
+          "code": "E",
+          "message": "this expression creates a reference which is immediately dereferenced by the compiler",
+          "file": "src/strategies/mod.rs",
+          "line": 148,
+          "col": 46
+        },
+        {
+          "code": "E",
+          "message": "this expression creates a reference which is immediately dereferenced by the compiler",
+          "file": "src/strategies/mod.rs",
+          "line": 151,
+          "col": 50
+        },
+        {
+          "code": "E",
+          "message": "this expression creates a reference which is immediately dereferenced by the compiler",
+          "file": "src/strategies/mod.rs",
+          "line": 154,
+          "col": 51
+        }
+      ]
+    },
+    "audit": {
+      "status": "PASSED",
+      "exit_code": 0,
+      "duration_seconds": 2,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2021-0141",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2021-0141",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "hedgebot",
+    "status": "active",
+    "active_since": "Thu 2026-03-12 07:15:10 UTC",
+    "recent_logs": [
+      "Mar 12 07:15:10 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Started hedgebot.service - RedRobot HedgeBot.",
+      "Mar 12 07:15:13 ubuntu-s-1vcpu-1gb-sgp1-01 redrobot-hedgebot[217810]: [2026-03-12T07:15:13.533Z ERROR redrobot_hedgebot] Dashboard: Address already in use (os error 98)"
+    ]
+  }
+}
