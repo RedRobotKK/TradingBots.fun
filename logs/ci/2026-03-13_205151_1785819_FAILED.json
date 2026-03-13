@@ -1,0 +1,209 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-03-13T20:51:24Z",
+    "commit": "1785819",
+    "commit_full": "17858195acb9295677c659fde658db5b8c14813e",
+    "commit_message": "fix(ci): pull latest code on VPS before running checks",
+    "branch": "master",
+    "overall_status": "FAILED",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
+    "cargo": "cargo 1.93.1 (083ac5135 2025-12-15)",
+    "os_kernel": "6.8.0-101-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 8,
+      "total_passed": 0,
+      "total_failed": 0,
+      "total_ignored": 0,
+      "failures": []
+    },
+    "clippy": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 16,
+      "error_count": 20,
+      "errors": [
+        {
+          "code": "E",
+          "message": "unused import: `error`",
+          "file": "src/modules/backtester.rs",
+          "line": 30,
+          "col": 22
+        },
+        {
+          "code": "E",
+          "message": "unused import: `StrategyContext`",
+          "file": "src/strategies/institutional.rs",
+          "line": 14,
+          "col": 53
+        },
+        {
+          "code": "E",
+          "message": "unused import: `std::collections::HashMap`",
+          "file": "src/strategies/institutional.rs",
+          "line": 17,
+          "col": 5
+        },
+        {
+          "code": "E",
+          "message": "unused import: `TradeStatus`",
+          "file": "src/simulator.rs",
+          "line": 4,
+          "col": 64
+        },
+        {
+          "code": "E",
+          "message": "unused import: `DynamicPositionSize`",
+          "file": "src/ai_decision_engine.rs",
+          "line": 9,
+          "col": 38
+        },
+        {
+          "code": "E",
+          "message": "unused import: `std::collections::HashMap`",
+          "file": "src/strategy_analytics.rs",
+          "line": 14,
+          "col": 5
+        },
+        {
+          "code": "E",
+          "message": "unused import: `PositionStatus`",
+          "file": "src/dca_scoring_integration.rs",
+          "line": 10,
+          "col": 75
+        },
+        {
+          "code": "E",
+          "message": "unused import: `StrategyScore`",
+          "file": "src/dca_scoring_integration.rs",
+          "line": 11,
+          "col": 29
+        },
+        {
+          "code": "E",
+          "message": "unused import: `PatternType`",
+          "file": "src/price_action_scoring.rs",
+          "line": 6,
+          "col": 68
+        },
+        {
+          "code": "E",
+          "message": "variable does not need to be mutable",
+          "file": "src/modules/backtester.rs",
+          "line": 329,
+          "col": 22
+        },
+        {
+          "code": "E",
+          "message": "variable does not need to be mutable",
+          "file": "src/modules/backtester.rs",
+          "line": 337,
+          "col": 13
+        },
+        {
+          "code": "E",
+          "message": "variable does not need to be mutable",
+          "file": "src/modules/account_manager.rs",
+          "line": 21,
+          "col": 40
+        },
+        {
+          "code": "E",
+          "message": "unused variable: `current_price`",
+          "file": "src/modules/liquidation_prevention.rs",
+          "line": 176,
+          "col": 9
+        },
+        {
+          "code": "E",
+          "message": "unused variable: `new_allocs`",
+          "file": "src/modules/autonomous_runner.rs",
+          "line": 254,
+          "col": 23
+        },
+        {
+          "code": "E",
+          "message": "unused variable: `mid`",
+          "file": "src/strategies/bollinger_breakout.rs",
+          "line": 29,
+          "col": 9
+        },
+        {
+          "code": "E",
+          "message": "unused variable: `recovery_potential`",
+          "file": "src/strategies/supply_demand_zones.rs",
+          "line": 39,
+          "col": 13
+        },
+        {
+          "code": "E",
+          "message": "unused variable: `decline_potential`",
+          "file": "src/strategies/supply_demand_zones.rs",
+          "line": 69,
+          "col": 13
+        },
+        {
+          "code": "E",
+          "message": "unused variable: `price_change`",
+          "file": "src/strategies/order_block.rs",
+          "line": 28,
+          "col": 9
+        },
+        {
+          "code": "E",
+          "message": "unused variable: `distance_above_ob`",
+          "file": "src/strategies/order_block.rs",
+          "line": 40,
+          "col": 13
+        },
+        {
+          "code": "E",
+          "message": "unused variable: `distance_below_ob`",
+          "file": "src/strategies/order_block.rs",
+          "line": 59,
+          "col": 13
+        }
+      ]
+    },
+    "audit": {
+      "status": "PASSED",
+      "exit_code": 0,
+      "duration_seconds": 3,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2021-0141",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2021-0141",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "hedgebot",
+    "status": "active",
+    "active_since": "Thu 2026-03-12 07:15:10 UTC",
+    "recent_logs": [
+      "Mar 12 07:15:10 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Started hedgebot.service - RedRobot HedgeBot.",
+      "Mar 12 07:15:13 ubuntu-s-1vcpu-1gb-sgp1-01 redrobot-hedgebot[217810]: [2026-03-12T07:15:13.533Z ERROR redrobot_hedgebot] Dashboard: Address already in use (os error 98)"
+    ]
+  }
+}
