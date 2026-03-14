@@ -116,7 +116,7 @@ impl MarketClient {
                 if !resp.status().is_success() {
                     let status = resp.status();
                     match status.as_u16() {
-                        502 | 503 | 504 => anyhow::bail!(
+                        502..=504 => anyhow::bail!(
                             "hl_api_502: Hyperliquid servers temporarily unavailable (HTTP {}). \
                              This is a normal transient blip — the bot will retry automatically \
                              and resume as soon as the API recovers. No action needed.",

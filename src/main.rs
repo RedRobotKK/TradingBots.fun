@@ -252,10 +252,10 @@ async fn main() -> Result<()> {
                 tokio::time::sleep(std::time::Duration::from_secs(30)).await;
             }
             Err(e) => {
-                let err_str = format!("{}", e);
+                let err_str = e.to_string();
                 let (sleep_secs, friendly_msg) = classify_cycle_error(&err_str);
-                error!("Cycle error: {}", err_str);
-                warn!("{}", friendly_msg);
+                error!("Cycle error: {err_str}");
+                warn!("{friendly_msg}");
                 set_status(&bot_state, &friendly_msg).await;
                 tokio::time::sleep(std::time::Duration::from_secs(sleep_secs)).await;
             }
