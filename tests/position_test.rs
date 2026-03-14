@@ -10,7 +10,6 @@
 ///
 /// These tests target the shared library crate (lib.rs) and the types
 /// exported from fee_calculator and position_manager modules.
-
 use redrobot_hedgebot::fee_calculator::{FeeCalculator, FeeStructure};
 use redrobot_hedgebot::position_manager::{AggregatePosition, DCARules, PositionEntry};
 
@@ -180,8 +179,8 @@ fn dca_max_2_addons_prevents_over_averaging() {
 
 #[test]
 fn partial_close_takes_one_third_of_position() {
-    let qty: f64  = 9.0;
-    let size_usd  = 900.0;
+    let qty: f64     = 9.0;
+    let size_usd: f64 = 900.0;
     let close_qty  = qty / 3.0;
     let close_size = size_usd / 3.0;
     let remaining_qty  = qty - close_qty;
