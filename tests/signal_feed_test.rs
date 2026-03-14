@@ -1,14 +1,15 @@
-/// Integration tests for the signal feed pipeline.
-///
-/// Covers the end-to-end flow from raw market data → indicators → order flow →
-/// decision engine, verifying that:
-///   - Directional symmetry holds across LONG / SHORT scenarios
-///   - Regime classification feeds correct signal logic
-///   - Signal weights normalise through the learner
-///   - Known regressions stay fixed (ORDER_FLOW SHORT confidence, ATR override)
-///
-/// Pure functions are called via the crate's public API so these tests act as
-/// a live smoke test for any refactoring.
+//! Integration tests for the signal feed pipeline.
+//!
+//! Covers the end-to-end flow from raw market data → indicators → order flow →
+//! decision engine, verifying that:
+//!   - Directional symmetry holds across LONG / SHORT scenarios
+//!   - Regime classification feeds correct signal logic
+//!   - Signal weights normalise through the learner
+//!   - Known regressions stay fixed (ORDER_FLOW SHORT confidence, ATR override)
+//!
+//! Pure functions are called via the crate's public API so these tests act as
+//! a live smoke test for any refactoring.
+
 // ── Inline helpers (no crate imports needed for pure functions) ───────────────
 
 #[allow(dead_code)]
