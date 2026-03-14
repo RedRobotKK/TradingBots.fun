@@ -1599,7 +1599,7 @@ mod tests {
         // If t_heat > MAX_TRADE_HEAT, the allowed-margin formula must produce
         // a size whose heat is exactly MAX_TRADE_HEAT.
         // allowed = MAX_TRADE_HEAT × equity / (stop_dist_pct × leverage)
-        let entry     = 100.0;
+        let entry: f64 = 100.0;
         let stop      = 95.0;   // 5% stop distance
         let equity    = 1000.0;
         let leverage  = 3.0;
@@ -1632,7 +1632,7 @@ mod tests {
         // The actual dollar loss if stop is hit:
         //   qty = 100 × 3 / 100 = 3 shares
         //   loss = (100 - 98) × 3 = $6  → 6/1000 = 0.6%  ✓ matches new formula
-        let entry = 100.0; let stop = 98.0; let size_usd = 100.0; let equity = 1000.0;
+        let entry: f64 = 100.0; let stop = 98.0; let size_usd = 100.0; let equity = 1000.0;
         let leverage = 3.0;
         let qty = size_usd * leverage / entry;
         let actual_dollar_loss = (entry - stop).abs() * qty;
@@ -1846,7 +1846,7 @@ mod tests {
     fn pnl_formula_long_close_matches_price_move_times_qty() {
         // close_paper_position uses: (exit - entry) * quantity for LONG
         // This is the leveraged return: qty = margin × leverage / entry
-        let entry    = 100.0;
+        let entry: f64 = 100.0;
         let exit     = 110.0; // +10%
         let margin   = 100.0;
         let leverage = 3.0;
@@ -1869,7 +1869,7 @@ mod tests {
     #[test]
     fn pnl_formula_short_close_matches_price_move_times_qty() {
         // close_paper_position uses: (entry - exit) * quantity for SHORT
-        let entry    = 100.0;
+        let entry: f64 = 100.0;
         let exit     = 90.0;  // price falls 10% → SHORT wins
         let margin   = 100.0;
         let leverage = 3.0;
@@ -1886,7 +1886,7 @@ mod tests {
     fn r_multiple_formula_is_consistent_with_pnl_and_entry_risk() {
         // r_mult = unrealised_pnl / r_dollars_risked
         // At 1R: pnl should equal r_dollars_risked
-        let entry    = 100.0;
+        let entry: f64 = 100.0;
         let stop     = 95.0;  // 5% distance
         let margin   = 100.0;
         let leverage = 3.0;
@@ -1907,7 +1907,7 @@ mod tests {
     #[test]
     fn dca_weighted_avg_entry_formula() {
         // After DCA add-on: avg_entry = (old_qty × old_entry + add_qty × dca_price) / new_qty
-        let old_entry = 100.0;
+        let old_entry: f64 = 100.0;
         let dca_price = 95.0;  // price fell, we DCA lower
         let old_qty   = 3.0;
         let add_qty   = 1.5;   // 50% of original size
@@ -1928,7 +1928,7 @@ mod tests {
     #[test]
     fn pyramid_weighted_avg_entry_formula() {
         // After pyramid: avg_entry = (old_qty × old_entry + add_qty × pyramid_price) / new_qty
-        let old_entry    = 100.0;
+        let old_entry: f64 = 100.0;
         let pyramid_price = 106.0; // price rose 6%, we pyramid
         let old_qty      = 3.0;
         let add_qty      = 1.5;   // 50% add-on
@@ -1950,7 +1950,7 @@ mod tests {
     fn partial_close_r_dollars_risked_scales_proportionally() {
         // After 1/3 close (tranche 1), r_dollars_risked *= 2/3.
         // Simulates take_partial() logic.
-        let original_r = 150.0;
+        let original_r: f64 = 150.0;
         let after_partial = original_r * (2.0 / 3.0);
         let expected = 100.0;
         assert!(
@@ -1963,7 +1963,7 @@ mod tests {
     fn trailing_stop_breakeven_move_for_long() {
         // At 1R profit: stop moves to entry (breakeven).
         // pos.stop_loss < pos.entry_price AND r_mult >= 1.0 → stop = entry
-        let entry   = 100.0;
+        let entry: f64 = 100.0;
         let stop    = 95.0;
         let qty     = 3.0;
         let r_risk  = (entry - stop) * qty; // $15
@@ -1983,7 +1983,7 @@ mod tests {
     #[test]
     fn trailing_stop_trails_hwm_at_1_5r_for_long() {
         // At ≥ 1.5R: trail 1.2×ATR below HWM.
-        let entry   = 100.0;
+        let entry: f64 = 100.0;
         let stop    = 95.0;
         let qty     = 3.0;
         let atr     = 2.0;

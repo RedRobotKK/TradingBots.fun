@@ -809,7 +809,7 @@ pub async fn serve(state: SharedState, port: u16) -> Result<(), Box<dyn std::err
 mod tests {
     use super::*;
     use crate::learner::SignalContribution;
-    use crate::metrics::PerformanceMetrics;
+
     use std::collections::VecDeque;
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -874,7 +874,7 @@ mod tests {
     #[test]
     fn total_pnl_combines_realised_and_unrealised() {
         // total_pnl = s.pnl (closed) + sum(unrealised_pnl)
-        let realised   = 50.0;  // closed trade profits
+        let realised: f64 = 50.0;  // closed trade profits
         let unrealised = -10.0; // current open loss
         let total = realised + unrealised;
         assert!((total - 40.0).abs() < 1e-10, "total P&L: $50 realised - $10 open = $40");
@@ -882,7 +882,7 @@ mod tests {
 
     #[test]
     fn total_pnl_pct_is_relative_to_initial_capital() {
-        let initial   = 1000.0;
+        let initial: f64 = 1000.0;
         let total_pnl = 150.0;
         let pct = total_pnl / initial * 100.0;
         assert!((pct - 15.0).abs() < 1e-10, "15% gain on $1000 initial");
@@ -973,7 +973,7 @@ mod tests {
     fn all_time_dd_uses_peak_equity_not_rolling_window() {
         // The all-time peak is tracked separately in s.peak_equity.
         // This can be much higher than the rolling 7-day peak.
-        let peak_equity = 5000.0; // hit months ago
+        let peak_equity: f64 = 5000.0; // hit months ago
         let equity      = 1000.0; // current
         let dd_pct = (peak_equity - equity) / peak_equity * 100.0;
         assert!(
