@@ -64,7 +64,7 @@ pub struct HyperliquidClient {
 /// Order state tracking
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
-pub(crate) struct OrderState {
+pub struct OrderState {
     pub order_id: String,
     pub symbol: String,
     pub side: OrderSide,
