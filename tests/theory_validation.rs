@@ -131,11 +131,7 @@ fn calculate_technicals(
 /// Calculate support/resistance levels using simple high/low analysis
 fn analyze_support_resistance(data: &[MarketSnapshot], current_idx: usize) -> (f64, f64) {
     let lookback = 24; // Last 24 hours
-    let start_idx = if current_idx > lookback {
-        current_idx - lookback
-    } else {
-        0
-    };
+    let start_idx = current_idx.saturating_sub(lookback);
 
     let recent_data = &data[start_idx..=current_idx];
 
@@ -290,11 +286,11 @@ fn test_dynamic_sizing_theory_validation() {
     let closed_trades = backtester.closed_trades();
     let winning_trades = closed_trades
         .iter()
-        .filter(|t| t.pnl.map_or(false, |p| p > 0.0))
+        .filter(|t| t.pnl.is_some_and(|p| p > 0.0))
         .count();
     let _losing_trades = closed_trades
         .iter()
-        .filter(|t| t.pnl.map_or(false, |p| p < 0.0))
+        .filter(|t| t.pnl.is_some_and(|p| p < 0.0))
         .count();
     let total_trades = closed_trades.len();
 
@@ -326,9 +322,9 @@ fn test_dynamic_sizing_theory_validation() {
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
     // Check if theory holds
-    let target_return_met = return_pct >= 10.0 && return_pct <= 20.0;
+    let target_return_met = (10.0..=20.0).contains(&return_pct);
     let target_win_rate_met = win_rate >= 70.0;
-    let trade_frequency_met = total_trades >= 6 && total_trades <= 14;
+    let trade_frequency_met = (6..=14).contains(&total_trades);
 
     println!("Target Return (10-20%):     {} {:.2}%",
         if target_return_met { "✅" } else { "❌" }, return_pct);
