@@ -153,8 +153,7 @@ impl PriceActionBacktester {
                 if let Some(entry_idx) = self.entry_candle_idx {
                     let exit_price = self.evaluate_exit(pattern, candle);
 
-                    if exit_price.is_some() {
-                        let exit = exit_price.unwrap();
+                    if let Some(exit) = exit_price {
                         let trade = self.create_trade(pattern, entry_idx, idx, exit);
                         self.trades.push(trade);
                         self.current_pattern = None;
@@ -260,7 +259,7 @@ impl PriceActionBacktester {
         for trade in &self.trades {
             pattern_stats_map
                 .entry(trade.pattern_type)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(trade);
         }
 

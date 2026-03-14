@@ -232,8 +232,8 @@ impl Simulator {
 
         // Compile results
         let trades = backtester.closed_trades();
-        let winning_trades = trades.iter().filter(|t| t.pnl.map_or(false, |p| p > 0.0)).count();
-        let losing_trades = trades.iter().filter(|t| t.pnl.map_or(false, |p| p < 0.0)).count();
+        let winning_trades = trades.iter().filter(|t| t.pnl.is_some_and(|p| p > 0.0)).count();
+        let losing_trades = trades.iter().filter(|t| t.pnl.is_some_and(|p| p < 0.0)).count();
 
         let best_trade = trades
             .iter()

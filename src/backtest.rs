@@ -286,7 +286,7 @@ impl Backtester {
         let winners = self
             .closed_trades
             .iter()
-            .filter(|t| t.pnl.map_or(false, |p| p > 0.0))
+            .filter(|t| t.pnl.is_some_and(|p| p > 0.0))
             .count();
         if self.closed_trades.is_empty() {
             0.0

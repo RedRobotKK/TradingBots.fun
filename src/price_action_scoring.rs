@@ -49,10 +49,10 @@ impl PriceActionScorer {
         // Entry quality: How clean is the entry?
         // Measured by how tight the stop is relative to entry
         let _stop_distance = (pattern.stop_zone - pattern.entry_price).abs();
-        let entry_quality = Self::calculate_entry_quality(&pattern);
+        let entry_quality = Self::calculate_entry_quality(pattern);
 
         // RR quality: How good is the risk/reward?
-        let rr_quality = Self::calculate_rr_quality(&pattern);
+        let rr_quality = Self::calculate_rr_quality(pattern);
 
         // Confluence: Do other patterns align?
         let confluence = detector.get_confluence_score();
@@ -66,7 +66,7 @@ impl PriceActionScorer {
         let action = Self::score_to_action(institutional_score);
 
         let rationale = Self::generate_rationale(
-            &pattern,
+            pattern,
             institutional_score,
             entry_quality,
             rr_quality,

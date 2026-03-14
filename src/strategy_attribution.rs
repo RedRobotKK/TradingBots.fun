@@ -265,7 +265,7 @@ impl StrategyAttributor {
         for trade in &self.trades {
             regime_data
                 .entry(trade.market_regime)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(trade);
         }
 

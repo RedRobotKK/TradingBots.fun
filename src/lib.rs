@@ -11,6 +11,8 @@
 #![allow(clippy::unnecessary_lazy_evaluations)]  // .then(|| val) → .then_some(val) (readability)
 #![allow(clippy::manual_clamp)]                  // manual clamp pattern (explicit is clearer)
 #![allow(clippy::or_fun_call)]                   // .unwrap_or(f()) → .unwrap_or_else(|| f())
+#![allow(clippy::too_many_arguments)]            // complex trade/attribution fns need many params
+#![allow(clippy::collapsible_if)]                // nested ifs with intermediate lets (intentional)
 
 /// Multi-protocol, multi-chain trading system for Drift, Hyperliquid, and more
 ///
