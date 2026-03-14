@@ -1,0 +1,209 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-03-14T05:47:03Z",
+    "commit": "b62a6db",
+    "commit_full": "b62a6db546dcc308f5e52b329311e87734db8379",
+    "commit_message": "fix: replace useless vec! with array literal in integration_test (Run #16)",
+    "branch": "master",
+    "overall_status": "FAILED",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
+    "cargo": "cargo 1.93.1 (083ac5135 2025-12-15)",
+    "os_kernel": "6.8.0-101-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 1,
+      "total_passed": 0,
+      "total_failed": 0,
+      "total_ignored": 0,
+      "failures": []
+    },
+    "clippy": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 7,
+      "error_count": 20,
+      "errors": [
+        {
+          "code": "E",
+          "message": "variable `trending_total` is assigned to, but never used",
+          "file": "src/daily_analyst.rs",
+          "line": 210,
+          "col": 36
+        },
+        {
+          "code": "E",
+          "message": "variable `neutral_total` is assigned to, but never used",
+          "file": "src/daily_analyst.rs",
+          "line": 211,
+          "col": 36
+        },
+        {
+          "code": "E",
+          "message": "variable `ranging_total` is assigned to, but never used",
+          "file": "src/daily_analyst.rs",
+          "line": 212,
+          "col": 36
+        },
+        {
+          "code": "E",
+          "message": "unused variable: `take_profit`",
+          "file": "src/daily_analyst.rs",
+          "line": 242,
+          "col": 49
+        },
+        {
+          "code": "E",
+          "message": "unused variable: `leverage`",
+          "file": "src/daily_analyst.rs",
+          "line": 242,
+          "col": 62
+        },
+        {
+          "code": "E",
+          "message": "unused variable: `r_risk_usd`",
+          "file": "src/daily_analyst.rs",
+          "line": 243,
+          "col": 38
+        },
+        {
+          "code": "E",
+          "message": "unused variable: `in_circuit_breaker`",
+          "file": "src/daily_analyst.rs",
+          "line": 243,
+          "col": 61
+        },
+        {
+          "code": "E",
+          "message": "unused variable: `portfolio_heat_pct`",
+          "file": "src/daily_analyst.rs",
+          "line": 244,
+          "col": 38
+        },
+        {
+          "code": "E",
+          "message": "unused variable: `kelly_pct`",
+          "file": "src/daily_analyst.rs",
+          "line": 244,
+          "col": 58
+        },
+        {
+          "code": "E",
+          "message": "unused variable: `cycles_held`",
+          "file": "src/daily_analyst.rs",
+          "line": 268,
+          "col": 51
+        },
+        {
+          "code": "E",
+          "message": "value assigned to `trending_total` is never read",
+          "file": "src/daily_analyst.rs",
+          "line": 233,
+          "col": 39
+        },
+        {
+          "code": "E",
+          "message": "value assigned to `neutral_total` is never read",
+          "file": "src/daily_analyst.rs",
+          "line": 234,
+          "col": 39
+        },
+        {
+          "code": "E",
+          "message": "value assigned to `ranging_total` is never read",
+          "file": "src/daily_analyst.rs",
+          "line": 235,
+          "col": 39
+        },
+        {
+          "code": "E",
+          "message": "unused variable: `equity`",
+          "file": "src/main.rs",
+          "line": 274,
+          "col": 13
+        },
+        {
+          "code": "E",
+          "message": "multiple fields are never read",
+          "file": "src/config.rs",
+          "line": 15,
+          "col": 9
+        },
+        {
+          "code": "E",
+          "message": "struct `Position` is never constructed",
+          "file": "src/exchange.rs",
+          "line": 37,
+          "col": 12
+        },
+        {
+          "code": "E",
+          "message": "method `should_close` is never used",
+          "file": "src/exchange.rs",
+          "line": 52,
+          "col": 12
+        },
+        {
+          "code": "E",
+          "message": "methods `get_positions` and `close_position` are never used",
+          "file": "src/exchange.rs",
+          "line": 122,
+          "col": 18
+        },
+        {
+          "code": "E",
+          "message": "method `get_recent_trades` is never used",
+          "file": "src/db.rs",
+          "line": 27,
+          "col": 18
+        },
+        {
+          "code": "E",
+          "message": "method `emoji` is never used",
+          "file": "src/sentiment.rs",
+          "line": 65,
+          "col": 12
+        }
+      ]
+    },
+    "audit": {
+      "status": "PASSED",
+      "exit_code": 0,
+      "duration_seconds": 2,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2021-0141",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2021-0141",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "hedgebot",
+    "status": "active",
+    "active_since": "Thu 2026-03-12 07:15:10 UTC",
+    "recent_logs": [
+      "Mar 12 07:15:10 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Started hedgebot.service - RedRobot HedgeBot.",
+      "Mar 12 07:15:13 ubuntu-s-1vcpu-1gb-sgp1-01 redrobot-hedgebot[217810]: [2026-03-12T07:15:13.533Z ERROR redrobot_hedgebot] Dashboard: Address already in use (os error 98)"
+    ]
+  }
+}
