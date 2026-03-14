@@ -199,17 +199,17 @@ fn compute_stats(events: &[TradeEvent], date: &str) -> DayStats {
 
     let mut win_conf_sum = 0.0f64;
     let mut loss_conf_sum = 0.0f64;
-    let mut win_adx_sum  = 0.0f64;
-    let mut loss_adx_sum = 0.0f64;
-    let mut win_rsi_sum  = 0.0f64;
-    let mut loss_rsi_sum = 0.0f64;
-    let mut win_vol_sum  = 0.0f64;
-    let mut loss_vol_sum = 0.0f64;
-    let mut win_atr_sum  = 0.0f64;
-    let mut loss_atr_sum = 0.0f64;
-    let mut trending_wins = 0u64; let mut trending_total = 0u64;
-    let mut neutral_wins  = 0u64; let mut neutral_total  = 0u64;
-    let mut ranging_wins  = 0u64; let mut ranging_total  = 0u64;
+    let _win_adx_sum  = 0.0f64;
+    let _loss_adx_sum = 0.0f64;
+    let _win_rsi_sum  = 0.0f64;
+    let _loss_rsi_sum = 0.0f64;
+    let _win_vol_sum  = 0.0f64;
+    let _loss_vol_sum = 0.0f64;
+    let _win_atr_sum  = 0.0f64;
+    let _loss_atr_sum = 0.0f64;
+    let _trending_wins = 0u64; let mut trending_total = 0u64;
+    let _neutral_wins  = 0u64; let mut neutral_total  = 0u64;
+    let _ranging_wins  = 0u64; let mut ranging_total  = 0u64;
     let mut r_sum   = 0.0f64;
     let mut hold_sum = 0u64;
     let mut all_wins_usd: Vec<f64> = Vec::new();
@@ -225,9 +225,17 @@ fn compute_stats(events: &[TradeEvent], date: &str) -> DayStats {
                 s.final_capital = *free_capital;
             }
 
-            TradeEvent::Decision { action, skip_reason, .. } => {
+            TradeEvent::Decision { action, skip_reason, regime, .. } => {
                 s.total_decisions += 1;
                 if action == "SKIP" || skip_reason.is_some() { s.total_skips += 1; }
+                if action != "SKIP" {
+                    match regime.as_str() {
+                        "Trending" => trending_total += 1,
+                        "Neutral"  => neutral_total  += 1,
+                        "Ranging"  => ranging_total  += 1,
+                        _ => {}
+                    }
+                }
             }
 
             TradeEvent::TradeEntry { symbol, side, entry_price, confidence, ts,
@@ -311,18 +319,6 @@ fn compute_stats(events: &[TradeEvent], date: &str) -> DayStats {
                 s.final_capital = *capital;
             }
 
-            // Decisions carry the indicator values we need for regime analysis
-            TradeEvent::Decision { action, regime, rsi, adx, volume_ratio, atr_expansion, .. }
-                if action != "SKIP" => {
-                let won_entry = pending_entries.values().any(|_| false); // placeholder
-                let _ = (regime, rsi, adx, volume_ratio, atr_expansion, won_entry);
-                match regime.as_str() {
-                    "Trending" => trending_total += 1,
-                    "Neutral"  => neutral_total  += 1,
-                    "Ranging"  => ranging_total  += 1,
-                    _ => {}
-                }
-            }
             _ => {}
         }
     }

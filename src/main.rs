@@ -639,12 +639,9 @@ async fn apply_ai_review(
                 // (stagnation, failed signal, or genuine loss). Trust it.
                 // Only skip if position is brand-new (< 15 min) to avoid noise.
                 let should_close = {
-                    let s = bot_state.lock().await;
+                    let s = bot_state.read().await;
                     s.positions.iter().find(|p| p.symbol == rec.symbol)
-                        .map(|p| {
-                            let hold_mins = (chrono::Utc::now() - p.opened_at).num_minutes();
-                            hold_mins >= 15  // give position 15 min before AI can close it
-                        })
+                        .map(|p| p.cycles_held >= 30) // 30 cycles × 30s = 15 min minimum hold
                         .unwrap_or(false)
                 };
                 if should_close {

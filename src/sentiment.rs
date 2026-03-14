@@ -19,7 +19,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, RwLock};
-use serde_json;
 
 // Refresh interval: 5 minutes (LunarCrush free tier is generous but not real-time)
 const CACHE_TTL: Duration = Duration::from_secs(300);
