@@ -1,0 +1,73 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-03-14T17:57:42Z",
+    "commit": "9cc3c34",
+    "commit_full": "9cc3c34ae4b9e3cc4ac46e040a231b3f46f70cca",
+    "commit_message": "fix: assert 12 signals with neutral test data (CI Run #34)",
+    "branch": "master",
+    "overall_status": "FAILED",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
+    "cargo": "cargo 1.93.1 (083ac5135 2025-12-15)",
+    "os_kernel": "6.8.0-101-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 7,
+      "total_passed": 374,
+      "total_failed": 1,
+      "total_ignored": 0,
+      "failures": [
+        "hyperliquid_integration_tests::test_hmac_signature_generation"
+      ]
+    },
+    "clippy": {
+      "status": "PASSED",
+      "exit_code": 0,
+      "duration_seconds": 2,
+      "error_count": 0,
+      "errors": []
+    },
+    "audit": {
+      "status": "PASSED",
+      "exit_code": 0,
+      "duration_seconds": 2,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2021-0141",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2021-0141",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "hedgebot",
+    "status": "active",
+    "active_since": "Thu 2026-03-12 07:15:10 UTC",
+    "recent_logs": [
+      "Mar 14 07:06:05 ubuntu-s-1vcpu-1gb-sgp1-01 redrobot-hedgebot[217810]: [2026-03-14T07:06:05.446Z ERROR redrobot_hedgebot] Cycle error: Hyperliquid allMids returned HTTP 502 Bad Gateway",
+      "Mar 14 07:06:16 ubuntu-s-1vcpu-1gb-sgp1-01 redrobot-hedgebot[217810]: [2026-03-14T07:06:16.561Z ERROR redrobot_hedgebot] Cycle error: Hyperliquid allMids returned HTTP 502 Bad Gateway",
+      "Mar 14 07:06:27 ubuntu-s-1vcpu-1gb-sgp1-01 redrobot-hedgebot[217810]: [2026-03-14T07:06:27.675Z ERROR redrobot_hedgebot] Cycle error: Hyperliquid allMids returned HTTP 502 Bad Gateway",
+      "Mar 14 07:06:38 ubuntu-s-1vcpu-1gb-sgp1-01 redrobot-hedgebot[217810]: [2026-03-14T07:06:38.789Z ERROR redrobot_hedgebot] Cycle error: Hyperliquid allMids returned HTTP 502 Bad Gateway",
+      "Mar 14 07:06:49 ubuntu-s-1vcpu-1gb-sgp1-01 redrobot-hedgebot[217810]: [2026-03-14T07:06:49.902Z ERROR redrobot_hedgebot] Cycle error: Hyperliquid allMids returned HTTP 502 Bad Gateway"
+    ]
+  }
+}
