@@ -1,0 +1,83 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-03-14T21:48:15Z",
+    "commit": "e195d37",
+    "commit_full": "e195d3760ceb3ae9e9911d21cbacbd97f8b02085",
+    "commit_message": "fix(errors): friendly error messages for 502/503/429/network failures",
+    "branch": "master",
+    "overall_status": "FAILED",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
+    "cargo": "cargo 1.93.1 (083ac5135 2025-12-15)",
+    "os_kernel": "6.8.0-101-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "PASSED",
+      "exit_code": 0,
+      "duration_seconds": 52,
+      "total_passed": 431,
+      "total_failed": 0,
+      "total_ignored": 2,
+      "failures": []
+    },
+    "clippy": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 6,
+      "error_count": 2,
+      "errors": [
+        {
+          "code": "E",
+          "message": "this OR pattern can be rewritten using a range",
+          "file": "src/data.rs",
+          "line": 119,
+          "col": 25
+        },
+        {
+          "code": "E",
+          "message": "could not compile `redrobot-hedgebot` (bin \"redrobot-hedgebot\") due to 1 previous error"
+        }
+      ]
+    },
+    "audit": {
+      "status": "PASSED",
+      "exit_code": 0,
+      "duration_seconds": 4,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2021-0141",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2021-0141",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "hedgebot",
+    "status": "active",
+    "active_since": "Thu 2026-03-12 07:15:10 UTC",
+    "recent_logs": [
+      "Mar 14 07:06:05 ubuntu-s-1vcpu-1gb-sgp1-01 redrobot-hedgebot[217810]: [2026-03-14T07:06:05.446Z ERROR redrobot_hedgebot] Cycle error: Hyperliquid allMids returned HTTP 502 Bad Gateway",
+      "Mar 14 07:06:16 ubuntu-s-1vcpu-1gb-sgp1-01 redrobot-hedgebot[217810]: [2026-03-14T07:06:16.561Z ERROR redrobot_hedgebot] Cycle error: Hyperliquid allMids returned HTTP 502 Bad Gateway",
+      "Mar 14 07:06:27 ubuntu-s-1vcpu-1gb-sgp1-01 redrobot-hedgebot[217810]: [2026-03-14T07:06:27.675Z ERROR redrobot_hedgebot] Cycle error: Hyperliquid allMids returned HTTP 502 Bad Gateway",
+      "Mar 14 07:06:38 ubuntu-s-1vcpu-1gb-sgp1-01 redrobot-hedgebot[217810]: [2026-03-14T07:06:38.789Z ERROR redrobot_hedgebot] Cycle error: Hyperliquid allMids returned HTTP 502 Bad Gateway",
+      "Mar 14 07:06:49 ubuntu-s-1vcpu-1gb-sgp1-01 redrobot-hedgebot[217810]: [2026-03-14T07:06:49.902Z ERROR redrobot_hedgebot] Cycle error: Hyperliquid allMids returned HTTP 502 Bad Gateway"
+    ]
+  }
+}
