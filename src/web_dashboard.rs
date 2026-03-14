@@ -586,10 +586,12 @@ body{{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacS
 /* ── Position cards + flip ── */
 .pos-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}}
 /* Flip wrapper sits in the grid; inner uses CSS grid to stack front & back */
-.pos-flip-wrap{{perspective:1200px}}
-.pos-flip-inner{{display:grid;grid-template-columns:1fr;transform-style:preserve-3d;
-                 transition:transform .55s cubic-bezier(.4,0,.2,1)}}
-.pos-flip-wrap.flipped .pos-flip-inner{{transform:rotateY(180deg)}}
+.pos-flip-wrap{{perspective:1200px;-webkit-perspective:1200px;touch-action:manipulation;cursor:pointer}}
+.pos-flip-inner{{display:grid;grid-template-columns:1fr;
+                 transform-style:preserve-3d;-webkit-transform-style:preserve-3d;
+                 transition:transform .55s cubic-bezier(.4,0,.2,1),
+                             -webkit-transform .55s cubic-bezier(.4,0,.2,1)}}
+.pos-flip-wrap.flipped .pos-flip-inner{{transform:rotateY(180deg);-webkit-transform:rotateY(180deg)}}
 /* Front face */
 .pos-card{{background:var(--dim);border-radius:8px;padding:12px;border-left:3px solid var(--border);
            animation:fadeSlide .35s ease both;
@@ -736,11 +738,16 @@ tr:hover td{{background:rgba(255,255,255,.03)}}
 
 <script>
 /* ── Position card 3-D flip — one chart visible at a time ──────────────── */
+/* _flipLock debounces rapid taps / double-clicks (lock > transition duration) */
+var _flipLock={{}};
 function flipPos(id){{
+  if(_flipLock[id])return;
+  _flipLock[id]=true;
+  setTimeout(function(){{delete _flipLock[id];}},650);
   var wrap=document.getElementById('pf-'+id);
   if(!wrap)return;
   var opening=!wrap.classList.contains('flipped');
-  /* close any other open chart first */
+  /* one chart at a time — collapse any other open card */
   if(opening){{
     document.querySelectorAll('.pos-flip-wrap.flipped').forEach(function(w){{
       if(w!==wrap)w.classList.remove('flipped');
