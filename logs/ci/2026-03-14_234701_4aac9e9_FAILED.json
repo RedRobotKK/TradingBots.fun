@@ -1,0 +1,90 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-03-14T23:46:51Z",
+    "commit": "4aac9e9",
+    "commit_full": "4aac9e969a91f73472b9bfa366f91310aed4e4ee",
+    "commit_message": "fix(service): prevent port-3000 collision on restart",
+    "branch": "master",
+    "overall_status": "FAILED",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
+    "cargo": "cargo 1.93.1 (083ac5135 2025-12-15)",
+    "os_kernel": "6.8.0-101-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 4,
+      "total_passed": 0,
+      "total_failed": 0,
+      "total_ignored": 0,
+      "failures": []
+    },
+    "clippy": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 3,
+      "error_count": 3,
+      "errors": [
+        {
+          "code": "E0063",
+          "message": "missing fields `atr_pct`, `regime` and `rsi` in initializer of `web_dashboard::CandidateInfo`",
+          "file": "src/main.rs",
+          "line": 535,
+          "col": 18
+        },
+        {
+          "code": "E",
+          "message": "unused variable: `atr_td`",
+          "file": "src/web_dashboard.rs",
+          "line": 428,
+          "col": 17
+        },
+        {
+          "code": "E",
+          "message": "could not compile `redrobot-hedgebot` (bin \"redrobot-hedgebot\" test) due to 2 previous errors"
+        }
+      ]
+    },
+    "audit": {
+      "status": "PASSED",
+      "exit_code": 0,
+      "duration_seconds": 1,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2021-0141",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2021-0141",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "hedgebot",
+    "status": "active",
+    "active_since": "Sat 2026-03-14 23:42:49 UTC",
+    "recent_logs": [
+      "Mar 14 23:42:49 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Stopping hedgebot.service - RedRobot HedgeBot...",
+      "Mar 14 23:42:49 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: hedgebot.service: Deactivated successfully.",
+      "Mar 14 23:42:49 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Stopped hedgebot.service - RedRobot HedgeBot.",
+      "Mar 14 23:42:49 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: hedgebot.service: Consumed 1.771s CPU time, 7.6M memory peak, 0B memory swap peak.",
+      "Mar 14 23:42:49 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Started hedgebot.service - RedRobot HedgeBot."
+    ]
+  }
+}
