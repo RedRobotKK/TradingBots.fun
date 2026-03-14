@@ -1,0 +1,102 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-03-14T09:29:32Z",
+    "commit": "06e4d55",
+    "commit_full": "06e4d551a32f9725fb1e29962f3797e82af0fc71",
+    "commit_message": "fix: resolve 5 clippy errors across 3 new files (CI Run #28)",
+    "branch": "master",
+    "overall_status": "FAILED",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
+    "cargo": "cargo 1.93.1 (083ac5135 2025-12-15)",
+    "os_kernel": "6.8.0-101-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 76,
+      "total_passed": 127,
+      "total_failed": 18,
+      "total_ignored": 0,
+      "failures": [
+        "dca_scoring_integration::tests::test_capital_staging",
+        "dynamic_position_sizing::tests::test_dca_scaling",
+        "dynamic_position_sizing::tests::test_sol_example",
+        "fee_calculator::tests::test_hyperliquid_fees",
+        "fee_calculator::tests::test_small_trade_unprofitable",
+        "integration_tests::test_full_account_setup_workflow",
+        "models::account::tests::test_account_touch",
+        "models::account::tests::test_health_metrics_can_trade",
+        "modules::account_manager::tests::test_account_updated_timestamp",
+        "modules::capital_manager::tests::test_capital_for_account",
+        "modules::capital_manager::tests::test_kelly_criterion",
+        "modules::capital_manager::tests::test_set_allocation",
+        "modules::hyperliquid_protocol::tests::test_check_liquidation_risk_no_position",
+        "modules::hyperliquid_protocol::tests::test_sign_request",
+        "scoring_system::tests::test_funding_rate_scoring",
+        "scoring_system::tests::test_pairs_trading_scoring",
+        "strategies::institutional::tests::test_pairs_trading_entry",
+        "strategy_analytics::tests::test_viability_scoring"
+      ]
+    },
+    "clippy": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 31,
+      "error_count": 2,
+      "errors": [
+        {
+          "code": "E",
+          "message": "useless use of `vec!`",
+          "file": "src/modules/execution_engine.rs",
+          "line": 1118,
+          "col": 26
+        },
+        {
+          "code": "E",
+          "message": "could not compile `redrobot-hedgebot` (lib test) due to 1 previous error"
+        }
+      ]
+    },
+    "audit": {
+      "status": "PASSED",
+      "exit_code": 0,
+      "duration_seconds": 2,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2021-0141",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2021-0141",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "hedgebot",
+    "status": "active",
+    "active_since": "Thu 2026-03-12 07:15:10 UTC",
+    "recent_logs": [
+      "Mar 14 07:06:05 ubuntu-s-1vcpu-1gb-sgp1-01 redrobot-hedgebot[217810]: [2026-03-14T07:06:05.446Z ERROR redrobot_hedgebot] Cycle error: Hyperliquid allMids returned HTTP 502 Bad Gateway",
+      "Mar 14 07:06:16 ubuntu-s-1vcpu-1gb-sgp1-01 redrobot-hedgebot[217810]: [2026-03-14T07:06:16.561Z ERROR redrobot_hedgebot] Cycle error: Hyperliquid allMids returned HTTP 502 Bad Gateway",
+      "Mar 14 07:06:27 ubuntu-s-1vcpu-1gb-sgp1-01 redrobot-hedgebot[217810]: [2026-03-14T07:06:27.675Z ERROR redrobot_hedgebot] Cycle error: Hyperliquid allMids returned HTTP 502 Bad Gateway",
+      "Mar 14 07:06:38 ubuntu-s-1vcpu-1gb-sgp1-01 redrobot-hedgebot[217810]: [2026-03-14T07:06:38.789Z ERROR redrobot_hedgebot] Cycle error: Hyperliquid allMids returned HTTP 502 Bad Gateway",
+      "Mar 14 07:06:49 ubuntu-s-1vcpu-1gb-sgp1-01 redrobot-hedgebot[217810]: [2026-03-14T07:06:49.902Z ERROR redrobot_hedgebot] Cycle error: Hyperliquid allMids returned HTTP 502 Bad Gateway"
+    ]
+  }
+}
