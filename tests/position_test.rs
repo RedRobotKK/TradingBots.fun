@@ -293,7 +293,7 @@ fn stop_hit_detection_long() {
 fn stop_not_hit_long_while_above_stop() {
     let stop = 95.0;
     let cur  = 95.1;
-    assert!(!(cur <= stop), "LONG stop not hit: cur {cur} > stop {stop}");
+    assert!(cur > stop, "LONG stop not hit: cur {cur} > stop {stop}");
 }
 
 #[test]
