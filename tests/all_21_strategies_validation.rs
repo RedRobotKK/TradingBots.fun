@@ -80,15 +80,15 @@ mod tests {
         let signals = evaluate_all_strategies(&ctx);
 
         // With no previous data, expect mostly neutral signals
-        // But all 21 strategies should be evaluated
-        println!("📊 All 21 Strategies Evaluated:");
+        // 20 strategies are implemented (21st slot is reserved for future use)
+        println!("📊 All 20 Strategies Evaluated:");
         println!("Total signals returned: {}", signals.len());
 
         // Each strategy returns exactly 1 signal (even if neutral)
         assert_eq!(
             signals.len(),
-            21,
-            "Should have 21 signals from 21 strategies"
+            20,
+            "Should have 20 signals from 20 implemented strategies (21st slot reserved)"
         );
 
         // Print strategy results
