@@ -541,7 +541,7 @@ mod tests {
     fn rsi_always_in_bounds() {
         let closes: Vec<f64> = (0..60).map(|i| 1.0 + i as f64 * 10.0).collect();
         let rsi = calc_rsi_wilder(&closes, 14);
-        assert!(rsi >= 0.0 && rsi <= 100.0, "RSI out of [0,100]: {rsi:.4}");
+        assert!((0.0..=100.0).contains(&rsi), "RSI out of [0,100]: {rsi:.4}");
     }
 
     // ── Bollinger Bands ───────────────────────────────────────────────────────
@@ -648,7 +648,7 @@ mod tests {
         let l: Vec<f64> = candles.iter().map(|c| c.low).collect();
         let c: Vec<f64> = candles.iter().map(|c| c.close).collect();
         let adx = calc_adx(&h, &l, &c, 14);
-        assert!(adx >= 0.0 && adx <= 100.0, "ADX out of [0,100]: {adx:.4}");
+        assert!((0.0..=100.0).contains(&adx), "ADX out of [0,100]: {adx:.4}");
     }
 
     #[test]

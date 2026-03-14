@@ -1161,7 +1161,7 @@ mod tests {
 
     #[test]
     fn sent_live_true_when_any_candidate_has_bullish_data() {
-        let candidates = vec![
+        let candidates = [
             CandidateInfo { symbol: "BTC".to_string(), price: 50000.0,
                 change_pct: None, galaxy_score: None, bullish_percent: None, alt_rank: None },
             CandidateInfo { symbol: "ETH".to_string(), price: 3000.0,
@@ -1173,7 +1173,7 @@ mod tests {
 
     #[test]
     fn sent_live_false_when_no_candidates_have_data() {
-        let candidates = vec![
+        let candidates = [
             CandidateInfo { symbol: "SOL".to_string(), price: 100.0,
                 change_pct: None, galaxy_score: None, bullish_percent: None, alt_rank: None },
         ];

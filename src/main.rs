@@ -247,6 +247,7 @@ type SharedBtcDominance = Arc<RwLock<f64>>;
 ///   7. Tier-2 analysis — fetch candles + order book for each candidate and
 ///      call `analyse_symbol()` which emits entry or skip decisions.
 ///   8. Optional Claude AI position review every 10 cycles.
+#[allow(clippy::too_many_arguments)]
 async fn run_cycle(
     config:          &config::Config,
     market:          &Arc<data::MarketClient>,
@@ -722,7 +723,7 @@ async fn apply_ai_review(
                 }
             }
 
-            "hold" | _ => {
+            _ => {
                 // Nothing to do — existing strategy manages the position
             }
         }
@@ -756,6 +757,7 @@ async fn apply_ai_review(
 ///
 /// Returns `Ok(Some(Decision))` even for SKIP decisions so the dashboard can
 /// show them; returns `Ok(None)` when candle data is insufficient.
+#[allow(clippy::too_many_arguments)]
 async fn analyse_symbol(
     symbol:       &str,
     market:       &Arc<data::MarketClient>,
@@ -1224,9 +1226,8 @@ async fn pyramid_position(
         s.positions[idx].entry_price      = avg_entry;
         s.positions[idx].r_dollars_risked += (dec.entry_price - s.positions[idx].stop_loss).abs() * add_qty;
         // Tighten stop to pyramided entry's stop if it's better
-        if dec.stop_loss > s.positions[idx].stop_loss && s.positions[idx].side == "LONG" {
-            s.positions[idx].stop_loss = dec.stop_loss;
-        } else if dec.stop_loss < s.positions[idx].stop_loss && s.positions[idx].side == "SHORT" {
+        if (dec.stop_loss > s.positions[idx].stop_loss && s.positions[idx].side == "LONG")
+            || (dec.stop_loss < s.positions[idx].stop_loss && s.positions[idx].side == "SHORT") {
             s.positions[idx].stop_loss = dec.stop_loss;
         }
         // Update HWM to current price
@@ -1812,9 +1813,7 @@ mod tests {
     #[test]
     fn position_size_pct_never_below_min() {
         // Even with CB + negative Sharpe, result can't go below MIN_POSITION_PCT
-        let mut metrics = PerformanceMetrics::default();
-        metrics.sharpe = -2.0;
-        metrics.total_trades = 10; // enough for sharpe multiplier
+        let metrics = PerformanceMetrics { sharpe: -2.0, total_trades: 10, ..Default::default() };
         let pct = position_size_pct(MIN_CONFIDENCE, &metrics, true);
         assert!(
             pct >= MIN_POSITION_PCT,

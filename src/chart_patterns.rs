@@ -420,7 +420,7 @@ fn detect_flag_pennant_rectangle(candles: &[PriceData]) -> Option<(&'static str,
     }
 
     // Flag: consolidation moves against the pole, retracement ≤ 50% of pole
-    let retrace = cons_slope / pole_move_pct.abs() * -1.0;
+    let retrace = -(cons_slope / pole_move_pct.abs());
     if pole_move_pct > 0.0 && cons_slope < 0.0 && retrace < 0.50 {
         return Some(("bull_flag", 0.08));
     }

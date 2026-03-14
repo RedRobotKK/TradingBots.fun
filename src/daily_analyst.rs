@@ -336,7 +336,7 @@ fn compute_stats(events: &[TradeEvent], date: &str) -> DayStats {
 
     // Best / worst symbol
     if let Some((sym, pnl)) = symbol_pnl.iter().max_by(|a,b| a.1.partial_cmp(b.1).unwrap()) {
-        s.best_symbol = sym.clone(); s.day_pnl_usd = *pnl + s.day_pnl_usd; // approximate
+        s.best_symbol = sym.clone(); s.day_pnl_usd += *pnl; // approximate
     }
     if let Some((sym, _)) = symbol_pnl.iter().min_by(|a,b| a.1.partial_cmp(b.1).unwrap()) {
         s.worst_symbol = sym.clone();

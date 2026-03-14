@@ -194,9 +194,9 @@ impl SignalWeights {
 
         // Optional signals: can go to 0 (no data = no contribution) or ceiling 0.40
         self.z_score      = self.z_score.clamp(0.0, 0.40);
-        self.volume       = self.volume.max(0.0).min(0.40);
-        self.sentiment    = self.sentiment.max(0.0).min(0.40);
-        self.funding_rate = self.funding_rate.max(0.0).min(0.40);
+        self.volume       = self.volume.clamp(0.0, 0.40);
+        self.sentiment    = self.sentiment.clamp(0.0, 0.40);
+        self.funding_rate = self.funding_rate.clamp(0.0, 0.40);
 
         let total = self.rsi + self.bollinger + self.macd + self.ema_cross
                   + self.order_flow + self.trend + self.z_score
@@ -335,9 +335,7 @@ mod tests {
 
     #[test]
     fn clamp_allows_optional_signals_to_reach_zero() {
-        let mut w = SignalWeights::default();
-        w.z_score = 0.0;
-        w.volume  = 0.0;
+        let mut w = SignalWeights { z_score: 0.0, volume: 0.0, ..Default::default() };
         w.clamp_and_normalise();
         // optional signals CAN go to 0 before normalise (floor=0)
         // after normalise they get redistributed but should remain proportionally low
@@ -423,11 +421,13 @@ mod tests {
 
     #[test]
     fn signal_contribution_new_fields_roundtrip_json() {
-        let mut c = SignalContribution::default();
-        c.candle_pattern_present = true;
-        c.candle_pattern_bullish = true;
-        c.chart_pattern_present  = true;
-        c.chart_pattern_bullish  = false;
+        let c = SignalContribution {
+            candle_pattern_present: true,
+            candle_pattern_bullish: true,
+            chart_pattern_present:  true,
+            chart_pattern_bullish:  false,
+            ..Default::default()
+        };
 
         let json = serde_json::to_string(&c).unwrap();
         let back: SignalContribution = serde_json::from_str(&json).unwrap();
