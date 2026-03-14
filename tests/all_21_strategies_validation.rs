@@ -224,7 +224,7 @@ mod tests {
 
         // Confluence should be valid 0.0-1.0
         assert!(
-            confluence >= 0.0 && confluence <= 1.0,
+            (0.0..=1.0).contains(&confluence),
             "Confluence score invalid: {}",
             confluence
         );
@@ -317,7 +317,7 @@ mod tests {
 
         // Time the evaluation of all 21 strategies
         let start = std::time::Instant::now();
-        let signals = evaluate_all_strategies(&ctx);
+        let _signals = evaluate_all_strategies(&ctx);
         let elapsed = start.elapsed();
 
         println!(
@@ -373,7 +373,7 @@ mod tests {
     #[test]
     fn test_strategy_variety() {
         // Test that we have variety across different market conditions
-        let mut test_scenarios = vec![
+        let test_scenarios = vec![
             ("Bullish", create_bullish_snapshot()),
             ("Bearish", {
                 let mut snap = create_bullish_snapshot();
