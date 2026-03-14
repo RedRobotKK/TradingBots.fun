@@ -345,6 +345,23 @@ ENDSSH
     success "Build complete"
   fi
 
+  # ── 2c-2. Sync systemd unit file if present in repo ──────────────────────
+  UNIT_FILE="${VPS_DIR}/hedgebot.service"
+  if $SSH test -f "${UNIT_FILE}" 2>/dev/null; then
+    $SSH bash <<ENDSSH
+      set -euo pipefail
+      DEST=/etc/systemd/system/${SERVICE}.service
+      if ! diff -q "${UNIT_FILE}" "\${DEST}" &>/dev/null; then
+        echo "▸ Updating systemd unit file…"
+        cp "${UNIT_FILE}" "\${DEST}"
+        systemctl daemon-reload
+        echo "✓ Unit file updated & daemon reloaded"
+      else
+        echo "✓ Unit file unchanged"
+      fi
+ENDSSH
+  fi
+
   # ── 2d. Restart service ───────────────────────────────────────────────────
   header "Restart ${SERVICE}"
 

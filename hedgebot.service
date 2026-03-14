@@ -1,0 +1,30 @@
+[Unit]
+Description=RedRobot HedgeBot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/RedRobot-HedgeBot
+EnvironmentFile=/etc/environment
+
+# Kill any stale process holding port 3000 before we start.
+# This prevents "Address already in use" on rapid restarts.
+ExecStartPre=/bin/sh -c 'fuser -k 3000/tcp 2>/dev/null || true'
+
+ExecStart=/RedRobot-HedgeBot/target/release/redrobot-hedgebot
+
+# On crash: wait 3 s then restart (gives the OS time to release the port)
+Restart=on-failure
+RestartSec=3s
+
+# Ensure the whole cgroup is gone before the next ExecStartPre runs
+KillMode=control-group
+TimeoutStopSec=10s
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=redrobot-hedgebot
+
+[Install]
+WantedBy=multi-user.target
