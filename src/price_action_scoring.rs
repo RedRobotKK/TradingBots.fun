@@ -312,6 +312,7 @@ impl PatternConfluence {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::price_action::PatternType;
 
     #[test]
     fn test_entry_quality_calculation() {

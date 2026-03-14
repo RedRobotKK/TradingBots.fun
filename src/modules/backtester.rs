@@ -713,7 +713,7 @@ mod tests {
 
     #[test]
     fn test_param_combination_generation() {
-        let mut backtester = Backtester::new(BacktestConfig::default());
+        let backtester = Backtester::new(BacktestConfig::default());
         let mut params = HashMap::new();
         params.insert("fee".to_string(), vec![0.01, 0.02]);
         params.insert("slippage".to_string(), vec![0.05, 0.1]);

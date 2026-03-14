@@ -665,7 +665,7 @@ mod tests {
     #[tokio::test]
     async fn test_execution_repository_store_plan() {
         let repo = ExecutionRepository::new();
-        let venue = create_test_venue(ExecutionProtocol::Drift);
+        let _venue = create_test_venue(ExecutionProtocol::Drift);
 
         let slippage_est = SlippageEstimate {
             protocol: ExecutionProtocol::Drift,
