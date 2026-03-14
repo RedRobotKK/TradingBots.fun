@@ -334,19 +334,8 @@ async fn dashboard_handler(State(state): State<SharedState>) -> Html<String> {
     };
 
     // ── Candidates table ──────────────────────────────────────────────────
-    // Sentiment live status: true if at least one candidate has LunarCrush data
-    let sent_live = s.candidates.iter().any(|c| c.bullish_percent.is_some());
-    let sent_status_badge = if sent_live {
-        "<span style='background:#0d2b0d;color:#3fb950;border:1px solid #3fb95040;\
-         border-radius:10px;padding:1px 7px;font-size:.75em;margin-left:6px'>🌙 Live</span>"
-    } else {
-        "<span style='background:#1c1c1c;color:#8b949e;border:1px solid #30363d;\
-         border-radius:10px;padding:1px 7px;font-size:.75em;margin-left:6px'\
-         title='Set LUNARCRUSH_API_KEY on the droplet'>🌙 No data</span>"
-    };
-
     let cand_rows: String = if s.candidates.is_empty() {
-        r#"<tr><td colspan="4" class="empty-td">Scanning…</td></tr>"#.to_string()
+        r#"<tr><td colspan="3" class="empty-td">Scanning…</td></tr>"#.to_string()
     } else {
         s.candidates.iter().map(|c| {
             let chg_td = match c.change_pct {
@@ -364,23 +353,10 @@ async fn dashboard_handler(State(state): State<SharedState>) -> Html<String> {
             // Coin logo (16 px) next to ticker
             let c_logo = coins::coin_logo_img(&c.symbol, 16);
 
-            // Sentiment column: emoji + bullish% + galaxy score chip
-            let sent_html = match (c.bullish_percent, c.galaxy_score) {
-                (Some(bp), Some(gs)) => {
-                    let emoji  = if bp >= 65.0 { "🟢" } else if bp >= 45.0 { "🟡" } else { "🔴" };
-                    let bp_col = if bp >= 55.0 { "#3fb950" } else if bp >= 45.0 { "#e3b341" } else { "#f85149" };
-                    format!("<span>{}</span> <span style='color:{};font-size:11px'>{:.0}%</span> \
-                             <span style='color:#8b949e;font-size:10px'>G{:.0}</span>",
-                        emoji, bp_col, bp, gs)
-                }
-                _ => "<span style='color:#444c56;font-size:.8em'>—</span>".to_string(),
-            };
-
             format!("<tr>\
                        <td style='{ss}'>{logo}{sym}{dot}</td>\
                        <td>${price:.4}</td>\
                        {chg_td}\
-                       <td class='sent-cell'>{sent}</td>\
                      </tr>",
                 ss     = sym_style,
                 logo   = c_logo,
@@ -388,7 +364,6 @@ async fn dashboard_handler(State(state): State<SharedState>) -> Html<String> {
                 dot    = open_dot,
                 price  = c.price,
                 chg_td = chg_td,
-                sent   = sent_html,
             )
         }).collect()
     };
@@ -565,8 +540,6 @@ tr:hover td{{background:rgba(255,255,255,.03)}}
 .reason-stop{{color:#f85149}}.reason-take{{color:#3fb950}}
 .reason-time{{color:#e3b341}}.reason-partial{{color:#58a6ff}}
 .reason-ai{{color:#e3b341;font-weight:600}}.reason-signal{{color:#8b949e}}
-/* Sentiment cell */
-.sent-cell{{white-space:nowrap;font-size:.82em}}
 /* ── Inline weight strip ── */
 .w-strip{{display:flex;flex-wrap:wrap;align-items:center;gap:6px;
           margin-top:8px;padding-top:7px;border-top:1px solid var(--border)}}
@@ -629,7 +602,7 @@ tr:hover td{{background:rgba(255,255,255,.03)}}
 <div class="section">
   <div class="section-title">
     <span class="section-title-left"><span class="live-ring"></span> Active Positions</span>
-    <span class="badge">{open_n} / 4 slots · max 2 per direction</span>
+    <span class="badge">{open_n} / 8 slots · max 4 per direction</span>
   </div>
   <div class="pos-grid">{pos_cards}</div>
 </div>
@@ -649,10 +622,10 @@ tr:hover td{{background:rgba(255,255,255,.03)}}
 
 <div class="section">
   <div class="section-title">
-    <span>Candidates <span class="badge">{cand_n} scanned · ● = open</span>{sent_status}</span>
+    <span>Candidates <span class="badge">{cand_n} scanned · ● = open</span></span>
   </div>
   <div class="tbl-wrap">
-    <table><tr><th>Symbol</th><th>Price</th><th>Session Δ</th><th>🌙 Sentiment</th></tr>{cand_rows}</table>
+    <table><tr><th>Symbol</th><th>Price</th><th>Session Δ</th></tr>{cand_rows}</table>
   </div>
   {wh}
 </div>
@@ -773,7 +746,6 @@ tr:hover td{{background:rgba(255,255,255,.03)}}
         total_closed = s.closed_trades.len(),
         cycles       = s.cycle_count,
         cand_n       = s.candidates.len(),
-        sent_status  = sent_status_badge,
         committed    = committed,
         status       = s.status,
         pos_cards    = pos_cards,
@@ -1177,30 +1149,6 @@ mod tests {
         assert_eq!(hold_str, "2.0h", "240 cycles = 2.0h hold time");
     }
 
-    // ── Sentiment live status ─────────────────────────────────────────────────
-
-    #[test]
-    fn sent_live_true_when_any_candidate_has_bullish_data() {
-        let candidates = [
-            CandidateInfo { symbol: "BTC".to_string(), price: 50000.0,
-                change_pct: None, galaxy_score: None, bullish_percent: None, alt_rank: None },
-            CandidateInfo { symbol: "ETH".to_string(), price: 3000.0,
-                change_pct: None, galaxy_score: Some(72.0), bullish_percent: Some(65.0), alt_rank: None },
-        ];
-        let sent_live = candidates.iter().any(|c| c.bullish_percent.is_some());
-        assert!(sent_live, "should be live when at least one candidate has sentiment data");
-    }
-
-    #[test]
-    fn sent_live_false_when_no_candidates_have_data() {
-        let candidates = [
-            CandidateInfo { symbol: "SOL".to_string(), price: 100.0,
-                change_pct: None, galaxy_score: None, bullish_percent: None, alt_rank: None },
-        ];
-        let sent_live = candidates.iter().any(|c| c.bullish_percent.is_some());
-        assert!(!sent_live, "should not be live when no candidates have sentiment data");
-    }
-
     // ── Tranche label ─────────────────────────────────────────────────────────
 
     #[test]
@@ -1240,15 +1188,14 @@ mod tests {
 
     #[test]
     fn slot_badge_reflects_correct_max_positions() {
-        // Regression: was hardcoded as "8 slots · max 4 per direction"
-        // Correct values: MAX_POSITIONS=4, MAX_SAME_DIRECTION=2
-        let max_positions      = 4usize;
-        let max_same_direction = 2usize;
+        // Correct values: MAX_POSITIONS=8, MAX_SAME_DIRECTION=4
+        let max_positions      = 8usize;
+        let max_same_direction = 4usize;
         let badge = format!("{} / {} slots · max {} per direction",
             0, max_positions, max_same_direction);
-        assert!(badge.contains("4 slots"),  "badge must show 4 total slots");
-        assert!(badge.contains("max 2 per"), "badge must show max 2 per direction");
-        assert!(!badge.contains("8 slots"), "REGRESSION: badge must NOT say 8 slots");
-        assert!(!badge.contains("max 4 per"), "REGRESSION: badge must NOT say max 4 per direction");
+        assert!(badge.contains("8 slots"),  "badge must show 8 total slots");
+        assert!(badge.contains("max 4 per"), "badge must show max 4 per direction");
+        assert!(!badge.contains("/ 4 slots"), "REGRESSION: badge must NOT say 4 slots");
+        assert!(!badge.contains("max 2 per"), "REGRESSION: badge must NOT say max 2 per direction");
     }
 }

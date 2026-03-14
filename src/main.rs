@@ -19,9 +19,9 @@ const MAX_TRADE_HEAT: f64 = 0.02;   // 2 %
 /// Maximum total fraction of equity at risk across all open positions.
 const MAX_PORTFOLIO_HEAT: f64 = 0.08;  // 8 %
 /// Maximum number of concurrent open positions.
-const MAX_POSITIONS: usize = 4;
+const MAX_POSITIONS: usize = 8;
 /// Maximum open positions in the same direction (long OR short).
-const MAX_SAME_DIRECTION: usize = 2;
+const MAX_SAME_DIRECTION: usize = 4;
 /// DCA minimum confidence (slightly higher than new-entry minimum).
 const DCA_MIN_CONFIDENCE: f64 = 0.72;
 /// Circuit-breaker drawdown threshold.  Once peak→current drawdown exceeds
@@ -1033,8 +1033,8 @@ fn portfolio_heat(positions: &[PaperPosition], equity: f64) -> f64 {
 ///
 /// For a new position, all six guards must pass:
 ///   1. `confidence ≥ MIN_CONFIDENCE` (0.68)
-///   2. Open positions < `MAX_POSITIONS` (4)
-///   3. Same-direction positions < `MAX_SAME_DIRECTION` (2)
+///   2. Open positions < `MAX_POSITIONS` (8)
+///   3. Same-direction positions < `MAX_SAME_DIRECTION` (4)
 ///   4. Sufficient free capital (`size_usd ≥ $2`)
 ///   5. Per-trade heat ≤ `MAX_TRADE_HEAT` (2% of equity) — scales down if over
 ///   6. Portfolio heat < `MAX_PORTFOLIO_HEAT` (8% of equity)
