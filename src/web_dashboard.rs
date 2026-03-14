@@ -97,6 +97,8 @@ pub struct BotState {
     pub session_prices:   HashMap<String, f64>,  // first price seen per symbol this session
     pub status:           String,
     pub last_update:      String,
+    /// Unix-ms timestamp when the next 30 s cycle will fire.  0 = unknown.
+    pub next_cycle_at:    i64,
 }
 
 impl Default for BotState {
@@ -111,7 +113,7 @@ impl Default for BotState {
             signal_weights: SignalWeights::default(),
             metrics: PerformanceMetrics::default(),
             session_prices: HashMap::new(),
-            status: String::new(), last_update: String::new(),
+            status: String::new(), last_update: String::new(), next_cycle_at: 0,
         }
     }
 }
@@ -393,13 +395,26 @@ async fn dashboard_handler(State(state): State<SharedState>) -> Html<String> {
 
     // ── Signal feed rows (staggered animation) ────────────────────────────
     let dec_rows: String = if s.recent_decisions.is_empty() {
-        r#"<tr><td colspan="5" class="empty-td">Scanning for signals…</td></tr>"#.to_string()
+        // Show the live scan status so the user sees activity immediately
+        let live_msg = if s.status.is_empty() {
+            "Waiting for first scan…".to_string()
+        } else {
+            s.status.clone()
+        };
+        format!("<tr><td colspan='5' class='empty-td'>{live_msg}</td></tr>")
     } else {
-        s.recent_decisions.iter().rev().take(10).enumerate().map(|(i, d)| {
+        s.recent_decisions.iter().rev().take(20).enumerate().map(|(i, d)| {
+            let is_skip = d.action == "SKIP";
             let (ac, dc, icon) = match d.action.as_str() {
                 "BUY"  => ("▲ BUY",  "#3fb950", "🟢"),
                 "SELL" => ("▼ SELL", "#f85149", "🔴"),
-                _      => ("— SKIP", "#8b949e", "⬜"),
+                _      => ("— SKIP", "#8b949e", "⬛"),
+            };
+            // Dim SKIP rows so real signals stand out
+            let row_style = if is_skip {
+                "opacity:0.45;font-size:.88em"
+            } else {
+                "font-weight:500"
             };
             // Extract regime tag from rationale prefix "[Trending]" / "[Ranging]" / "[Neutral]"
             let (regime_badge, rat_body) = if d.rationale.starts_with('[') {
@@ -422,7 +437,7 @@ async fn dashboard_handler(State(state): State<SharedState>) -> Html<String> {
             };
             let delay_ms = i * 60;
             format!(
-                "<tr class='sig-row' style='animation-delay:{delay}ms'>\
+                "<tr class='sig-row' style='animation-delay:{delay}ms;{rs}'>\
                    <td>{icon} <b>{sym}</b></td>\
                    <td style='color:{dc};font-weight:600'>{ac}</td>\
                    <td>{conf:.0}%</td>\
@@ -430,6 +445,7 @@ async fn dashboard_handler(State(state): State<SharedState>) -> Html<String> {
                    <td class='ts'>{ts}</td>\
                  </tr>",
                 delay  = delay_ms,
+                rs     = row_style,
                 icon   = icon,
                 sym    = d.symbol,
                 dc     = dc,
@@ -460,7 +476,7 @@ async fn dashboard_handler(State(state): State<SharedState>) -> Html<String> {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
 <title>RedRobot HedgeBot</title>
-<meta http-equiv="refresh" content="10">
+<meta http-equiv="refresh" content="35">
 <style>
 *{{box-sizing:border-box;margin:0;padding:0}}
 :root{{--bg:#0d1117;--surface:#161b22;--border:#30363d;--muted:#8b949e;--text:#e6edf3;
@@ -504,7 +520,7 @@ body{{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacS
 /* 5-second progress bar at bottom of status bar */
 .prog-track{{height:2px;background:var(--dim);position:relative;overflow:hidden}}
 .prog-fill{{height:2px;background:linear-gradient(90deg,var(--blue),var(--green));
-            animation:progFill 10s linear forwards}}
+            animation:progFill 30s linear forwards}}
 /* ── Section ── */
 .section{{background:var(--surface);border:1px solid var(--border);border-radius:10px;
           padding:12px;margin-bottom:12px}}
@@ -622,7 +638,7 @@ tr:hover td{{background:rgba(255,255,255,.03)}}
 <div class="section sig-section">
   <div class="section-title">
     <span class="section-title-left"><span class="live-ring"></span> Signal Feed</span>
-    <span class="badge">last 10 decisions</span>
+    <span class="badge">last 20 decisions</span>
   </div>
   <div class="tbl-wrap scan-wrap">
     <div class="scan-beam"></div>
@@ -651,10 +667,13 @@ tr:hover td{{background:rgba(255,255,255,.03)}}
 
 <script>
 (function(){{
-  /* ── Countdown to next full page reload (10s) ────────────────────────── */
-  var t=10,el=document.getElementById('cntdn');
+  /* ── Countdown to next cycle (real timer from server next_cycle_at) ──── */
+  var nextAt={next_cycle_at_ms},el=document.getElementById('cntdn');
   if(el){{
-    function tick(){{el.textContent=(t>0?t:'…')+'s';if(t>0)t--;}}
+    function tick(){{
+      var rem=nextAt>0?Math.max(0,Math.round((nextAt-Date.now())/1000)):0;
+      el.textContent=(rem>0?rem:'…')+'s';
+    }}
     tick();setInterval(tick,1000);
   }}
 
@@ -761,7 +780,8 @@ tr:hover td{{background:rgba(255,255,255,.03)}}
         wh           = wh,
         cand_rows    = cand_rows,
         closed_rows  = closed_rows,
-        dec_rows     = dec_rows,
+        dec_rows          = dec_rows,
+        next_cycle_at_ms  = s.next_cycle_at,
     ))
 }
 

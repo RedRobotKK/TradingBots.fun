@@ -602,8 +602,12 @@ async fn run_cycle(
             &format!("🔬 Analysing {}/{}: {}…", i + 1, total, sym)).await;
 
         match analyse_symbol(sym, market, hl, db, config, bot_state, weights, sent_cache, fund_cache, btc_dom, btc_ret_24h, btc_ret_4h, trade_logger).await {
-            Ok(Some(dec)) if dec.action != "SKIP" => {
-                info!("💡 {} → {} conf={:.0}%", sym, dec.action, dec.confidence * 100.0);
+            Ok(Some(dec)) => {
+                if dec.action != "SKIP" {
+                    info!("💡 {} → {} conf={:.0}%", sym, dec.action, dec.confidence * 100.0);
+                }
+                // Push ALL decisions (including SKIPs) so the signal feed always shows activity.
+                // SKIPs are rendered dimmed in the dashboard; BUY/SELL get the coloured treatment.
                 new_decisions.push(DecisionInfo {
                     symbol:      sym.clone(),
                     action:      dec.action.clone(),
@@ -613,17 +617,21 @@ async fn run_cycle(
                     timestamp:   now_str(),
                 });
             }
-            Ok(_)  => {}
-            Err(e) => warn!("  {} error: {}", sym, e),
+            Ok(None) => {}
+            Err(e)   => warn!("  {} error: {}", sym, e),
         }
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
     }
 
-    if !new_decisions.is_empty() {
+    {
         let mut s = bot_state.write().await;
         s.recent_decisions.extend(new_decisions);
+        // Keep at most 100 entries (20 decisions × 5 cycles of history).
+        // The dashboard shows the 20 most recent, so older ones are just trimmed.
         let len = s.recent_decisions.len();
-        if len > 50 { s.recent_decisions.drain(0..len - 50); }
+        if len > 100 { s.recent_decisions.drain(0..len - 100); }
+        // Record when the next cycle will fire so the dashboard can show a real countdown.
+        s.next_cycle_at = chrono::Utc::now().timestamp_millis() + 30_000;
     }
 
     { let mut s = bot_state.write().await; s.last_update = now_str(); }
