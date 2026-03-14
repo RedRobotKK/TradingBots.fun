@@ -1,0 +1,146 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-03-14T09:12:08Z",
+    "commit": "98c7643",
+    "commit_full": "98c764361259af053e94ec39702e7becbee36e91",
+    "commit_message": "fix: resolve all 16 clippy errors from CI Run #25",
+    "branch": "master",
+    "overall_status": "FAILED",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
+    "cargo": "cargo 1.93.1 (083ac5135 2025-12-15)",
+    "os_kernel": "6.8.0-101-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 13,
+      "total_passed": 0,
+      "total_failed": 0,
+      "total_ignored": 0,
+      "failures": []
+    },
+    "clippy": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 11,
+      "error_count": 11,
+      "errors": [
+        {
+          "code": "E",
+          "message": "unused import: `DynamicPositionSize`",
+          "file": "tests/theory_validation.rs",
+          "line": 13,
+          "col": 99
+        },
+        {
+          "code": "E0063",
+          "message": "missing fields `adx`, `atr_14`, `bollinger_lower` and 13 other fields in initializer of `redrobot_hedgebot::MarketSnapsh",
+          "file": "tests/theory_validation.rs",
+          "line": 28,
+          "col": 19
+        },
+        {
+          "code": "E0063",
+          "message": "missing fields `adx`, `atr_14`, `bollinger_lower` and 13 other fields in initializer of `redrobot_hedgebot::MarketSnapsh",
+          "file": "tests/theory_validation.rs",
+          "line": 42,
+          "col": 19
+        },
+        {
+          "code": "E0063",
+          "message": "missing fields `adx`, `atr_14`, `bollinger_lower` and 13 other fields in initializer of `redrobot_hedgebot::MarketSnapsh",
+          "file": "tests/theory_validation.rs",
+          "line": 56,
+          "col": 19
+        },
+        {
+          "code": "E0063",
+          "message": "missing fields `adx`, `atr_14`, `bollinger_lower` and 13 other fields in initializer of `redrobot_hedgebot::MarketSnapsh",
+          "file": "tests/theory_validation.rs",
+          "line": 70,
+          "col": 19
+        },
+        {
+          "code": "E0063",
+          "message": "missing fields `adx`, `atr_14`, `bollinger_lower` and 13 other fields in initializer of `redrobot_hedgebot::MarketSnapsh",
+          "file": "tests/theory_validation.rs",
+          "line": 84,
+          "col": 19
+        },
+        {
+          "code": "E",
+          "message": "unused variable: `high`",
+          "file": "tests/theory_validation.rs",
+          "line": 100,
+          "col": 5
+        },
+        {
+          "code": "E",
+          "message": "unused variable: `low`",
+          "file": "tests/theory_validation.rs",
+          "line": 101,
+          "col": 5
+        },
+        {
+          "code": "E",
+          "message": "unused variable: `volume`",
+          "file": "tests/theory_validation.rs",
+          "line": 102,
+          "col": 5
+        },
+        {
+          "code": "E",
+          "message": "unused variable: `losing_trades`",
+          "file": "tests/theory_validation.rs",
+          "line": 290,
+          "col": 9
+        },
+        {
+          "code": "E",
+          "message": "could not compile `redrobot-hedgebot` (test \"theory_validation\") due to 10 previous errors"
+        }
+      ]
+    },
+    "audit": {
+      "status": "PASSED",
+      "exit_code": 0,
+      "duration_seconds": 2,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2021-0141",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2021-0141",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "hedgebot",
+    "status": "active",
+    "active_since": "Thu 2026-03-12 07:15:10 UTC",
+    "recent_logs": [
+      "Mar 14 07:06:05 ubuntu-s-1vcpu-1gb-sgp1-01 redrobot-hedgebot[217810]: [2026-03-14T07:06:05.446Z ERROR redrobot_hedgebot] Cycle error: Hyperliquid allMids returned HTTP 502 Bad Gateway",
+      "Mar 14 07:06:16 ubuntu-s-1vcpu-1gb-sgp1-01 redrobot-hedgebot[217810]: [2026-03-14T07:06:16.561Z ERROR redrobot_hedgebot] Cycle error: Hyperliquid allMids returned HTTP 502 Bad Gateway",
+      "Mar 14 07:06:27 ubuntu-s-1vcpu-1gb-sgp1-01 redrobot-hedgebot[217810]: [2026-03-14T07:06:27.675Z ERROR redrobot_hedgebot] Cycle error: Hyperliquid allMids returned HTTP 502 Bad Gateway",
+      "Mar 14 07:06:38 ubuntu-s-1vcpu-1gb-sgp1-01 redrobot-hedgebot[217810]: [2026-03-14T07:06:38.789Z ERROR redrobot_hedgebot] Cycle error: Hyperliquid allMids returned HTTP 502 Bad Gateway",
+      "Mar 14 07:06:49 ubuntu-s-1vcpu-1gb-sgp1-01 redrobot-hedgebot[217810]: [2026-03-14T07:06:49.902Z ERROR redrobot_hedgebot] Cycle error: Hyperliquid allMids returned HTTP 502 Bad Gateway"
+    ]
+  }
+}
