@@ -539,6 +539,10 @@ async fn run_cycle(
                 galaxy_score:    sent.map(|s| s.galaxy_score),
                 bullish_percent: sent.map(|s| s.bullish_percent),
                 alt_rank:        sent.map(|s| s.alt_rank),
+                // filled in later by the analysis loop after analyse_symbol runs
+                rsi:             None,
+                regime:          None,
+                atr_pct:         None,
             })
         }).collect();
         let mut s = bot_state.write().await;

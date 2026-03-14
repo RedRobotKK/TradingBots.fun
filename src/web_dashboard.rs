@@ -424,12 +424,6 @@ async fn dashboard_handler(State(state): State<SharedState>) -> Html<String> {
                 None => "<td style='color:var(--muted)'>—</td>".to_string(),
             };
 
-            // ATR% cell: shows volatility in a neutral grey
-            let atr_td = match c.atr_pct {
-                Some(a) => format!("<td style='color:#8b949e'>{a:.2}%</td>"),
-                None    => "<td style='color:var(--muted)'>—</td>".to_string(),
-            };
-
             format!("<tr>\
                        <td style='{ss}'>{logo}{sym}{dot}{rbadge}</td>\
                        <td>${price:.4}</td>\
