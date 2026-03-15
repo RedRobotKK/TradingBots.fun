@@ -1,4 +1,4 @@
-use axum::{extract::State, response::Html, routing::get, Json, Router};
+use axum::{extract::State, response::Html, routing::{get, post}, Json, Router};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -6,6 +6,28 @@ use tokio::sync::RwLock;
 use crate::learner::{SignalContribution, SignalWeights};
 use crate::metrics::PerformanceMetrics;
 use crate::coins;
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Shared application state — passed to every Axum handler via State<AppState>
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// All server-wide state threaded through the Axum router.
+///
+/// Defined here (not in main.rs) so that stripe.rs and future modules can
+/// import it without a circular dependency.
+#[derive(Clone)]
+pub struct AppState {
+    /// Live trading / dashboard state (positions, P&L, signals…).
+    pub bot_state:             SharedState,
+    /// Registry of all consumer tenants — mutated by Stripe webhooks.
+    pub tenants:               crate::tenant::SharedTenantManager,
+    /// Stripe secret API key (sk_live_… / sk_test_…).
+    pub stripe_api_key:        Option<String>,
+    /// Stripe webhook signing secret (whsec_…).
+    pub stripe_webhook_secret: Option<String>,
+    /// Stripe Price ID for the $19.99/month Pro plan.
+    pub stripe_price_id:       Option<String>,
+}
 
 // ─────────────────────────────── Serde defaults ──────────────────────────────
 fn default_leverage() -> f64 { 1.0 }
@@ -157,17 +179,17 @@ pub type SharedState = Arc<RwLock<BotState>>;
 
 // ─────────────────────────────── Dashboard ───────────────────────────────────
 
-async fn dashboard_handler(State(state): State<SharedState>) -> Html<String> {
+async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
     // Briefly take write lock to snapshot equity into history, then drop it.
     {
-        let mut w = state.write().await;
+        let mut w = app.bot_state.write().await;
         let unrealised: f64 = w.positions.iter().map(|p| p.unrealised_pnl).sum();
         let committed:  f64 = w.positions.iter().map(|p| p.size_usd).sum();
         let eq = w.capital + committed + unrealised;
         w.equity_history.push(eq);
         if w.equity_history.len() > 80 { w.equity_history.remove(0); }
     }
-    let s = state.read().await;
+    let s = app.bot_state.read().await;
     let m = &s.metrics;
 
     // ── Core financials ───────────────────────────────────────────────────
@@ -1103,8 +1125,8 @@ fn reason_class(r: &str) -> &'static str {
     }
 }
 
-async fn api_state_handler(State(state): State<SharedState>) -> Json<BotState> {
-    Json(state.read().await.clone())
+async fn api_state_handler(State(app): State<AppState>) -> Json<BotState> {
+    Json(app.bot_state.read().await.clone())
 }
 
 // ─────────────────────────── Consumer webapp ─────────────────────────────────
@@ -1193,8 +1215,8 @@ fn consumer_shell_close() -> &'static str {
 }
 
 /// Overview page — equity, P&L, deposit/withdraw, referral link.
-async fn consumer_app_handler(State(state): State<SharedState>) -> axum::response::Html<String> {
-    let s = state.read().await;
+async fn consumer_app_handler(State(app): State<AppState>) -> axum::response::Html<String> {
+    let s = app.bot_state.read().await;
 
     let committed: f64  = s.positions.iter().map(|p| p.size_usd).sum();
     let unrealised: f64 = s.positions.iter().map(|p| p.unrealised_pnl).sum();
@@ -1309,8 +1331,8 @@ async fn consumer_app_handler(State(state): State<SharedState>) -> axum::respons
 
 // ─── Trade history page /app/history ─────────────────────────────────────────
 
-async fn consumer_history_handler(State(state): State<SharedState>) -> axum::response::Html<String> {
-    let s = state.read().await;
+async fn consumer_history_handler(State(app): State<AppState>) -> axum::response::Html<String> {
+    let s = app.bot_state.read().await;
 
     let rows: String = if s.closed_trades.is_empty() {
         "<tr><td colspan='9' style='color:#8b949e;text-align:center;padding:20px'>No closed trades yet.</td></tr>".to_string()
@@ -1419,7 +1441,7 @@ async fn consumer_history_handler(State(state): State<SharedState>) -> axum::res
 
 // ─── Tax report page /app/tax ─────────────────────────────────────────────────
 
-async fn consumer_tax_handler(State(_state): State<SharedState>) -> axum::response::Html<String> {
+async fn consumer_tax_handler(State(_app): State<AppState>) -> axum::response::Html<String> {
     let summary = crate::ledger::yearly_summary();
     let (_, total_rows) = crate::ledger::read_all();
 
@@ -1498,7 +1520,7 @@ async fn consumer_tax_handler(State(_state): State<SharedState>) -> axum::respon
 // ─── CSV download /app/tax/csv ────────────────────────────────────────────────
 
 async fn consumer_tax_csv_handler(
-    State(_state): State<SharedState>,
+    State(_app): State<AppState>,
 ) -> impl axum::response::IntoResponse {
     let (csv, _) = crate::ledger::read_all();
     let filename  = format!("redrobot_trades_{}.csv",
@@ -1514,15 +1536,20 @@ async fn consumer_tax_csv_handler(
     )
 }
 
-pub async fn serve(state: SharedState, port: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub async fn serve(app_state: AppState, port: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let app = Router::new()
         .route("/", get(dashboard_handler))
-        .route("/app",          get(consumer_app_handler))
-        .route("/app/history",  get(consumer_history_handler))
-        .route("/app/tax",      get(consumer_tax_handler))
-        .route("/app/tax/csv",  get(consumer_tax_csv_handler))
-        .route("/api/state",    get(api_state_handler))
-        .with_state(state);
+        .route("/app",                  get(consumer_app_handler))
+        .route("/app/history",          get(consumer_history_handler))
+        .route("/app/tax",              get(consumer_tax_handler))
+        .route("/app/tax/csv",          get(consumer_tax_csv_handler))
+        .route("/api/state",            get(api_state_handler))
+        // ── Stripe billing ─────────────────────────────────────────────────
+        .route("/billing/checkout",     get(crate::stripe::checkout_handler))
+        .route("/billing/success",      get(crate::stripe::success_handler))
+        .route("/billing/trial",        get(crate::stripe::trial_handler))
+        .route("/webhooks/stripe",      post(crate::stripe::webhook_handler))
+        .with_state(app_state);
     let addr = format!("0.0.0.0:{}", port);
     log::info!("🌐 Dashboard at http://{}", addr);
     let listener = tokio::net::TcpListener::bind(&addr).await?;

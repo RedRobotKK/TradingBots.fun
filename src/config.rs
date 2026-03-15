@@ -39,6 +39,14 @@ pub struct Config {
     /// Leave unset in paper mode; set on testnet to validate the code path.
     pub builder_code: Option<String>,
 
+    // Stripe — subscription billing
+    /// Stripe secret API key (sk_live_… / sk_test_…).
+    pub stripe_secret_key:      Option<String>,
+    /// Stripe webhook signing secret (whsec_…) — verifies webhook authenticity.
+    pub stripe_webhook_secret:  Option<String>,
+    /// Stripe Price ID for the Pro subscription ($19.99/month).
+    pub stripe_price_id:        Option<String>,
+
     // Affiliate — Hyperliquid referral code
     /// Referral slug registered at app.hyperliquid.xyz (e.g. "REDROBOT").
     /// Displayed in the consumer /app page so new users sign up via our link.
@@ -98,6 +106,9 @@ impl Config {
             hyperliquid_wallet_address: env::var("HYPERLIQUID_WALLET_ADDRESS").ok(),
             builder_code:               env::var("BUILDER_CODE").ok(),
             referral_code:              env::var("REFERRAL_CODE").ok(),
+            stripe_secret_key:          env::var("STRIPE_SECRET_KEY").ok(),
+            stripe_webhook_secret:      env::var("STRIPE_WEBHOOK_SECRET").ok(),
+            stripe_price_id:            env::var("STRIPE_PRICE_ID").ok(),
             lunarcrush_api_key:         env::var("LUNARCRUSH_API_KEY")
                 .unwrap_or_else(|_| "77c4fcm050bnxe49qo1h2n252umls0rrtkevh5uni".to_string()),
             anthropic_api_key:          env::var("ANTHROPIC_API_KEY").ok(),

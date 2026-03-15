@@ -56,6 +56,7 @@ mod trade_log;
 mod daily_analyst;
 mod tenant;
 mod ledger;
+mod stripe;
 
 use anyhow::Result;
 use log::{error, info, warn};
@@ -215,9 +216,15 @@ async fn main() -> Result<()> {
 
     // Dashboard
     {
-        let ds = bot_state.clone();
+        let app_state = web_dashboard::AppState {
+            bot_state:             bot_state.clone(),
+            tenants:               tenant::new_tenant_manager(),
+            stripe_api_key:        config.stripe_secret_key.clone(),
+            stripe_webhook_secret: config.stripe_webhook_secret.clone(),
+            stripe_price_id:       config.stripe_price_id.clone(),
+        };
         tokio::spawn(async move {
-            if let Err(e) = web_dashboard::serve(ds, 3000).await {
+            if let Err(e) = web_dashboard::serve(app_state, 3000).await {
                 error!("Dashboard: {}", e);
             }
         });
