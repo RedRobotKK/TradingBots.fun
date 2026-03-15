@@ -170,10 +170,14 @@ if $DO_PROVISION || $DO_DEPLOY; then
     " 2>&1 | grep -v "^$"
 
     # Create database if it doesn't exist
-    sudo -u postgres psql -c "
-      SELECT 'CREATE DATABASE redrobot OWNER redrobot'
-      WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'redrobot')
-    \gexec" 2>&1 | grep -v "^$"
+    # Note: \gexec only works in interactive psql, not -c. Use createdb instead.
+    if sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='redrobot'" \
+        | grep -q 1; then
+      ok "Database redrobot already exists"
+    else
+      sudo -u postgres createdb -O redrobot redrobot
+      ok "Database redrobot created"
+    fi
 
     ok "PostgreSQL: role=redrobot database=redrobot"
 
