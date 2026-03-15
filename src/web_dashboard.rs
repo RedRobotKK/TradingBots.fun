@@ -2937,7 +2937,8 @@ async fn funnel_event_handler(
     State(app):    State<AppState>,
     headers:       HeaderMap,
     body:          axum::extract::Json<crate::funnel::FunnelEventPayload>,
-) -> StatusCode {
+) -> axum::http::StatusCode {
+    use axum::http::StatusCode;
     use crate::funnel::{FunnelEvent, record};
 
     let payload = body.0;
@@ -2962,8 +2963,8 @@ async fn funnel_event_handler(
     };
 
     // Resolve tenant from session cookie if present (pre-auth events have None)
-    let tid = get_session_tenant_id(&headers, &app.session_secret)
-        .map(crate::tenant::TenantId::from_str);
+    // get_session_tenant_id already returns Option<TenantId> — no mapping needed
+    let tid = get_session_tenant_id(&headers, &app.session_secret);
 
     record(
         &app.db,

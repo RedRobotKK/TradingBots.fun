@@ -112,16 +112,16 @@ pub async fn record(
         uuid::Uuid::parse_str(t.as_str()).ok()
     }).flatten();
 
-    let result = sqlx::query!(
-        r#"
-        INSERT INTO funnel_events (anon_id, tenant_id, event_type, properties)
-        VALUES ($1, $2, $3, $4)
-        "#,
-        anon_id,
-        tid,
-        event.as_str(),
-        props,
+    // Use query() (not query!()) to avoid compile-time DB schema checks —
+    // the table is created at runtime via migrations, not at compile time.
+    let result = sqlx::query(
+        "INSERT INTO funnel_events (anon_id, tenant_id, event_type, properties) \
+         VALUES ($1, $2, $3, $4)",
     )
+    .bind(anon_id)
+    .bind(tid)
+    .bind(event.as_str())
+    .bind(props)
     .execute(pool.as_ref())
     .await;
 

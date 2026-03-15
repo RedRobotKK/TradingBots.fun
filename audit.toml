@@ -1,0 +1,14 @@
+# cargo-audit configuration
+# https://docs.rs/cargo-audit/latest/cargo_audit/
+
+[advisories]
+# RUSTSEC-2023-0071 — Marvin Attack timing side-channel in the `rsa` crate.
+#
+# This advisory has NO available fix (as of 2026-03). The vulnerable code lives
+# inside `sqlx-mysql`, which is pulled in as a transitive dependency of
+# `sqlx-macros-core` (the compile-time query-checker infrastructure). We do not
+# use MySQL anywhere in this project; only Postgres connections are opened, so
+# the vulnerable RSA/MySQL TLS handshake path is never executed at runtime.
+#
+# Re-evaluate when a patched `rsa` crate is released upstream.
+ignore = ["RUSTSEC-2023-0071"]
