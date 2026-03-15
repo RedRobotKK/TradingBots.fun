@@ -599,7 +599,10 @@ ENDSSH
         cargo install cargo-audit 2>&1 | tail -3 | tee -a "$CI_LOG"
       fi
 
-      AUDIT_OUT=$(cargo audit 2>&1)
+      # RUSTSEC-2023-0071: rsa Marvin Attack — no fix available upstream.
+      # Enters via sqlx-mysql (compile-time macro dep only, never used at runtime).
+      # See audit.toml for full rationale.
+      AUDIT_OUT=$(cargo audit --ignore RUSTSEC-2023-0071 2>&1)
       AUDIT_EXIT=$?
       echo "$AUDIT_OUT" | tee -a "$CI_LOG"
 

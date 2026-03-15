@@ -122,7 +122,7 @@ pub async fn record(
     .bind(tid)
     .bind(event.as_str())
     .bind(props)
-    .execute(pool.as_ref())
+    .execute(pool.pool())   // pool() exposes the inner &PgPool which implements Executor
     .await;
 
     if let Err(e) = result {
