@@ -264,6 +264,7 @@ async fn main() -> Result<()> {
             jwks_cache:             privy::new_jwks_cache(),
             apple_pay_domain_assoc: config.apple_pay_domain_assoc.clone(),
             admin_password:         config.admin_password.clone(),
+            coinzilla_zone_id:      config.coinzilla_zone_id.clone(),
         };
         tokio::spawn(async move {
             if let Err(e) = web_dashboard::serve(app_state, 3000).await {

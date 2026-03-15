@@ -46,6 +46,10 @@ pub struct AppState {
     /// Password protecting the `/admin/*` operator panel.
     /// Username is always `"admin"`.  Set via `ADMIN_PASSWORD` env var.
     pub admin_password: Option<String>,
+    /// Coinzilla zone ID for the ad slot shown to Free/Trial users.
+    /// Set via `COINZILLA_ZONE_ID` env var (e.g. `"12345"`).
+    /// When `None`, no ads are rendered — Pro users never see ads regardless.
+    pub coinzilla_zone_id: Option<String>,
 }
 
 // ─────────────────────────────── Serde defaults ──────────────────────────────
@@ -1298,12 +1302,26 @@ async fn consumer_app_handler(
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
 
-    let state_arc = match resolve_consumer_state(&headers, &app).await {
-        ConsumerStateResult::Ok { state, .. } => state,
+    let (state_arc, tenant_id) = match resolve_consumer_state(&headers, &app).await {
+        ConsumerStateResult::Ok { state, tenant_id } => (state, Some(tenant_id)),
         ConsumerStateResult::NeedsLogin       => return axum::response::Redirect::to("/login").into_response(),
         ConsumerStateResult::NeedsOnboarding { .. } => return axum::response::Redirect::to("/app/onboarding").into_response(),
     };
     let s = state_arc.read().await;
+
+    // Resolve tenant tier to determine whether to show ads
+    let show_ads = {
+        let zone_set = app.coinzilla_zone_id.is_some();
+        let is_free = if let Some(ref tid) = tenant_id {
+            let tenants = app.tenants.read().await;
+            tenants.get(tid)
+                .map(|h| h.config.tier == crate::tenant::TenantTier::Free)
+                .unwrap_or(false)
+        } else {
+            false // single-operator mode: no ads
+        };
+        zone_set && is_free
+    };
 
     let committed: f64  = s.positions.iter().map(|p| p.size_usd).sum();
     let unrealised: f64 = s.positions.iter().map(|p| p.unrealised_pnl).sum();
@@ -1329,6 +1347,54 @@ async fn consumer_app_handler(
   </div>
 </div>"#, code = code),
         None => String::new(),
+    };
+
+    // Coinzilla ad block — shown only to Free-tier users when zone ID is configured
+    let ad_block = if show_ads {
+        let zone_id = app.coinzilla_zone_id.as_deref().unwrap_or("");
+        // Estimate CPM for tracking: $1.20 is the default established-publisher rate
+        let cpm_est = 1.20_f64;
+        format!(r#"
+<div class="card" style="text-align:center;padding:12px 0 8px">
+  <div style="font-size:.68rem;color:#484f58;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">
+    Advertisement &nbsp;·&nbsp; <a href="/app/upgrade" style="color:#58a6ff;text-decoration:none">Remove ads with Pro</a>
+  </div>
+  <div id="rr-ad-slot"
+       data-ad-network="coinzilla"
+       data-ad-unit="banner_300x250"
+       data-ad-cpm="{cpm}"
+       style="display:inline-block;min-height:250px;min-width:300px">
+    <script async src="//coinzilla.io/ads/{zone}/300x250.js"></script>
+  </div>
+</div>
+<script>
+(function(){{
+  var REFRESH_MS = 30000;
+  var slot = document.getElementById('rr-ad-slot');
+  if (!slot) return;
+  function refreshAd() {{
+    // Remove old script tag and re-insert to trigger a new ad call
+    var old = slot.querySelector('script[src*="coinzilla"]');
+    if (old) old.remove();
+    var s = document.createElement('script');
+    s.async = true;
+    s.src = '//coinzilla.io/ads/{zone}/300x250.js?_=' + Date.now();
+    slot.appendChild(s);
+    // Fire AD_IMPRESSION for the fresh impression
+    navigator.sendBeacon && navigator.sendBeacon('/api/funnel', JSON.stringify({{
+      event_type: 'AD_IMPRESSION',
+      anon_id: localStorage.getItem('rr_anon_id') || '',
+      network: 'coinzilla',
+      ad_unit: 'banner_300x250',
+      cpm_usd: {cpm}
+    }}));
+  }}
+  setInterval(refreshAd, REFRESH_MS);
+}})();
+</script>
+"#, zone = zone_id, cpm = cpm_est)
+    } else {
+        String::new()
     };
 
     let mut html = consumer_shell_open("My Account", "Overview");
@@ -1366,6 +1432,8 @@ async fn consumer_app_handler(
 </div>
 
 {referral_block}
+
+{ad_block}
 
 <p class="note" style="margin-top:8px;text-align:center">
   Auto-refreshes every 5 s · Last update: {ts}
@@ -1411,6 +1479,7 @@ async fn consumer_app_handler(
         init            = s.initial_capital,
         ts              = s.last_update,
         referral_block  = referral_block,
+        ad_block        = ad_block,
     ));
     html.push_str(consumer_shell_close());
     axum::response::Html(html).into_response()

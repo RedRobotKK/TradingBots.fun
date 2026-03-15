@@ -71,6 +71,11 @@ pub struct Config {
     /// When unset, the admin panel returns 503 (not configured).
     /// Generate a strong password: `openssl rand -hex 16`
     pub admin_password: Option<String>,
+    /// Coinzilla publisher zone ID — shown only to Free/Trial users.
+    /// Get from: publishers.coinzilla.io → My Sites → Zone → Get Code.
+    /// The numeric ID in the script tag, e.g. "12345".
+    /// When unset, no ads are rendered anywhere.
+    pub coinzilla_zone_id: Option<String>,
 
     // Affiliate — Hyperliquid referral code
     /// Referral slug registered at app.hyperliquid.xyz (e.g. "REDROBOT").
@@ -139,6 +144,7 @@ impl Config {
                 .unwrap_or_else(|_| uuid::Uuid::new_v4().to_string()),
             apple_pay_domain_assoc:     env::var("APPLE_PAY_DOMAIN_ASSOC").ok(),
             admin_password:             env::var("ADMIN_PASSWORD").ok(),
+            coinzilla_zone_id:          env::var("COINZILLA_ZONE_ID").ok(),
             lunarcrush_api_key:         env::var("LUNARCRUSH_API_KEY")
                 .unwrap_or_else(|_| "77c4fcm050bnxe49qo1h2n252umls0rrtkevh5uni".to_string()),
             anthropic_api_key:          env::var("ANTHROPIC_API_KEY").ok(),
