@@ -39,6 +39,12 @@ pub struct Config {
     /// Leave unset in paper mode; set on testnet to validate the code path.
     pub builder_code: Option<String>,
 
+    // Affiliate — Hyperliquid referral code
+    /// Referral slug registered at app.hyperliquid.xyz (e.g. "REDROBOT").
+    /// Displayed in the consumer /app page so new users sign up via our link.
+    /// Earns 10 % fee rebate on all trading volume from referred users.
+    pub referral_code: Option<String>,
+
     // Database – optional
     pub database_url: String,
 
@@ -91,6 +97,7 @@ impl Config {
             hyperliquid_secret:         env::var("HYPERLIQUID_SECRET").ok(),
             hyperliquid_wallet_address: env::var("HYPERLIQUID_WALLET_ADDRESS").ok(),
             builder_code:               env::var("BUILDER_CODE").ok(),
+            referral_code:              env::var("REFERRAL_CODE").ok(),
             lunarcrush_api_key:         env::var("LUNARCRUSH_API_KEY")
                 .unwrap_or_else(|_| "77c4fcm050bnxe49qo1h2n252umls0rrtkevh5uni".to_string()),
             anthropic_api_key:          env::var("ANTHROPIC_API_KEY").ok(),

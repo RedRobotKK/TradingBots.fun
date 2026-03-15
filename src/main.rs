@@ -55,6 +55,7 @@ mod funding;
 mod trade_log;
 mod daily_analyst;
 mod tenant;
+mod ledger;
 
 use anyhow::Result;
 use log::{error, info, warn};
@@ -196,11 +197,15 @@ async fn main() -> Result<()> {
         ..BotState::default()
     }));
 
+    // ── Apply config values that are never persisted ──────────────────────
+    bot_state.write().await.referral_code = config.referral_code.clone();
+
     // ── Restore persisted state (positions, P&L, metrics, equity window) ──
     if let Some(snapshot) = persistence::PersistedState::load() {
         snapshot.apply_to(&mut *bot_state.write().await);
-        // Always keep initial_capital from current config (operator may change it)
+        // Always keep initial_capital + referral_code from current config
         bot_state.write().await.initial_capital = config.initial_capital;
+        bot_state.write().await.referral_code   = config.referral_code.clone();
         info!("✓ State restored: {} open positions · {} closed trades · capital=${:.2}",
             bot_state.read().await.positions.len(),
             bot_state.read().await.closed_trades.len(),
@@ -1480,17 +1485,29 @@ async fn take_partial(
             pnl   = trade_pnl,
             pct   = pnl_pct,
         ));
-        s.closed_trades.push(ClosedTrade {
-            symbol:    symbol.clone(),
+        let entry_time_partial = s.positions.get(idx)
+            .map(|p| p.entry_time.clone()).unwrap_or_default();
+        let leverage_partial = s.positions.get(idx)
+            .map(|p| p.leverage).unwrap_or(1.0);
+        let fees_partial = ledger::estimate_fees(close_size, leverage_partial);
+        let partial_trade = ClosedTrade {
+            symbol:     symbol.clone(),
             side,
             entry,
-            exit:      exit_price,
-            pnl:       trade_pnl,
+            exit:       exit_price,
+            pnl:        trade_pnl,
             pnl_pct,
-            reason:    format!("Partial{}R", r_label),
-            closed_at: now_str(),
-            breakdown: partial_breakdown,
-        });
+            reason:     format!("Partial{}R", r_label),
+            closed_at:  now_str(),
+            entry_time: entry_time_partial,
+            quantity:   close_qty,
+            size_usd:   close_size,
+            leverage:   leverage_partial,
+            fees_est:   fees_partial,
+            breakdown:  partial_breakdown,
+        };
+        ledger::append(&partial_trade);
+        s.closed_trades.push(partial_trade);
         let len = s.closed_trades.len();
         if len > 100 { s.closed_trades.drain(0..len - 100); }
 
@@ -1605,17 +1622,25 @@ async fn close_paper_position(
             ai_ln = ai_line,
         ));
 
-        s.closed_trades.push(ClosedTrade {
-            symbol:    symbol.to_string(),
-            side:      pos.side.clone(),
-            entry:     pos.entry_price,
-            exit:      exit_price,
-            pnl:       trade_pnl,
+        let fees_full = ledger::estimate_fees(pos.size_usd, pos.leverage);
+        let full_trade = ClosedTrade {
+            symbol:     symbol.to_string(),
+            side:       pos.side.clone(),
+            entry:      pos.entry_price,
+            exit:       exit_price,
+            pnl:        trade_pnl,
             pnl_pct,
-            reason:    reason.to_string(),
-            closed_at: now_str(),
+            reason:     reason.to_string(),
+            closed_at:  now_str(),
+            entry_time: pos.entry_time.clone(),
+            quantity:   pos.quantity,
+            size_usd:   pos.size_usd,
+            leverage:   pos.leverage,
+            fees_est:   fees_full,
             breakdown,
-        });
+        };
+        ledger::append(&full_trade);
+        s.closed_trades.push(full_trade);
         let len = s.closed_trades.len();
         if len > 100 { s.closed_trades.drain(0..len - 100); }
 

@@ -53,10 +53,28 @@ pub struct ClosedTrade {
     pub pnl_pct:    f64,
     pub reason:     String,   // "Signal" | "StopLoss" | "TakeProfit" | "Partial"
     pub closed_at:  String,
+    // ── Tax / record-keeping fields (all default-zero for old snapshots) ──
+    /// Timestamp when the position was originally opened.
+    #[serde(default)]
+    pub entry_time: String,
+    /// Number of base-asset units traded.
+    #[serde(default)]
+    pub quantity:   f64,
+    /// USD margin committed (not notional — notional = size_usd × leverage).
+    #[serde(default)]
+    pub size_usd:   f64,
+    /// Leverage multiplier used at entry.
+    #[serde(default = "default_one")]
+    pub leverage:   f64,
+    /// Estimated fees paid (maker+taker+builder, ~0.075 % of notional).
+    #[serde(default)]
+    pub fees_est:   f64,
     /// HTML snippet shown when user clicks the row — technicals + AI reasoning.
     #[serde(default)]
     pub breakdown:  Option<String>,
 }
+
+fn default_one() -> f64 { 1.0 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CandidateInfo {
@@ -111,6 +129,10 @@ pub struct BotState {
     /// Rolling equity snapshots (max 80) used to render the sparkline in the equity hero.
     #[serde(default)]
     pub equity_history:   Vec<f64>,
+    /// Platform Hyperliquid referral code — set from config at startup, not persisted.
+    /// Displayed in the consumer /app page so new signups use the referral link.
+    #[serde(default)]
+    pub referral_code:    Option<String>,
 }
 
 impl Default for BotState {
@@ -1085,62 +1107,123 @@ async fn api_state_handler(State(state): State<SharedState>) -> Json<BotState> {
     Json(state.read().await.clone())
 }
 
-// ─────────────────────────── Consumer webapp /app ────────────────────────────
+// ─────────────────────────── Consumer webapp ─────────────────────────────────
 
-/// Simplified consumer-facing webapp.
-///
-/// Users see:
-///   • Total equity & unrealised P&L
-///   • Number of open positions
-///   • Session return %
-///   • How to deposit/withdraw (instructions only — funds stay in their own HL account)
-///   • Live 5-second refresh (same `/api/state` polling as operator dashboard)
-///
-/// No technical indicators, no signal feed, no raw data.
-async fn consumer_app_handler(State(state): State<SharedState>) -> axum::response::Html<String> {
-    let s = state.read().await;
-
-    let committed: f64 = s.positions.iter().map(|p| p.size_usd).sum();
-    let unrealised: f64 = s.positions.iter().map(|p| p.unrealised_pnl).sum();
-    let equity = s.capital + committed + unrealised;
-    let total_pnl = s.pnl + unrealised;
-    let pnl_pct = if s.initial_capital > 0.0 { total_pnl / s.initial_capital * 100.0 } else { 0.0 };
-    let pnl_colour = if total_pnl >= 0.0 { "#3fb950" } else { "#f85149" };
-    let pnl_sign   = if total_pnl >= 0.0 { "+" } else { "-" };
-
-    axum::response::Html(format!(r#"<!DOCTYPE html>
+/// Shared CSS + HTML boilerplate for all consumer pages.
+fn consumer_shell_open(title: &str, active: &str) -> String {
+    let nav = |label: &str, href: &str| -> String {
+        let is_active = label == active;
+        format!(
+            "<a href='{href}' style='padding:8px 18px;border-radius:6px;font-size:.88rem;\
+             font-weight:{fw};color:{col};background:{bg};text-decoration:none'>{label}</a>",
+            href = href,
+            fw   = if is_active { "600" } else { "400" },
+            col  = if is_active { "#e6edf3" } else { "#8b949e" },
+            bg   = if is_active { "#21262d" } else { "transparent" },
+            label = label,
+        )
+    };
+    format!(r#"<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RedRobot · My Account</title>
+<title>RedRobot · {title}</title>
 <style>
   *{{box-sizing:border-box;margin:0;padding:0}}
-  body{{background:#0d1117;color:#c9d1d9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-        min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:24px 16px}}
-  h1{{font-size:1.1rem;color:#8b949e;font-weight:400;margin-bottom:28px;letter-spacing:.04em}}
-  .card{{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:28px 32px;
-         width:100%;max-width:440px;margin-bottom:16px}}
-  .card-label{{font-size:.75rem;color:#8b949e;text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px}}
-  .card-val{{font-size:2.4rem;font-weight:700;letter-spacing:-.01em;color:#e6edf3}}
-  .badge{{display:inline-block;font-size:1rem;font-weight:600;padding:4px 14px;
-           border-radius:20px;border:1px solid;margin-top:10px}}
-  .metric-row{{display:flex;justify-content:space-between;padding:10px 0;
-               border-bottom:1px solid #21262d}}
+  body{{background:#0d1117;color:#c9d1d9;
+        font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+        min-height:100vh;padding:0 0 40px}}
+  .top-bar{{display:flex;align-items:center;justify-content:space-between;
+             padding:14px 24px;border-bottom:1px solid #21262d;margin-bottom:28px}}
+  .logo{{font-weight:700;font-size:.95rem;color:#e6edf3;letter-spacing:.04em}}
+  .logo span{{color:#3fb950}}
+  .nav{{display:flex;gap:4px}}
+  .wrap{{max-width:700px;margin:0 auto;padding:0 16px}}
+  .card{{background:#161b22;border:1px solid #30363d;border-radius:12px;
+         padding:24px 28px;margin-bottom:16px}}
+  .card-label{{font-size:.72rem;color:#8b949e;text-transform:uppercase;
+               letter-spacing:.07em;margin-bottom:8px}}
+  .card-val{{font-size:2.2rem;font-weight:700;letter-spacing:-.01em;color:#e6edf3}}
+  .badge{{display:inline-block;font-size:.95rem;font-weight:600;padding:3px 12px;
+           border-radius:16px;border:1px solid;margin-top:8px}}
+  .metric-row{{display:flex;justify-content:space-between;align-items:center;
+               padding:9px 0;border-bottom:1px solid #21262d}}
   .metric-row:last-child{{border-bottom:none}}
-  .metric-label{{color:#8b949e;font-size:.88rem}}
-  .metric-val{{font-size:.92rem;font-weight:600;color:#e6edf3}}
+  .ml{{color:#8b949e;font-size:.86rem}}
+  .mv{{font-size:.92rem;font-weight:600;color:#e6edf3}}
   .info-box{{background:#0d1117;border:1px solid #30363d;border-radius:8px;
-              padding:16px;font-size:.82rem;color:#8b949e;line-height:1.6}}
+              padding:14px;font-size:.82rem;color:#8b949e;line-height:1.7}}
   .info-box b{{color:#c9d1d9}}
-  .refresh-hint{{font-size:.72rem;color:#484f58;margin-top:20px}}
+  .tbl{{width:100%;border-collapse:collapse;font-size:.82rem}}
+  .tbl th{{color:#8b949e;font-weight:500;padding:6px 8px;border-bottom:1px solid #30363d;
+            text-align:left;white-space:nowrap}}
+  .tbl td{{padding:6px 8px;border-bottom:1px solid #21262d;color:#c9d1d9;white-space:nowrap}}
+  .tbl tr:last-child td{{border-bottom:none}}
+  .btn{{display:inline-block;padding:7px 16px;border-radius:6px;font-size:.82rem;
+         font-weight:600;cursor:pointer;text-decoration:none;border:1px solid}}
+  .btn-green{{color:#3fb950;border-color:#3fb95050;background:#3fb95012}}
+  .btn-blue{{color:#58a6ff;border-color:#58a6ff50;background:#58a6ff12}}
+  .note{{font-size:.75rem;color:#484f58;margin-top:6px;line-height:1.5}}
   a{{color:#58a6ff;text-decoration:none}}
   a:hover{{text-decoration:underline}}
+  .green{{color:#3fb950}} .red{{color:#f85149}} .muted{{color:#8b949e}}
 </style>
 </head>
 <body>
-<h1>RedRobot · My Account</h1>
+<div class="top-bar">
+  <span class="logo">Red<span>Robot</span></span>
+  <div class="nav">
+    {nav_overview}
+    {nav_history}
+    {nav_tax}
+  </div>
+</div>
+<div class="wrap">
+"#,
+        title        = title,
+        nav_overview = nav("Overview", "/app"),
+        nav_history  = nav("History",  "/app/history"),
+        nav_tax      = nav("Tax",       "/app/tax"),
+    )
+}
 
+fn consumer_shell_close() -> &'static str {
+    "</div></body></html>"
+}
+
+/// Overview page — equity, P&L, deposit/withdraw, referral link.
+async fn consumer_app_handler(State(state): State<SharedState>) -> axum::response::Html<String> {
+    let s = state.read().await;
+
+    let committed: f64  = s.positions.iter().map(|p| p.size_usd).sum();
+    let unrealised: f64 = s.positions.iter().map(|p| p.unrealised_pnl).sum();
+    let equity    = s.capital + committed + unrealised;
+    let total_pnl = s.pnl + unrealised;
+    let pnl_pct   = if s.initial_capital > 0.0 { total_pnl / s.initial_capital * 100.0 } else { 0.0 };
+    let pnl_col   = if total_pnl >= 0.0 { "#3fb950" } else { "#f85149" };
+    let pnl_sign  = if total_pnl >= 0.0 { "+" } else { "-" };
+
+    // Referral block — only rendered when the operator has set REFERRAL_CODE
+    let referral_block = match &s.referral_code {
+        Some(code) => format!(r#"<div class="card">
+  <div class="card-label">Sign up for Hyperliquid</div>
+  <div class="info-box">
+    New to Hyperliquid? Create your account using our referral link and get a
+    <b>fee discount</b> on every trade.<br><br>
+    <a class="btn btn-blue" href="https://app.hyperliquid.xyz/join/{code}"
+       target="_blank" style="display:inline-block;margin-top:4px">
+       Create HL Account → redrobot
+    </a><br>
+    <span class="note">Referral code: <b style="color:#e6edf3">{code}</b> · After creating your account,
+    fund it with USDC and share your wallet address with us to get started.</span>
+  </div>
+</div>"#, code = code),
+        None => String::new(),
+    };
+
+    let mut html = consumer_shell_open("My Account", "Overview");
+    html.push_str(&format!(r#"
 <div class="card">
   <div class="card-label">Total Equity</div>
   <div id="app-equity" class="card-val">${equity:.2}</div>
@@ -1150,37 +1233,36 @@ async fn consumer_app_handler(State(state): State<SharedState>) -> axum::respons
 </div>
 
 <div class="card">
-  <div class="metric-row">
-    <span class="metric-label">Free capital</span>
-    <span id="app-capital" class="metric-val">${capital:.2}</span>
-  </div>
-  <div class="metric-row">
-    <span class="metric-label">Open positions</span>
-    <span id="app-positions" class="metric-val">{open_n}</span>
-  </div>
-  <div class="metric-row">
-    <span class="metric-label">Closed trades</span>
-    <span id="app-closed" class="metric-val">{closed_n}</span>
-  </div>
-  <div class="metric-row">
-    <span class="metric-label">Initial deposit</span>
-    <span class="metric-val">${init:.2}</span>
-  </div>
+  <div class="metric-row"><span class="ml">Free capital</span>
+    <span id="app-capital" class="mv">${capital:.2}</span></div>
+  <div class="metric-row"><span class="ml">Open positions</span>
+    <span id="app-positions" class="mv">{open_n}</span></div>
+  <div class="metric-row"><span class="ml">Closed trades</span>
+    <span id="app-closed" class="mv">{closed_n}</span></div>
+  <div class="metric-row"><span class="ml">Initial deposit</span>
+    <span class="mv">${init:.2}</span></div>
 </div>
 
 <div class="card">
   <div class="card-label">Deposit / Withdraw</div>
   <div class="info-box">
     Your funds remain in <b>your Hyperliquid account</b> at all times.<br><br>
-    • To <b>deposit</b>, transfer USDC to your HL wallet and the bot will
-      automatically start trading with the new balance on the next cycle.<br><br>
-    • To <b>withdraw</b>, log in to <a href="https://app.hyperliquid.xyz" target="_blank">app.hyperliquid.xyz</a>
+    • <b>Deposit:</b> transfer USDC to your HL wallet. The bot automatically
+      trades with the updated balance on the next cycle.<br><br>
+    • <b>Withdraw:</b> log in to
+      <a href="https://app.hyperliquid.xyz" target="_blank">app.hyperliquid.xyz</a>
       and withdraw directly — no approval from us needed.<br><br>
-    You are always in full control of your funds.
+    You are always in full custody of your funds.
   </div>
 </div>
 
-<p class="refresh-hint">Auto-refreshes every 5 s · Last update: {ts}</p>
+{referral_block}
+
+<p class="note" style="margin-top:8px;text-align:center">
+  Auto-refreshes every 5 s · Last update: {ts}
+  &nbsp;·&nbsp; <a href="/app/history">Trade history</a>
+  &nbsp;·&nbsp; <a href="/app/tax">Tax report</a>
+</p>
 
 <script>
 (function(){{
@@ -1188,7 +1270,6 @@ async fn consumer_app_handler(State(state): State<SharedState>) -> axum::respons
   function fmt2(n){{return Math.abs(n).toFixed(2);}}
   function sign(n){{return n>=0?'+':'-';}}
   function col(n){{return n>=0?'#3fb950':'#f85149';}}
-
   function applyPoll(s){{
     var committed=0,unrealised=0;
     (s.positions||[]).forEach(function(p){{unrealised+=p.unrealised_pnl;committed+=p.size_usd;}});
@@ -1196,53 +1277,251 @@ async fn consumer_app_handler(State(state): State<SharedState>) -> axum::respons
     var total_pnl=s.pnl+unrealised;
     var pnl_pct=s.initial_capital>0?(total_pnl/s.initial_capital*100):0;
     var c=col(total_pnl);
-
-    var ev=$id('app-equity');
-    if(ev)ev.textContent='$'+equity.toFixed(2);
-
+    var ev=$id('app-equity');if(ev)ev.textContent='$'+equity.toFixed(2);
     var pnlb=$id('app-pnl-badge');
-    if(pnlb){{
-      var sg=sign(total_pnl);
+    if(pnlb){{var sg=sign(total_pnl);
       pnlb.textContent=sg+'$'+fmt2(total_pnl)+' \u00a0 '+sg+Math.abs(pnl_pct).toFixed(2)+'%';
-      pnlb.style.color=c;pnlb.style.borderColor=c+'40';pnlb.style.background=c+'12';
-    }}
-
-    var cap=$id('app-capital');
-    if(cap)cap.textContent='$'+s.capital.toFixed(2);
-
-    var posEl=$id('app-positions');
-    if(posEl)posEl.textContent=(s.positions||[]).length;
-
-    var clEl=$id('app-closed');
-    if(clEl)clEl.textContent=(s.closed_trades||[]).length;
+      pnlb.style.color=c;pnlb.style.borderColor=c+'40';pnlb.style.background=c+'12';}}
+    var cap=$id('app-capital');if(cap)cap.textContent='$'+s.capital.toFixed(2);
+    var posEl=$id('app-positions');if(posEl)posEl.textContent=(s.positions||[]).length;
+    var clEl=$id('app-closed');if(clEl)clEl.textContent=(s.closed_trades||[]).length;
   }}
-
-  function poll(){{
-    fetch('/api/state').then(function(r){{return r.json();}}).then(applyPoll).catch(function(){{}});
-  }}
-  setTimeout(poll,2000);
-  setInterval(poll,5000);
+  function poll(){{fetch('/api/state').then(function(r){{return r.json();}}).then(applyPoll).catch(function(){{}});}}
+  setTimeout(poll,2000);setInterval(poll,5000);
 }})();
 </script>
-</body></html>"#,
-        equity    = equity,
-        pc        = pnl_colour,
-        ps        = pnl_sign,
-        pnl       = total_pnl.abs(),
-        pp        = pnl_pct.abs(),
-        capital   = s.capital,
-        open_n    = s.positions.len(),
-        closed_n  = s.closed_trades.len(),
-        init      = s.initial_capital,
-        ts        = s.last_update,
-    ))
+"#,
+        equity          = equity,
+        pc              = pnl_col,
+        ps              = pnl_sign,
+        pnl             = total_pnl.abs(),
+        pp              = pnl_pct.abs(),
+        capital         = s.capital,
+        open_n          = s.positions.len(),
+        closed_n        = s.closed_trades.len(),
+        init            = s.initial_capital,
+        ts              = s.last_update,
+        referral_block  = referral_block,
+    ));
+    html.push_str(consumer_shell_close());
+    axum::response::Html(html)
+}
+
+// ─── Trade history page /app/history ─────────────────────────────────────────
+
+async fn consumer_history_handler(State(state): State<SharedState>) -> axum::response::Html<String> {
+    let s = state.read().await;
+
+    let rows: String = if s.closed_trades.is_empty() {
+        "<tr><td colspan='9' style='color:#8b949e;text-align:center;padding:20px'>No closed trades yet.</td></tr>".to_string()
+    } else {
+        s.closed_trades.iter().rev().map(|t| {
+            let pnl_col = if t.pnl >= 0.0 { "#3fb950" } else { "#f85149" };
+            let pnl_sign = if t.pnl >= 0.0 { "+" } else { "" };
+            let fees = if t.fees_est > 0.0 { t.fees_est }
+                       else { crate::ledger::estimate_fees(t.size_usd, t.leverage.max(1.0)) };
+            let net = t.pnl - fees;
+            let net_col = if net >= 0.0 { "#3fb950" } else { "#f85149" };
+            let date = t.closed_at.get(..10).unwrap_or(&t.closed_at);
+            format!(
+                "<tr>\
+                   <td class='muted' style='font-size:.75rem'>{date}</td>\
+                   <td><b>{sym}</b></td>\
+                   <td style='color:{sc}'>{side}</td>\
+                   <td>${entry:.4}</td>\
+                   <td>${exit:.4}</td>\
+                   <td class='muted'>{lev:.1}×</td>\
+                   <td style='color:{pc}'>{ps}{pnl:.2}</td>\
+                   <td style='color:#f85149'>-{fees:.3}</td>\
+                   <td style='color:{nc};font-weight:600'>{nps}{net:.2}</td>\
+                 </tr>",
+                date  = date,
+                sym   = t.symbol,
+                side  = t.side,
+                sc    = if t.side == "LONG" { "#3fb950" } else { "#f85149" },
+                entry = t.entry,
+                exit  = t.exit,
+                lev   = t.leverage.max(1.0),
+                pc    = pnl_col,
+                ps    = pnl_sign,
+                pnl   = t.pnl,
+                fees  = fees,
+                nc    = net_col,
+                nps   = if net >= 0.0 { "+" } else { "" },
+                net   = net,
+            )
+        }).collect()
+    };
+
+    // Summary totals
+    let total_gross: f64 = s.closed_trades.iter().map(|t| t.pnl).sum();
+    let total_fees: f64  = s.closed_trades.iter().map(|t| {
+        if t.fees_est > 0.0 { t.fees_est }
+        else { crate::ledger::estimate_fees(t.size_usd, t.leverage.max(1.0)) }
+    }).sum();
+    let total_net = total_gross - total_fees;
+    let wins  = s.closed_trades.iter().filter(|t| t.pnl > 0.0).count();
+    let total = s.closed_trades.len();
+
+    let mut html = consumer_shell_open("Trade History", "History");
+    html.push_str(&format!(r#"
+<div class="card" style="padding:16px 20px">
+  <div style="display:flex;gap:24px;flex-wrap:wrap">
+    <div><div class="card-label">Net P&amp;L</div>
+      <div style="font-size:1.5rem;font-weight:700;color:{nc}">{nps}${net:.2}</div></div>
+    <div><div class="card-label">Gross P&amp;L</div>
+      <div style="font-size:1.5rem;font-weight:700;color:{gc}">{gps}${gross:.2}</div></div>
+    <div><div class="card-label">Est. Fees</div>
+      <div style="font-size:1.5rem;font-weight:700;color:#f85149">-${fees:.2}</div></div>
+    <div><div class="card-label">Win Rate</div>
+      <div style="font-size:1.5rem;font-weight:700;color:#e6edf3">{wr:.0}%</div></div>
+    <div><div class="card-label">Trades</div>
+      <div style="font-size:1.5rem;font-weight:700;color:#e6edf3">{total}</div></div>
+  </div>
+</div>
+
+<div class="card" style="padding:0;overflow:auto">
+  <div style="padding:12px 16px;border-bottom:1px solid #30363d;display:flex;
+       justify-content:space-between;align-items:center">
+    <span style="font-size:.85rem;font-weight:600;color:#e6edf3">Recent trades (in-memory, last 100)</span>
+    <a href="/app/tax/csv" class="btn btn-green" style="font-size:.78rem;padding:5px 12px">
+      ↓ Download full CSV
+    </a>
+  </div>
+  <table class="tbl">
+    <thead><tr>
+      <th>Date</th><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th>
+      <th>Lev</th><th>Gross P&amp;L</th><th>Fees</th><th>Net P&amp;L</th>
+    </tr></thead>
+    <tbody>{rows}</tbody>
+  </table>
+</div>
+<p class="note" style="margin-top:8px">
+  In-memory history is capped at 100 trades. Full history lives in
+  <code>trades_YYYY.csv</code> on the server and can be downloaded via the
+  <a href="/app/tax/csv">CSV export</a>.
+</p>
+"#,
+        nc    = if total_net   >= 0.0 { "#3fb950" } else { "#f85149" },
+        nps   = if total_net   >= 0.0 { "+" } else { "" },
+        gc    = if total_gross >= 0.0 { "#3fb950" } else { "#f85149" },
+        gps   = if total_gross >= 0.0 { "+" } else { "" },
+        net   = total_net.abs(),
+        gross = total_gross.abs(),
+        fees  = total_fees,
+        wr    = if total > 0 { wins as f64 / total as f64 * 100.0 } else { 0.0 },
+        total = total,
+        rows  = rows,
+    ));
+    html.push_str(consumer_shell_close());
+    axum::response::Html(html)
+}
+
+// ─── Tax report page /app/tax ─────────────────────────────────────────────────
+
+async fn consumer_tax_handler(State(_state): State<SharedState>) -> axum::response::Html<String> {
+    let summary = crate::ledger::yearly_summary();
+    let (_, total_rows) = crate::ledger::read_all();
+
+    let year_cards: String = if summary.is_empty() {
+        "<div class='info-box'>No closed trades recorded yet. Trades appear here after they close.</div>".to_string()
+    } else {
+        summary.iter().map(|(year, gross, fees, net, count, wins, losses)| {
+            let net_col  = if *net  >= 0.0 { "#3fb950" } else { "#f85149" };
+            let net_sign = if *net  >= 0.0 { "+" } else { "" };
+            let win_rate = if *count > 0 { *wins as f64 / *count as f64 * 100.0 } else { 0.0 };
+            format!(r#"<div class="card">
+  <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px">
+    <span style="font-size:1.1rem;font-weight:700;color:#e6edf3">{year}</span>
+    <span style="font-size:.8rem;color:#8b949e">{count} trades · {wins}W / {losses}L · {wr:.0}% win rate</span>
+  </div>
+  <div style="display:flex;gap:20px;flex-wrap:wrap">
+    <div><div class="card-label">Net P&amp;L</div>
+      <div style="font-size:1.6rem;font-weight:700;color:{nc}">{ns}${net:.2}</div></div>
+    <div><div class="card-label">Gross P&amp;L</div>
+      <div style="font-size:1.2rem;font-weight:600;color:#c9d1d9">{gs}${gross:.2}</div></div>
+    <div><div class="card-label">Est. Fees</div>
+      <div style="font-size:1.2rem;font-weight:600;color:#f85149">-${fees:.2}</div></div>
+  </div>
+</div>"#,
+                year  = year,
+                count = count,
+                wins  = wins,
+                losses = losses,
+                wr    = win_rate,
+                nc    = net_col,
+                ns    = net_sign,
+                net   = net.abs(),
+                gs    = if *gross >= 0.0 { "+" } else { "" },
+                gross = gross.abs(),
+                fees  = fees,
+            )
+        }).collect()
+    };
+
+    let mut html = consumer_shell_open("Tax Report", "Tax");
+    html.push_str(&format!(r#"
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+  <div>
+    <div style="font-size:.88rem;font-weight:600;color:#e6edf3">Annual P&amp;L Summary</div>
+    <div class="note">{total_rows} total trades on record · Updates when a trade closes</div>
+  </div>
+  <a href="/app/tax/csv" class="btn btn-green">↓ Download all trades CSV</a>
+</div>
+
+{year_cards}
+
+<div class="card">
+  <div class="card-label">Important Notes</div>
+  <div class="info-box">
+    <b>This report is for informational purposes only and does not constitute tax advice.</b>
+    Consult a qualified tax professional before filing.<br><br>
+    • Perpetual futures contracts may qualify as <b>Section 1256 contracts</b> in the
+      US (60% long-term / 40% short-term capital gains treatment) — verify with your
+      accountant as this depends on the exchange and jurisdiction.<br><br>
+    • <b>Fees shown are estimates</b> based on ~0.075 % per leg (maker + builder fee).
+      Actual fees appear on your Hyperliquid account statement — always use those
+      figures for filing.<br><br>
+    • The CSV export contains one row per trade closure and is formatted for easy
+      import into tax software (Koinly, CoinTracker, TaxBit, etc.).<br><br>
+    • Partial closes (2R / 4R tranches) are recorded as separate rows.
+  </div>
+</div>
+"#,
+        total_rows = total_rows,
+        year_cards = year_cards,
+    ));
+    html.push_str(consumer_shell_close());
+    axum::response::Html(html)
+}
+
+// ─── CSV download /app/tax/csv ────────────────────────────────────────────────
+
+async fn consumer_tax_csv_handler(
+    State(_state): State<SharedState>,
+) -> impl axum::response::IntoResponse {
+    let (csv, _) = crate::ledger::read_all();
+    let filename  = format!("redrobot_trades_{}.csv",
+        chrono::Utc::now().format("%Y%m%d"));
+    (
+        [
+            ("Content-Type",        "text/csv; charset=utf-8"),
+            ("Content-Disposition", Box::leak(
+                format!("attachment; filename=\"{}\"", filename).into_boxed_str()
+            )),
+        ],
+        csv,
+    )
 }
 
 pub async fn serve(state: SharedState, port: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let app = Router::new()
         .route("/", get(dashboard_handler))
-        .route("/app", get(consumer_app_handler))
-        .route("/api/state", get(api_state_handler))
+        .route("/app",          get(consumer_app_handler))
+        .route("/app/history",  get(consumer_history_handler))
+        .route("/app/tax",      get(consumer_tax_handler))
+        .route("/app/tax/csv",  get(consumer_tax_csv_handler))
+        .route("/api/state",    get(api_state_handler))
         .with_state(state);
     let addr = format!("0.0.0.0:{}", port);
     log::info!("🌐 Dashboard at http://{}", addr);
