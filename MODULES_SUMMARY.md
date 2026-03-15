@@ -2,7 +2,7 @@
 
 ## Completion Status: ✅ COMPLETE
 
-This document summarizes the two critical production-grade modules built for the RedRobot-HedgeBot trading system.
+This document summarizes the two critical production-grade modules built for the tradingbots-fun trading system.
 
 ## Module 1: Real Hyperliquid API Client
 

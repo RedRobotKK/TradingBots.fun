@@ -8,13 +8,13 @@ Print this page and keep it handy while deploying!
 
 ### Prepare GitHub
 ```bash
-cd ~/Development/RedRobot-HedgeBot
+cd ~/Development/tradingbots-fun
 git init
 git config user.name "Your Name"
 git config user.email "your@email.com"
 git add -A
 git commit -m "Initial: Production ready"
-git remote add origin https://github.com/YOU/RedRobot-HedgeBot.git
+git remote add origin https://github.com/YOU/tradingbots-fun.git
 git push -u origin main
 ```
 
@@ -40,8 +40,8 @@ source ~/.cargo/env
 ### 4. Clone Code (Replace USERNAME)
 ```bash
 cd ~
-git clone https://github.com/USERNAME/RedRobot-HedgeBot.git
-cd RedRobot-HedgeBot
+git clone https://github.com/USERNAME/tradingbots-fun.git
+cd tradingbots-fun
 ```
 
 ### 5. Configure
@@ -67,7 +67,7 @@ cargo build --release
 ```bash
 apt install screen -y
 screen -S trading
-./target/release/redrobot-hedgebot --config deployment.toml
+./target/release/tradingbots-fun --config deployment.toml
 # Detach: Ctrl+A, then D
 ```
 
@@ -77,12 +77,12 @@ screen -S trading
 
 ### Check Running
 ```bash
-ps aux | grep redrobot-hedgebot
+ps aux | grep tradingbots-fun
 ```
 
 ### View Logs
 ```bash
-tail -f /var/log/redrobot/trading.log
+tail -f /var/log/tradingbots/trading.log
 ```
 
 ### Stop
@@ -137,10 +137,10 @@ That's it. System stops. No stuck positions.
 
 | What | Where |
 |------|-------|
-| Code | ~/RedRobot-HedgeBot/ |
-| Binary | ~/RedRobot-HedgeBot/target/release/ |
+| Code | ~/tradingbots-fun/ |
+| Binary | ~/tradingbots-fun/target/release/ |
 | Config | ./.env |
-| Logs | /var/log/redrobot/trading.log |
+| Logs | /var/log/tradingbots/trading.log |
 | Deployment | DEPLOYMENT_DIGITALOCEAN.md |
 | Full Guide | docs/COMPLETE_IMPLEMENTATION_GUIDE.md |
 
@@ -173,7 +173,7 @@ That's it. System stops. No stuck positions.
 | "Connection refused" | Check API key in .env |
 | "Out of memory" | Upgrade droplet or reduce logging |
 | "Can't compile" | `rustup update` then rebuild |
-| System crashes | Check logs: `tail -f /var/log/redrobot/trading.log` |
+| System crashes | Check logs: `tail -f /var/log/tradingbots/trading.log` |
 
 ---
 
@@ -182,7 +182,7 @@ That's it. System stops. No stuck positions.
 1. **Deployment issues:** Read DEPLOYMENT_DIGITALOCEAN.md
 2. **General questions:** Read COMPLETE_IMPLEMENTATION_GUIDE.md
 3. **System design:** Read INSTITUTIONAL_FRAMEWORKS_AND_INFRASTRUCTURE.md
-4. **Logs:** `tail -f /var/log/redrobot/trading.log`
+4. **Logs:** `tail -f /var/log/tradingbots/trading.log`
 
 ---
 

@@ -286,7 +286,7 @@ If Binance/Hyperliquid fail:
 ### **File Structure:**
 
 ```
-RedRobot-HedgeBot/
+tradingbots-fun/
 ├── .env.data-feeds              (⛔ GITIGNORE - Your actual keys)
 ├── .env.data-feeds.example      (✅ Committed - Template)
 ├── src/

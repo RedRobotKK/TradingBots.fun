@@ -466,10 +466,10 @@ CUSTOM_API_1_REQUIRES_AUTH=true
 ```bash
 # Start bot
 source .env.data-feeds
-./redrobot
+./tradingbots
 
 # Check logs for API usage:
-tail -f /tmp/redrobot.log | grep "API.*okx\|API.*custom"
+tail -f /tmp/tradingbots.log | grep "API.*okx\|API.*custom"
 
 # Should show: "Using OKX API: Success" or similar
 ```

@@ -3,11 +3,11 @@ version: '3.8'
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: redrobot-postgres
+    container_name: tradingbots-postgres
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: redrobot
+      POSTGRES_DB: tradingbots
     ports:
       - "5432:5432"
     volumes:
@@ -19,16 +19,16 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - redrobot-net
+      - tradingbots-net
 
-  redrobot:
+  tradingbots:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: redrobot-app
+    container_name: tradingbots-app
     environment:
       MODE: testnet
-      DATABASE_URL: postgres://postgres:postgres@postgres:5432/redrobot
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/tradingbots
       RUST_LOG: info
       TRADING_SYMBOL: SOL
       INITIAL_CAPITAL: 100
@@ -41,12 +41,12 @@ services:
       postgres:
         condition: service_healthy
     networks:
-      - redrobot-net
+      - tradingbots-net
     restart: unless-stopped
 
 volumes:
   postgres_data:
 
 networks:
-  redrobot-net:
+  tradingbots-net:
     driver: bridge

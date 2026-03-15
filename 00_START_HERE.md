@@ -1,4 +1,4 @@
-# 🚀 START HERE: RedRobot-HedgeBot Overview
+# 🚀 START HERE: tradingbots-fun Overview
 
 **Complete Trading System Documentation for Autonomous Crypto Trading**
 
@@ -131,7 +131,7 @@ Week 4: Go Live
 
 ## Key Differences from Other Trading Bots
 
-| Feature | Most Bots | RedRobot |
+| Feature | Most Bots | TradingBots.fun |
 |---------|-----------|---------|
 | Order Flow Detection | ❌ | ✅ |
 | Whale Intelligence | ❌ | ✅ |
@@ -245,7 +245,7 @@ ROI: 600%-1200% annually if 12-20% monthly holds
 ## Files You Now Have
 
 ```
-📁 RedRobot-HedgeBot/
+📁 tradingbots-fun/
 ├─ 00_START_HERE.md (this file)
 ├─ IMPLEMENTATION_SUMMARY.md (5,000 words)
 ├─ WEEK1_ARCHITECTURE.md (5,000 words)

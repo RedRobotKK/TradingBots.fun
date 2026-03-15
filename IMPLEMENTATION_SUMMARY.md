@@ -1,4 +1,4 @@
-# Complete Implementation Summary: RedRobot-HedgeBot
+# Complete Implementation Summary: tradingbots-fun
 
 ## Why Rust? The Final Answer
 
@@ -365,7 +365,7 @@ With proper risk controls:
 
 ## Files You Now Have
 
-📁 **RedRobot-HedgeBot/**
+📁 **tradingbots-fun/**
 
 ```
 ├─ WEEK1_ARCHITECTURE.md (5,000 words)
@@ -392,8 +392,8 @@ With proper risk controls:
 
 ```bash
 # 1. Set up Rust project
-cargo new redrobot-hedgebot
-cd redrobot-hedgebot
+cargo new tradingbots-fun
+cd tradingbots-fun
 
 # 2. Follow WEEK1_ARCHITECTURE.md
 # Day 1: CEX monitoring client

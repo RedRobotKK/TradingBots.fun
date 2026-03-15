@@ -1,6 +1,6 @@
 ╔════════════════════════════════════════════════════════════════════════════╗
 ║                                                                            ║
-║          🎉 REDROBOT HEDGEBOT - PRODUCTION DEPLOYMENT READY 🎉           ║
+║          🎉 TRADINGBOTS HEDGEBOT - PRODUCTION DEPLOYMENT READY 🎉           ║
 ║                                                                            ║
 ║                           February 22, 2026                                ║
 ║                                                                            ║
@@ -48,7 +48,7 @@ DEPLOYMENT CHECKLIST - DO THIS BEFORE SHOPPING
 
 □ 1. Prepare Code for GitHub
 
-  cd ~/Development/RedRobot-HedgeBot
+  cd ~/Development/tradingbots-fun
   git init
   git config user.name "Your Name"
   git config user.email "your@email.com"
@@ -59,13 +59,13 @@ DEPLOYMENT CHECKLIST - DO THIS BEFORE SHOPPING
 
   Go to github.com
   - Click "New Repository"
-  - Name: RedRobot-HedgeBot
+  - Name: tradingbots-fun
   - Set to PRIVATE (keep code private!)
   - Click Create
 
 □ 3. Push Code to GitHub
 
-  git remote add origin https://github.com/YOUR_USERNAME/RedRobot-HedgeBot.git
+  git remote add origin https://github.com/YOUR_USERNAME/tradingbots-fun.git
   git push -u origin main
 
 ✅ BEFORE SHOPPING: ALL DONE
@@ -85,7 +85,7 @@ Quick version:
 5. Clone your code from GitHub
 6. Create .env file with YOUR Hyperliquid API keys
 7. Build: cargo build --release
-8. Run: ./target/release/redrobot-hedgebot --config deployment.toml
+8. Run: ./target/release/tradingbots-fun --config deployment.toml
 
 That's it! System runs 24/7.
 
@@ -248,7 +248,7 @@ Quick Commands?
 
 Emergency?
   → Press Ctrl+C (stops everything immediately)
-  → Check logs: tail -f /var/log/redrobot/trading.log
+  → Check logs: tail -f /var/log/tradingbots/trading.log
 
 ═══════════════════════════════════════════════════════════════════════════
 

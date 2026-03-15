@@ -1,4 +1,4 @@
-# 🤖 RedRobot HedgeBot: Full Production System
+# 🤖 TradingBots.fun: Full Production System
 
 ## Executive Summary
 
@@ -165,7 +165,7 @@ docker-compose up -d
 docker-compose logs -f | grep "Decision\|Order\|Trade"
 
 # 5. After 24-72 hours, check results
-docker-compose exec postgres psql -U postgres -d redrobot \
+docker-compose exec postgres psql -U postgres -d tradingbots \
   -c "SELECT action, confidence, pnl, created_at FROM trades
        ORDER BY created_at DESC LIMIT 20;"
 ```
@@ -228,7 +228,7 @@ See: [DEPLOYMENT_DIGITALOCEAN.md](./DEPLOYMENT_DIGITALOCEAN.md)
 ## Documentation Map
 
 ```
-📦 RedRobot-HedgeBot/
+📦 tradingbots-fun/
 ├── 📄 FULL_SYSTEM_README.md          ← You are here
 ├── 📄 QUICK_START.md                 ← 10-min paper trade setup
 ├── 📄 SIMULATOR_QUICK_START.md       ← 2-hour backtest setup

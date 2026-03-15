@@ -1,4 +1,4 @@
-# RedRobot HedgeBot — Go-To-Market Plan
+# TradingBots.fun — Go-To-Market Plan
 
 > **How to read this document**
 > Every task has a checkbox `[ ]`. Work through them top to bottom.
@@ -48,7 +48,7 @@ Hyperliquid uses standard Ethereum-compatible wallets. You need a wallet address
 
 - [ ] Install MetaMask: https://metamask.io/download/
 - [ ] Click **Add a new account** (the circle icon → Create account)
-- [ ] Name it `RedRobot Testnet`
+- [ ] Name it `TradingBots.fun Testnet`
 - [ ] Click the three-dot menu next to the account → **Account details** → **Show private key**
 - [ ] Enter your MetaMask password
 - [ ] Copy the private key (64 hex chars, no `0x` prefix needed — strip it if present)
@@ -108,7 +108,7 @@ The bot signs every API request using your private key (EIP-712 Ethereum signatu
 SSH into your VPS, then:
 
 ```bash
-cd ~/RedRobot-HedgeBot       # or wherever the repo lives
+cd ~/tradingbots-fun       # or wherever the repo lives
 cp .env .env.backup           # always back up before editing
 nano .env
 ```
@@ -165,8 +165,8 @@ git add .gitignore && git commit -m "chore: ensure .env is gitignored"
 ### 1.6 — Restart the bot and verify testnet mode
 
 ```bash
-sudo systemctl restart redrobot-hedgebot
-sudo journalctl -u redrobot-hedgebot -f
+sudo systemctl restart tradingbots-fun
+sudo journalctl -u tradingbots-fun -f
 ```
 
 Look for this line in the logs within the first 5 seconds:
@@ -184,9 +184,9 @@ And confirm price fetches are reaching the testnet endpoint:
 If you see `mode=Paper` instead of `mode=Testnet`, the `.env` change hasn't been picked up — double-check there is no stray `MODE=paper` override in your systemd unit file:
 
 ```bash
-sudo systemctl cat redrobot-hedgebot | grep -i mode
+sudo systemctl cat tradingbots-fun | grep -i mode
 # If MODE appears there, edit the unit file and remove it:
-sudo systemctl edit redrobot-hedgebot
+sudo systemctl edit tradingbots-fun
 ```
 
 ---
@@ -328,8 +328,8 @@ Currently `main.rs` calls `hl.place_order(&decision).await` but ignores the real
 
 ### 2.8 — Run on testnet for 72 hours straight
 
-- [ ] Deploy updated code: `git push origin master` → wait for CI to pass → `sudo systemctl restart redrobot-hedgebot`
-- [ ] Monitor logs: `sudo journalctl -u redrobot-hedgebot -f`
+- [ ] Deploy updated code: `git push origin master` → wait for CI to pass → `sudo systemctl restart tradingbots-fun`
+- [ ] Monitor logs: `sudo journalctl -u tradingbots-fun -f`
 - [ ] Confirm real orders appearing at: https://app.hyperliquid-testnet.xyz (Order History tab)
 - [ ] Run for minimum **72 consecutive hours**
 - [ ] Check daily analysis reports in `logs/analysis_YYYY-MM-DD.md`
@@ -398,7 +398,7 @@ Hyperliquid trades with USDC on Arbitrum. You need to bridge USDC onto Hyperliqu
 ### 3.3 — Update `.env` on the VPS for mainnet
 
 ```bash
-cd ~/RedRobot-HedgeBot
+cd ~/tradingbots-fun
 cp .env .env.testnet-backup     # keep testnet config as backup
 nano .env
 ```
@@ -444,8 +444,8 @@ Run each of these before starting the bot on mainnet:
 ### 3.5 — Launch on mainnet
 
 ```bash
-sudo systemctl restart redrobot-hedgebot
-sudo journalctl -u redrobot-hedgebot -f
+sudo systemctl restart tradingbots-fun
+sudo journalctl -u tradingbots-fun -f
 ```
 
 Confirm in the logs:
@@ -466,13 +466,13 @@ For the first 7 days, check in twice daily:
 
 **Morning check (5 minutes):**
 ```bash
-sudo journalctl -u redrobot-hedgebot --since "yesterday" | grep -E "ERROR|WARN|order|position"
+sudo journalctl -u tradingbots-fun --since "yesterday" | grep -E "ERROR|WARN|order|position"
 cat logs/analysis_$(date -d yesterday +%Y-%m-%d).md   # yesterday's AI report
 ```
 
 **Evening check (5 minutes):**
 ```bash
-sudo journalctl -u redrobot-hedgebot --since "12 hours ago" | tail -50
+sudo journalctl -u tradingbots-fun --since "12 hours ago" | tail -50
 ```
 
 - [ ] Day 1: No errors, first orders placed ✓
@@ -515,35 +515,35 @@ git push origin master
 
 # CI runs on the VPS automatically — wait for it to pass, then:
 # On VPS:
-sudo systemctl restart redrobot-hedgebot
-sudo journalctl -u redrobot-hedgebot -f   # watch for clean startup
+sudo systemctl restart tradingbots-fun
+sudo journalctl -u tradingbots-fun -f   # watch for clean startup
 ```
 
 ### How to check if the bot is healthy
 
 ```bash
 # Is the service running?
-sudo systemctl status redrobot-hedgebot
+sudo systemctl status tradingbots-fun
 
 # Recent errors?
-sudo journalctl -u redrobot-hedgebot --since "1 hour ago" | grep ERROR
+sudo journalctl -u tradingbots-fun --since "1 hour ago" | grep ERROR
 
 # Live log stream
-sudo journalctl -u redrobot-hedgebot -f
+sudo journalctl -u tradingbots-fun -f
 ```
 
 ### How to run the daily analysis manually
 
 ```bash
-cd ~/RedRobot-HedgeBot
-ANTHROPIC_API_KEY=your_key ./target/release/redrobot --analyze 2026-03-14
+cd ~/tradingbots-fun
+ANTHROPIC_API_KEY=your_key ./target/release/tradingbots --analyze 2026-03-14
 # Output written to:  logs/analysis_2026-03-14.md
 ```
 
 ### How to emergency stop
 
 ```bash
-sudo systemctl stop redrobot-hedgebot
+sudo systemctl stop tradingbots-fun
 # Then manually close any open positions on the Hyperliquid UI
 ```
 
@@ -558,7 +558,7 @@ sudo systemctl stop redrobot-hedgebot
 | `RUST_LOG` | No | `info` | Use `debug` for troubleshooting |
 | `ANTHROPIC_API_KEY` | No | `sk-ant-…` | Enables daily AI analysis |
 | `LUNARCRUSH_API_KEY` | No | (has default) | Sentiment data |
-| `DATABASE_URL` | No | `sqlite:./redrobot.db` | Defaults to SQLite |
+| `DATABASE_URL` | No | `sqlite:./tradingbots.db` | Defaults to SQLite |
 
 ---
 

@@ -1,4 +1,4 @@
-# 🚀 RedRobot-HedgeBot: Ready for Deployment
+# 🚀 tradingbots-fun: Ready for Deployment
 
 **Status:** ✅ COMPLETE AND READY TO PUSH TO GITHUB
 
@@ -66,7 +66,7 @@
 
 ### Step 1: Push Code to GitHub (5 minutes)
 ```bash
-cd ~/Development/RedRobot-HedgeBot
+cd ~/Development/tradingbots-fun
 git push origin master
 ```
 
@@ -82,7 +82,7 @@ Follow `DEPLOYMENT_DIGITALOCEAN.md` - it's written for complete beginners:
 6. Configure .env file
 7. Build project: `cargo build --release`
 8. Run with screen: `screen -S trading`
-9. Start bot: `./target/release/redrobot-hedgebot --config deployment.toml`
+9. Start bot: `./target/release/tradingbots-fun --config deployment.toml`
 
 **Total time:** ~45 minutes  
 **Cost:** $6/month  
@@ -91,10 +91,10 @@ Follow `DEPLOYMENT_DIGITALOCEAN.md` - it's written for complete beginners:
 ### Step 3: Verify and Start Trading
 ```bash
 # Check running
-ps aux | grep redrobot-hedgebot
+ps aux | grep tradingbots-fun
 
 # View logs
-tail -f /var/log/redrobot/trading.log
+tail -f /var/log/tradingbots/trading.log
 
 # Monitor performance
 screen -r trading  # Ctrl+A then D to detach

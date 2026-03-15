@@ -80,7 +80,7 @@ mod integration_tests {
 
         // Create multiple accounts with different strategies
         let mut scalp_account = TradingAccount::new(
-            "drift-scalp-1".to_string(),
+            "tb-scalp-1".to_string(),
             Protocol::Drift,
             "7x".to_string(),
             AccountPurpose::Scalp,
@@ -88,7 +88,7 @@ mod integration_tests {
         scalp_account.capital_allocation = 0.30;
 
         let mut swing_account = TradingAccount::new(
-            "drift-swing-1".to_string(),
+            "tb-swing-1".to_string(),
             Protocol::Drift,
             "7y".to_string(),
             AccountPurpose::Swing,
@@ -96,7 +96,7 @@ mod integration_tests {
         swing_account.capital_allocation = 0.25;
 
         let mut position_account = TradingAccount::new(
-            "drift-position-1".to_string(),
+            "tb-position-1".to_string(),
             Protocol::Drift,
             "7z".to_string(),
             AccountPurpose::Position,
@@ -104,7 +104,7 @@ mod integration_tests {
         position_account.capital_allocation = 0.20;
 
         let mut hedge_account = TradingAccount::new(
-            "drift-hedge-1".to_string(),
+            "tb-hedge-1".to_string(),
             Protocol::Drift,
             "7w".to_string(),
             AccountPurpose::Hedge,
@@ -112,7 +112,7 @@ mod integration_tests {
         hedge_account.capital_allocation = 0.15;
 
         let mut reserve_account = TradingAccount::new(
-            "drift-reserve-1".to_string(),
+            "tb-reserve-1".to_string(),
             Protocol::Drift,
             "7v".to_string(),
             AccountPurpose::Reserve,

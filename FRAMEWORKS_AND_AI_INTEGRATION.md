@@ -122,8 +122,8 @@ TOTAL TIME: ~5ms
 ### Step 1: Create Decision Context (Everything the AI needs)
 
 ```rust
-use redrobot_hedgebot::ai_decision_engine::*;
-use redrobot_hedgebot::frameworks::*;
+use tradingbots_fun::ai_decision_engine::*;
+use tradingbots_fun::frameworks::*;
 
 // Build the context with everything
 let context = AIDecisionContext {

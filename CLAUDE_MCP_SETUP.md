@@ -1,6 +1,6 @@
-# Claude MCP Setup — PostgreSQL + RedRobot Database Access
+# Claude MCP Setup — PostgreSQL + TradingBots.fun Database Access
 
-This guide connects Claude Desktop to the RedRobot PostgreSQL database so
+This guide connects Claude Desktop to the TradingBots.fun PostgreSQL database so
 the admin can query trade data, signal analytics, and TVL history using
 natural language — no SQL knowledge required.
 
@@ -15,7 +15,7 @@ Claude Desktop (local)
     ↓  TCP connection (SSH tunnel or direct)
 PostgreSQL on VPS (127.0.0.1:5432)
     ↓  Queries against
-redrobot database (tables: closed_trades, aum_snapshots, equity_snapshots …)
+tradingbots database (tables: closed_trades, aum_snapshots, equity_snapshots …)
 ```
 
 Claude reads the MCP config at startup, launches the MCP server subprocess,
@@ -30,7 +30,7 @@ Use an SSH tunnel to bring it to your local machine:
 
 ```bash
 # Add this to ~/.ssh/config for convenience:
-Host redrobot-db
+Host tradingbots-db
     HostName 165.232.160.43
     User root
     LocalForward 5433 127.0.0.1:5432
@@ -40,9 +40,9 @@ Host redrobot-db
 
 Then start the tunnel:
 ```bash
-ssh -N redrobot-db &
+ssh -N tradingbots-db &
 # Or persistently with autossh:
-autossh -M 0 -f -N redrobot-db
+autossh -M 0 -f -N tradingbots-db
 ```
 
 The VPS database is now available at `localhost:5433` on your Mac.
@@ -53,7 +53,7 @@ The VPS database is now available at `localhost:5433` on your Mac.
 
 ```bash
 ssh root@165.232.160.43 "grep DATABASE_URL /etc/environment"
-# Output: DATABASE_URL=postgresql://redrobot:<password>@127.0.0.1/redrobot
+# Output: DATABASE_URL=postgresql://tradingbots:<password>@127.0.0.1/tradingbots
 ```
 
 Copy the password — you'll need it in Step 3.
@@ -68,12 +68,12 @@ and add the `mcpServers` section:
 ```json
 {
   "mcpServers": {
-    "redrobot-db": {
+    "tradingbots-db": {
       "command": "npx",
       "args": [
         "-y",
         "@modelcontextprotocol/server-postgres",
-        "postgresql://redrobot:<password>@localhost:5433/redrobot"
+        "postgresql://tradingbots:<password>@localhost:5433/tradingbots"
       ]
     }
   }
@@ -89,10 +89,10 @@ Replace `<password>` with the value from Step 2.
 ## Step 4 — Verify the connection
 
 In Claude, type:
-> "List the tables in the RedRobot database"
+> "List the tables in the TradingBots.fun database"
 
 Claude should respond with the full schema. If it can't connect, check:
-- Is the SSH tunnel running? (`ssh -N redrobot-db &`)
+- Is the SSH tunnel running? (`ssh -N tradingbots-db &`)
 - Is the password correct?
 - Is PostgreSQL running on the VPS? (`systemctl status postgresql`)
 
@@ -222,9 +222,9 @@ build a context string, call `query_ai()`, and store the result in the
 - The MCP server runs as a local subprocess of Claude Desktop — it has no
   persistent network presence
 - Never add port 5432 to UFW/iptables allow rules
-- Rotate the `redrobot` database password via:
+- Rotate the `tradingbots` database password via:
   ```bash
   ssh root@165.232.160.43
-  sudo -u postgres psql -c "ALTER ROLE redrobot WITH PASSWORD 'new_password';"
+  sudo -u postgres psql -c "ALTER ROLE tradingbots WITH PASSWORD 'new_password';"
   # Then update DATABASE_URL in /etc/environment and restart hedgebot
   ```

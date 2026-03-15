@@ -1,4 +1,4 @@
-# RedRobot Architecture — Product Lifecycle & Scaling Design
+# TradingBots.fun Architecture — Product Lifecycle & Scaling Design
 
 *Living document. Updated after the system was confirmed working in production.*
 
@@ -45,8 +45,8 @@ wallet_address (0x…)    ← what users recognise; what Hyperliquid uses
 - Never expose the UUID or the `privy_did` to users
 
 ```
-Header mockup (wallet linked):   [🟢 RedRobot]  0x1234…abcd  [$12,450.33 AUM]  [Logout]
-Header mockup (wallet missing):  [🟢 RedRobot]  daniel@…  [⚠ Link Wallet]  [Logout]
+Header mockup (wallet linked):   [🟢 TradingBots.fun]  0x1234…abcd  [$12,450.33 AUM]  [Logout]
+Header mockup (wallet missing):  [🟢 TradingBots.fun]  daniel@…  [⚠ Link Wallet]  [Logout]
 ```
 
 ---
@@ -215,7 +215,7 @@ SESSION_SECRET=64_random_hex_chars  # already required
 1. Create app → get App ID
 2. Configure allowed login methods: Email, Google, MetaMask, WalletConnect
 3. Set redirect URLs: `http://165.232.160.43:3000` (and future domain)
-4. Note: Privy embedded wallets = users who sign up with email get a custodial wallet automatically — they never need to "have crypto" to use RedRobot
+4. Note: Privy embedded wallets = users who sign up with email get a custodial wallet automatically — they never need to "have crypto" to use TradingBots.fun
 
 ### Frontend: what the login page currently does
 The `/login` page already loads `@privy-io/js-sdk-core` from CDN and injects the App ID into the JavaScript at render time. The flow:
@@ -289,7 +289,7 @@ The equity sparkline SVG generator in `web_dashboard.rs` can be reused nearly ve
 **Landing page hero section:**
 ```
          ┌─────────────────────────────────────────────────────┐
-         │  [RedRobot logo]                                     │
+         │  [TradingBots.fun logo]                                     │
          │                                                      │
          │  $247,312 AUM · +18.4% since inception              │
          │                                                      │
@@ -369,11 +369,11 @@ Still single-operator mode. No user-facing changes.
 
 ## 8. The Wallet Address Question — Dashboard Header
 
-Current header: `RedRobot AI · [timestamp]`
+Current header: `TradingBots.fun AI · [timestamp]`
 
 Proposed header (multi-tenant mode):
 ```
-Left:   [🟢] RedRobot                ← existing gradient logo
+Left:   [🟢] TradingBots.fun                ← existing gradient logo
 Centre: [wallet badge]               ← 0x1234…abcd in monospace, dim colour
 Right:  [Logout] [tier badge]        ← "Pro" or "Free" pill
 ```

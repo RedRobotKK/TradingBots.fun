@@ -111,7 +111,7 @@ Download from https://rustup.rs
 
 ```bash
 # Navigate to project root
-cd /sessions/confident-eloquent-wozniak/mnt/Development/RedRobot-HedgeBot
+cd /sessions/confident-eloquent-wozniak/mnt/Development/tradingbots-fun
 
 # Run just the theory validation test
 cargo test --test theory_validation -- --nocapture

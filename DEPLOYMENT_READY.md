@@ -89,7 +89,7 @@ READY TO DEPLOY:
 
 ```bash
 # Navigate to project
-cd ~/Development/RedRobot-HedgeBot
+cd ~/Development/tradingbots-fun
 
 # Initialize git (if not done)
 git init
@@ -106,7 +106,7 @@ git commit -m "Initial commit: Institutional trading system ready to deploy"
 # (Private repository)
 
 # Push to GitHub (replace YOUR_USERNAME)
-git remote add origin https://github.com/YOUR_USERNAME/RedRobot-HedgeBot.git
+git remote add origin https://github.com/YOUR_USERNAME/tradingbots-fun.git
 git push -u origin main
 ```
 
@@ -123,8 +123,8 @@ source ~/.cargo/env
 
 # 3. Clone your code (replace USERNAME)
 cd ~
-git clone https://github.com/YOUR_USERNAME/RedRobot-HedgeBot.git
-cd RedRobot-HedgeBot
+git clone https://github.com/YOUR_USERNAME/tradingbots-fun.git
+cd tradingbots-fun
 
 # 4. Configure
 cat > .env << 'CONF'
@@ -144,8 +144,8 @@ cargo build --release
 # 6. Run in background
 apt install screen -y
 screen -S trading
-cd ~/RedRobot-HedgeBot
-./target/release/redrobot-hedgebot --config deployment.toml
+cd ~/tradingbots-fun
+./target/release/tradingbots-fun --config deployment.toml
 
 # (Detach: Ctrl+A, then D)
 ```
@@ -294,7 +294,7 @@ Week 4: Scale Decision
 
 ```
 Morning:
-□ Check system is running: ps aux | grep redrobot
+□ Check system is running: ps aux | grep tradingbots
 □ Check no errors in logs: tail logs
 
 Afternoon:
@@ -344,10 +344,10 @@ Evening:
 
 ```bash
 # Check running
-ps aux | grep redrobot-hedgebot
+ps aux | grep tradingbots-fun
 
 # View logs
-tail -f /var/log/redrobot/trading.log
+tail -f /var/log/tradingbots/trading.log
 
 # Stop system
 Ctrl+C
@@ -369,7 +369,7 @@ top            # All processes
 
 ```
 SYSTEM CRASHES:
-1. Check if running: ps aux | grep redrobot
+1. Check if running: ps aux | grep tradingbots
 2. If not running, restart: ./start-trading.sh
 3. Check logs for errors
 4. If persistent errors, stop and investigate
@@ -517,7 +517,7 @@ SAFETY:
 
 ```bash
 # Make sure code is on GitHub
-cd ~/Development/RedRobot-HedgeBot
+cd ~/Development/tradingbots-fun
 git add -A
 git commit -m "Final: Ready for deployment"
 git push origin main
@@ -552,7 +552,7 @@ If something isn't clear:
 1. **Read:** DEPLOYMENT_DIGITALOCEAN.md (step-by-step)
 2. **Read:** COMPLETE_IMPLEMENTATION_GUIDE.md (detailed)
 3. **Check:** IMPLEMENTATION_SUMMARY.md (quick ref)
-4. **Logs:** tail -f /var/log/redrobot/trading.log
+4. **Logs:** tail -f /var/log/tradingbots/trading.log
 
 ---
 

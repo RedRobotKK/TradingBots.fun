@@ -30,7 +30,7 @@ Your complete trading system:
 ### Step 1: Prepare Your Code for GitHub
 
 ```bash
-cd ~/Development/RedRobot-HedgeBot
+cd ~/Development/tradingbots-fun
 
 # Initialize git if needed
 git init
@@ -48,7 +48,7 @@ git commit -m "Initial commit: Complete institutional trading system"
 
 1. Go to github.com
 2. Click "New Repository"
-3. Name: RedRobot-HedgeBot
+3. Name: tradingbots-fun
 4. Set to PRIVATE
 5. Click Create
 
@@ -56,7 +56,7 @@ git commit -m "Initial commit: Complete institutional trading system"
 
 ```bash
 # Add remote
-git remote add origin https://github.com/YOUR_USERNAME/RedRobot-HedgeBot.git
+git remote add origin https://github.com/YOUR_USERNAME/tradingbots-fun.git
 
 # Push
 git push -u origin main
@@ -111,8 +111,8 @@ rustc --version  # Verify
 
 ```bash
 cd ~
-git clone https://github.com/YOUR_USERNAME/RedRobot-HedgeBot.git
-cd RedRobot-HedgeBot
+git clone https://github.com/YOUR_USERNAME/tradingbots-fun.git
+cd tradingbots-fun
 ```
 
 ### Step 9: Configure and Build
@@ -144,8 +144,8 @@ apt install screen -y
 screen -S trading
 
 # Inside screen, run:
-cd ~/RedRobot-HedgeBot
-./target/release/redrobot-hedgebot --config deployment.toml
+cd ~/tradingbots-fun
+./target/release/tradingbots-fun --config deployment.toml
 
 # To detach: Press Ctrl+A, then Ctrl+D
 # To reconnect: screen -r trading
@@ -190,10 +190,10 @@ Only when profitable in testnet:
 
 ```bash
 # Check if running
-ps aux | grep redrobot-hedgebot
+ps aux | grep tradingbots-fun
 
 # Check logs
-tail -f /var/log/redrobot/trading.log
+tail -f /var/log/tradingbots/trading.log
 
 # Stop
 Ctrl+C

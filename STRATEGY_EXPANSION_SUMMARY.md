@@ -377,7 +377,7 @@ cargo test test_backtest_with_21_strategies
 ```bash
 cargo build --release
 # Config your API keys and capital allocation
-# Execute with: ./target/release/redrobot-bot --live
+# Execute with: ./target/release/tradingbots-bot --live
 ```
 
 **Add 22nd strategy:**

@@ -10,7 +10,7 @@
 
 ## Executive Summary
 
-Two critical production-grade modules have been successfully built and integrated into the RedRobot-HedgeBot trading system:
+Two critical production-grade modules have been successfully built and integrated into the tradingbots-fun trading system:
 
 ### 1. Real Hyperliquid API Client (1,302 LOC)
 **File:** `/src/modules/hyperliquid_protocol.rs`

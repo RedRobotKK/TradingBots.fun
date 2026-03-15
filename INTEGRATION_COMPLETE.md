@@ -1,4 +1,4 @@
-# ✅ RedRobot-HedgeBot: Full Integration Complete
+# ✅ tradingbots-fun: Full Integration Complete
 
 **Status:** 🎉 PRODUCTION READY - FULLY INTEGRATED WITH BACKTESTED RESULTS
 **Date:** February 21, 2026
@@ -69,12 +69,12 @@
 ```
 Strategy                 2024 Return  Sharpe Ratio  Max Drawdown
 ────────────────────────────────────────────────────────────────
-RedRobot-HedgeBot        +287.4%      1.89          -9.3%
+tradingbots-fun        +287.4%      1.89          -9.3%
 Bitcoin Hold             +151.2%      0.92          -25.3%
 S&P 500 Index            +24.2%       0.87          -20.1%
 Hedge Fund Avg           +28.5%       0.54          -15.3%
 
-RedRobot OUTPERFORMS:
+TradingBots.fun OUTPERFORMS:
 - Bitcoin by 136.2%
 - S&P 500 by 263.2%
 - Hedge Funds by 258.9%
@@ -118,7 +118,7 @@ RedRobot OUTPERFORMS:
 ## 📁 Complete File Structure
 
 ```
-RedRobot-HedgeBot/
+tradingbots-fun/
 ├── src/
 │   ├── main.rs                         (Entry point)
 │   ├── lib.rs                          (Library exports)
@@ -557,7 +557,7 @@ By going through this project, you now understand:
 2. Use: `.env.mainnet` template
 3. Build: `cargo build --release`
 4. Test: `cargo test --release`
-5. Deploy: `./target/release/redrobot`
+5. Deploy: `./target/release/tradingbots`
 
 ---
 
@@ -606,8 +606,8 @@ This system has demonstrated **backtested performance of +287.4%** but:
 
 4. **Emergency Stop Always Available**
    ```bash
-   pkill -f "redrobot"
-   # Or: systemctl stop redrobot
+   pkill -f "tradingbots"
+   # Or: systemctl stop tradingbots
    ```
 
 ---

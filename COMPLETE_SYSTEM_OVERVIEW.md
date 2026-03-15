@@ -1,4 +1,4 @@
-# 🎯 Complete RedRobot Trading System - Overview
+# 🎯 Complete TradingBots.fun Trading System - Overview
 
 **Date**: February 22, 2026
 **Status**: ✅ **PRODUCTION READY - FULLY MONITORED**
@@ -453,7 +453,7 @@ REASONING: 8 frameworks + 7 strategies + AI scoring (logged)
 ## Files Overview
 
 ```
-RedRobot-HedgeBot/
+tradingbots-fun/
 ├── src/
 │   ├── strategies/          (9 technical strategies)
 │   ├── frameworks.rs        (8 quant frameworks) ✅ NEW

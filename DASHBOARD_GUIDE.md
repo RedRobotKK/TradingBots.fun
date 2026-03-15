@@ -52,7 +52,7 @@ Both pull from the same **Dashboard API** and display identical data.
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│ 🤖 RedRobot Trading Bot                     EQUITY  │
+│ 🤖 TradingBots.fun Trading Bot                     EQUITY  │
 │                                            $10,245.20│
 ├─────────────────────────────────────────────────────┤
 │ Trade # │ Win Rate │ Profit Factor │ Max DD │ Daily │
@@ -128,7 +128,7 @@ Reduced padding and font sizes
 
 ```
 ╔════════════════════════════════════════════════════════════════════╗
-║              🤖 REDROBOT TRADING BOT - LIVE DASHBOARD 🤖            ║
+║              🤖 TRADINGBOTS TRADING BOT - LIVE DASHBOARD 🤖            ║
 ╚════════════════════════════════════════════════════════════════════╝
 
 📊 EQUITY: $10,245.20 | P&L: $245.20 (2.45%) | W/L: 13/5 | Win Rate: 72.2% | Max DD: -8.5%
@@ -184,7 +184,7 @@ Uptime: 24.5h | Memory: 285MB | Active Alerts: 2
 **Rust code to generate TUI output:**
 
 ```rust
-use redrobot_hedgebot::dashboard::*;
+use tradingbots_fun::dashboard::*;
 
 let dashboard = CompleteDashboard {
     metrics: DashboardMetrics { /* ... */ },
@@ -213,12 +213,12 @@ println!("{}", DashboardBuilder::format_system_status(&metrics));
 # Continuous refresh (updates every 2 seconds)
 while true; do
   clear
-  ./redrobot-bot --dashboard
+  ./tradingbots-bot --dashboard
   sleep 2
 done
 
 # Or use watch command (Linux/Mac)
-watch -n 2 './redrobot-bot --dashboard'
+watch -n 2 './tradingbots-bot --dashboard'
 
 # Or with cargo
 watch -n 2 'cargo run -- --dashboard'
@@ -341,7 +341,7 @@ Web API   TUI Output
 ### Feeding Data to Dashboard
 
 ```rust
-use redrobot_hedgebot::dashboard::*;
+use tradingbots_fun::dashboard::*;
 
 // During bot execution
 let metrics = DashboardMetrics {
@@ -428,7 +428,7 @@ serve -s build -l 3000
 
 # Or integrate with Rust backend
 cargo build --release
-./target/release/redrobot-bot --server 0.0.0.0:8080
+./target/release/tradingbots-bot --server 0.0.0.0:8080
 # Visit: http://your-server.com:8080
 ```
 

@@ -334,7 +334,7 @@ impl LocalDB {
     pub async fn new() -> Result<Self> {
         // Connect to local PostgreSQL
         // Default: localhost:5432, user: postgres, password: postgres
-        let database_url = "postgres://postgres:postgres@localhost:5432/redrobot";
+        let database_url = "postgres://postgres:postgres@localhost:5432/tradingbots";
 
         let pool = PgPool::connect(&database_url).await?;
 
@@ -421,10 +421,10 @@ brew install postgresql@14
 brew services start postgresql@14
 
 # 3. Create database
-createdb redrobot
+createdb tradingbots
 
 # 4. Connect and create tables
-psql redrobot
+psql tradingbots
 
 # SQL: Create whale_profiles table
 CREATE TABLE whale_profiles (
@@ -440,7 +440,7 @@ CREATE TABLE whale_profiles (
 # Similar for recent_trades, active_positions, price_cache
 
 # 5. Test connection from Rust
-# Your app will connect: localhost:5432/redrobot
+# Your app will connect: localhost:5432/tradingbots
 ```
 
 ---

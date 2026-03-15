@@ -78,7 +78,7 @@ pub struct Config {
     pub coinzilla_zone_id: Option<String>,
 
     // Affiliate — Hyperliquid referral code
-    /// Referral slug registered at app.hyperliquid.xyz (e.g. "REDROBOT").
+    /// Referral slug registered at app.hyperliquid.xyz (e.g. "TRADINGBOTS").
     /// Displayed in the consumer /app page so new users sign up via our link.
     /// Earns 10 % fee rebate on all trading volume from referred users.
     pub referral_code: Option<String>,

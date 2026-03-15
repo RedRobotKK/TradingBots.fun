@@ -1,4 +1,4 @@
-# 🚀 RedRobot-HedgeBot: Mainnet Deployment Guide
+# 🚀 tradingbots-fun: Mainnet Deployment Guide
 
 **Version:** 1.0.0 Production Release
 **Date:** February 21, 2026
@@ -87,8 +87,8 @@ DECISION_INTERVAL_MS=1000       # Every 1 second
 HEALTH_CHECK_INTERVAL_MS=5000   # Every 5 seconds
 
 # Logging
-RUST_LOG=info,redrobot=debug
-LOG_FILE=/var/log/redrobot/mainnet.log
+RUST_LOG=info,tradingbots=debug
+LOG_FILE=/var/log/tradingbots/mainnet.log
 
 # Optional: Monitoring
 SENTRY_DSN=<YOUR_SENTRY_URL>    # Error tracking
@@ -120,7 +120,7 @@ chmod 600 src/config/mainnet_keys.txt
 ### 2.1 Compile Optimized Release
 
 ```bash
-cd /path/to/RedRobot-HedgeBot
+cd /path/to/tradingbots-fun
 
 # Clean previous builds
 cargo clean
@@ -128,17 +128,17 @@ cargo clean
 # Build production release (with optimizations)
 RUST_LOG=info cargo build --release --features full
 
-# Binary location: target/release/redrobot
+# Binary location: target/release/tradingbots
 # Size: ~42MB (with all features)
 # Compile time: ~3-5 minutes
 
 # Verify binary exists and is executable
-ls -lh target/release/redrobot
-file target/release/redrobot
+ls -lh target/release/tradingbots
+file target/release/tradingbots
 
 # Test binary
-./target/release/redrobot --version
-# Output: RedRobot-HedgeBot 1.0.0
+./target/release/tradingbots --version
+# Output: tradingbots-fun 1.0.0
 ```
 
 ### 2.2 Verify Build Integrity
@@ -185,10 +185,10 @@ source .env.testnet
 
 ```bash
 # Start the bot
-./target/release/redrobot
+./target/release/tradingbots
 
 # Monitor logs in another terminal
-tail -f /var/log/redrobot/mainnet.log
+tail -f /var/log/tradingbots/mainnet.log
 
 # Expected startup sequence (first 30 seconds):
 # ✅ Loading configuration...
@@ -302,44 +302,44 @@ echo "✅ All checks passed. Ready for mainnet launch."
 ```bash
 # Option A: Direct Terminal (for monitoring)
 source .env.mainnet
-./target/release/redrobot
+./target/release/tradingbots
 
 # Option B: Background Process (production recommended)
 source .env.mainnet
 
 # Create log directory
-mkdir -p /var/log/redrobot
-chmod 700 /var/log/redrobot
+mkdir -p /var/log/tradingbots
+chmod 700 /var/log/tradingbots
 
 # Start bot in background
-nohup ./target/release/redrobot > /var/log/redrobot/mainnet.log 2>&1 &
-REDROBOT_PID=$!
+nohup ./target/release/tradingbots > /var/log/tradingbots/mainnet.log 2>&1 &
+TRADINGBOTS_PID=$!
 
 # Create PID file
-echo $REDROBOT_PID > /var/run/redrobot.pid
+echo $TRADINGBOTS_PID > /var/run/tradingbots.pid
 
 # Verify startup
 sleep 3
-ps -p $REDROBOT_PID > /dev/null && echo "✅ Bot started successfully" || echo "❌ Bot failed to start"
+ps -p $TRADINGBOTS_PID > /dev/null && echo "✅ Bot started successfully" || echo "❌ Bot failed to start"
 
 # Option C: systemd Service (enterprise recommended)
-cat > /etc/systemd/system/redrobot.service <<EOF
+cat > /etc/systemd/system/tradingbots.service <<EOF
 [Unit]
-Description=RedRobot-HedgeBot Autonomous Trading System
+Description=tradingbots-fun Autonomous Trading System
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=redrobot
-WorkingDirectory=/opt/redrobot
-EnvironmentFile=/opt/redrobot/.env.mainnet
-ExecStart=/opt/redrobot/target/release/redrobot
+User=tradingbots
+WorkingDirectory=/opt/tradingbots
+EnvironmentFile=/opt/tradingbots/.env.mainnet
+ExecStart=/opt/tradingbots/target/release/tradingbots
 Restart=always
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=redrobot
+SyslogIdentifier=tradingbots
 
 [Install]
 WantedBy=multi-user.target
@@ -347,22 +347,22 @@ EOF
 
 # Enable service
 sudo systemctl daemon-reload
-sudo systemctl enable redrobot
-sudo systemctl start redrobot
+sudo systemctl enable tradingbots
+sudo systemctl start tradingbots
 
 # Check status
-sudo systemctl status redrobot
-sudo journalctl -u redrobot -f  # View logs
+sudo systemctl status tradingbots
+sudo journalctl -u tradingbots -f  # View logs
 ```
 
 ### 4.3 Real-Time Monitoring
 
 ```bash
 # Terminal 1: Monitor logs
-tail -f /var/log/redrobot/mainnet.log | grep -E "WARN|ERROR|Trade|P&L|Health"
+tail -f /var/log/tradingbots/mainnet.log | grep -E "WARN|ERROR|Trade|P&L|Health"
 
 # Terminal 2: Monitor system resources
-watch -n 1 'ps aux | grep redrobot | grep -v grep; free -h; df -h /'
+watch -n 1 'ps aux | grep tradingbots | grep -v grep; free -h; df -h /'
 
 # Terminal 3: Query API endpoints (verify trading)
 curl -s http://localhost:8888/api/health
@@ -386,15 +386,15 @@ curl -s http://localhost:8888/api/positions
 
 ```bash
 #!/bin/bash
-# redrobot-daily-check.sh
+# tradingbots-daily-check.sh
 
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
-echo "[$TIMESTAMP] Starting daily RedRobot health check..."
+echo "[$TIMESTAMP] Starting daily TradingBots.fun health check..."
 
 # Check if bot is running
-if ! pgrep -f "target/release/redrobot" > /dev/null; then
+if ! pgrep -f "target/release/tradingbots" > /dev/null; then
     echo "❌ Bot is not running!"
-    systemctl start redrobot
+    systemctl start tradingbots
     sleep 5
 fi
 
@@ -413,7 +413,7 @@ echo "Daily P&L: $$DAILY_PNL"
 echo "Win Rate: $WIN_RATE%"
 
 # Check for errors in logs
-ERRORS=$(tail -100 /var/log/redrobot/mainnet.log | grep -i "error" | wc -l)
+ERRORS=$(tail -100 /var/log/tradingbots/mainnet.log | grep -i "error" | wc -l)
 if [ $ERRORS -gt 5 ]; then
     echo "⚠️  Warning: $ERRORS errors in recent logs"
 fi
@@ -431,9 +431,9 @@ echo "✅ Daily check complete"
 
 ```bash
 #!/bin/bash
-# redrobot-weekly-review.sh
+# tradingbots-weekly-review.sh
 
-echo "📊 WEEKLY REDROBOT PERFORMANCE REPORT"
+echo "📊 WEEKLY TRADINGBOTS PERFORMANCE REPORT"
 echo "======================================"
 
 # Get weekly stats
@@ -500,10 +500,10 @@ If something goes wrong, activate emergency stop:
 
 ```bash
 # Kill bot gracefully
-kill $(cat /var/run/redrobot.pid)
+kill $(cat /var/run/tradingbots.pid)
 
 # Or force kill if needed
-pkill -9 -f "target/release/redrobot"
+pkill -9 -f "target/release/tradingbots"
 
 # Close all positions (via exchange UI if needed)
 # 1. Go to Hyperliquid.com dashboard
@@ -511,7 +511,7 @@ pkill -9 -f "target/release/redrobot"
 # 3. Preserve capital in USDC
 
 # Review logs to identify issue
-tail -200 /var/log/redrobot/mainnet.log > /tmp/debug.log
+tail -200 /var/log/tradingbots/mainnet.log > /tmp/debug.log
 ```
 
 ### 6.2 Daily Loss Limit
@@ -525,7 +525,7 @@ If daily loss exceeds 5% ($250), the system automatically:
 To resume after reaching loss limit:
 ```bash
 # Check what caused the loss
-tail -500 /var/log/redrobot/mainnet.log | grep -i "loss\|liquidation\|error"
+tail -500 /var/log/tradingbots/mainnet.log | grep -i "loss\|liquidation\|error"
 
 # Fix the issue (if any)
 # Wait 15 minutes for market to settle
@@ -571,7 +571,7 @@ If health factor approaches 1.0:
 
 ```bash
 # Check logs for errors
-tail -100 /var/log/redrobot/mainnet.log | grep -i "error\|panic"
+tail -100 /var/log/tradingbots/mainnet.log | grep -i "error\|panic"
 
 Common causes:
 1. API rate limits exceeded
@@ -629,19 +629,19 @@ global:
   scrape_interval: 15s
 
 scrape_configs:
-  - job_name: 'redrobot'
+  - job_name: 'tradingbots'
     static_configs:
       - targets: ['localhost:9090']
     metrics_path: '/metrics'
 ```
 
 Key metrics to monitor:
-- `redrobot_balance` - Current account balance
-- `redrobot_daily_pnl` - Daily profit/loss
-- `redrobot_trades_total` - Total trades executed
-- `redrobot_win_rate` - Current win rate
-- `redrobot_health_factor` - Liquidation risk
-- `redrobot_api_latency_ms` - API response time
+- `tradingbots_balance` - Current account balance
+- `tradingbots_daily_pnl` - Daily profit/loss
+- `tradingbots_trades_total` - Total trades executed
+- `tradingbots_win_rate` - Current win rate
+- `tradingbots_health_factor` - Liquidation risk
+- `tradingbots_api_latency_ms` - API response time
 
 ---
 

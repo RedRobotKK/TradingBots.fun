@@ -1,4 +1,4 @@
-# RedRobot HedgeBot - Quick Start Guide
+# TradingBots.fun - Quick Start Guide
 
 ## 🚀 Get Trading in 10 Minutes
 
@@ -27,8 +27,8 @@ docker-compose --version
 ### Step 3: Configure (2 minutes)
 ```bash
 # Clone project
-git clone https://github.com/yourusername/redrobot-hedgebot.git
-cd redrobot-hedgebot
+git clone https://github.com/yourusername/tradingbots-fun.git
+cd tradingbots-fun
 
 # Create config file
 cp .env.example .env
@@ -60,7 +60,7 @@ docker-compose logs -f
 docker ps
 
 # View trades
-docker-compose exec postgres psql -U postgres -d redrobot \
+docker-compose exec postgres psql -U postgres -d tradingbots \
   -c "SELECT * FROM trades ORDER BY created_at DESC LIMIT 5;"
 
 # Stop if needed
@@ -84,7 +84,7 @@ docker-compose ps postgres
 
 # If not, restart
 docker-compose up postgres -d
-docker-compose restart redrobot
+docker-compose restart tradingbots
 ```
 
 ### Error: Invalid API key
@@ -94,7 +94,7 @@ cat .env
 
 # Verify keys are correct on Binance/Hyperliquid
 # Update .env and restart
-docker-compose restart redrobot
+docker-compose restart tradingbots
 ```
 
 ### Error: Orders not executing
@@ -103,7 +103,7 @@ docker-compose restart redrobot
 grep MODE .env
 
 # Check logs for details
-docker-compose logs redrobot | grep -i error
+docker-compose logs tradingbots | grep -i error
 ```
 
 ## 🔄 Trading Cycle

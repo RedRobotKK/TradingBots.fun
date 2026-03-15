@@ -1,4 +1,4 @@
-# 📊 Strategy Comparison Matrix: RedRobot vs. Institutional Firms
+# 📊 Strategy Comparison Matrix: TradingBots.fun vs. Institutional Firms
 
 **Last Updated:** February 22, 2026
 **Goal:** Visual guide to identify which institutional strategies to implement next

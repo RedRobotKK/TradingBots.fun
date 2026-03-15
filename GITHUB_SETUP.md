@@ -5,7 +5,7 @@
 ### Option 1: Via GitHub Web UI
 
 1. Go to https://github.com/new
-2. Name: `redrobot-hedgebot`
+2. Name: `tradingbots-fun`
 3. Description: "Autonomous cryptocurrency trading bot for Solana DEX"
 4. Make it **PRIVATE** (don't expose API keys)
 5. Click "Create repository"
@@ -21,7 +21,7 @@ brew install gh  # macOS
 gh auth login
 
 # Create repo
-gh repo create redrobot-hedgebot --private --source=. --remote=origin --push
+gh repo create tradingbots-fun --private --source=. --remote=origin --push
 ```
 
 ## Push Code to GitHub
@@ -30,7 +30,7 @@ gh repo create redrobot-hedgebot --private --source=. --remote=origin --push
 
 ```bash
 # Navigate to project
-cd /sessions/confident-eloquent-wozniak/mnt/Development/RedRobot-HedgeBot
+cd /sessions/confident-eloquent-wozniak/mnt/Development/tradingbots-fun
 
 # Initialize git (if not already done)
 git init
@@ -38,7 +38,7 @@ git add .
 git commit -m "Initial commit: Core trading system with Rust backend"
 
 # Add remote
-git remote add origin https://github.com/yourusername/redrobot-hedgebot.git
+git remote add origin https://github.com/yourusername/tradingbots-fun.git
 
 # Push to main
 git branch -M main
@@ -87,7 +87,7 @@ jobs:
         image: postgres:16
         env:
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: redrobot
+          POSTGRES_DB: tradingbots
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -125,7 +125,7 @@ jobs:
     - name: Run tests
       run: cargo test --verbose
       env:
-        DATABASE_URL: postgres://postgres:postgres@localhost:5432/redrobot
+        DATABASE_URL: postgres://postgres:postgres@localhost:5432/tradingbots
 
     - name: Build release
       run: cargo build --release --verbose
@@ -158,7 +158,7 @@ env:
 ## Repository Structure
 
 ```
-redrobot-hedgebot/
+tradingbots-fun/
 ├── src/
 │   ├── main.rs
 │   ├── config.rs
@@ -218,13 +218,13 @@ git push origin backup-$(date +%Y%m%d)
 ```bash
 ssh root@your_vps_ip
 
-# In /root/redrobot-hedgebot
-cd redrobot-hedgebot
+# In /root/tradingbots-fun
+cd tradingbots-fun
 git pull origin main
 
 # Rebuild if needed
 docker-compose build
-docker-compose restart redrobot
+docker-compose restart tradingbots
 ```
 
 ## Collaboration (If Adding Team)
@@ -265,8 +265,8 @@ git push origin main
 # Then on DigitalOcean
 ssh root@your_vps_ip
 cd /root
-git clone https://github.com/yourusername/redrobot-hedgebot.git
-cd redrobot-hedgebot
+git clone https://github.com/yourusername/tradingbots-fun.git
+cd tradingbots-fun
 docker-compose up -d
 ```
 

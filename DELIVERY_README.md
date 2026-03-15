@@ -1,4 +1,4 @@
-# 🎉 RedRobot HedgeBot - Complete Delivery
+# 🎉 TradingBots.fun - Complete Delivery
 
 **Production-ready autonomous trading system. Ready to deploy on real capital.**
 
@@ -43,16 +43,16 @@ A complete, working trading system with:
 ```bash
 # Option A: Via web
 # Go to https://github.com/new
-# Create repo named "redrobot-hedgebot" (PRIVATE)
+# Create repo named "tradingbots-fun" (PRIVATE)
 
 # Option B: Via CLI
-gh repo create redrobot-hedgebot --private --source=. --push
+gh repo create tradingbots-fun --private --source=. --push
 ```
 
 ### 2. Push Code
 ```bash
 # Update remote URL if needed
-git remote set-url origin https://github.com/yourusername/redrobot-hedgebot.git
+git remote set-url origin https://github.com/yourusername/tradingbots-fun.git
 
 # Push
 git push -u origin master
@@ -111,7 +111,7 @@ Database Logging
 ## 📁 File Structure
 
 ```
-redrobot-hedgebot/
+tradingbots-fun/
 ├── Cargo.toml                    # Rust dependencies
 ├── Dockerfile                    # Container image
 ├── docker-compose.yml            # Full stack setup
@@ -282,7 +282,7 @@ If you get stuck:
 
 1. **Check logs** - Most issues visible there
    ```bash
-   docker-compose logs redrobot | grep error
+   docker-compose logs tradingbots | grep error
    ```
 
 2. **Check documentation** - Answers likely there
@@ -299,7 +299,7 @@ Educational/Personal use only. Trade at your own risk.
 
 ```bash
 # 1. Push to GitHub
-git remote add origin https://github.com/yourusername/redrobot-hedgebot.git
+git remote add origin https://github.com/yourusername/tradingbots-fun.git
 git push -u origin master
 
 # 2. Deploy locally

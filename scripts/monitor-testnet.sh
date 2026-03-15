@@ -4,9 +4,9 @@
 
 set -e
 
-LOG_FILE="/tmp/redrobot_testnet.log"
-METRICS_FILE="/tmp/redrobot_metrics.json"
-REPORT_FILE="/tmp/redrobot_testnet_report.txt"
+LOG_FILE="/tmp/tradingbots_testnet.log"
+METRICS_FILE="/tmp/tradingbots_metrics.json"
+REPORT_FILE="/tmp/tradingbots_testnet_report.txt"
 
 # Colors for output
 RED='\033[0;31m'
@@ -21,12 +21,12 @@ echo -e "${BLUE}═════════════════════�
 echo ""
 
 # Check if bot is running
-if pgrep -f "target/release/redrobot" > /dev/null; then
+if pgrep -f "target/release/tradingbots" > /dev/null; then
     echo -e "${GREEN}✅ Bot Status: RUNNING${NC}"
-    echo -e "   PID: $(pgrep -f 'target/release/redrobot')"
+    echo -e "   PID: $(pgrep -f 'target/release/tradingbots')"
 else
     echo -e "${RED}❌ Bot Status: NOT RUNNING${NC}"
-    echo -e "   Start with: source .env.testnet && ./target/release/redrobot &"
+    echo -e "   Start with: source .env.testnet && ./target/release/tradingbots &"
 fi
 
 echo ""
@@ -74,8 +74,8 @@ echo ""
 
 # System resources
 echo -e "${BLUE}💻 System Resources:${NC}"
-if pgrep -f "target/release/redrobot" > /dev/null; then
-    PS_INFO=$(ps aux | grep "target/release/redrobot" | grep -v grep)
+if pgrep -f "target/release/tradingbots" > /dev/null; then
+    PS_INFO=$(ps aux | grep "target/release/tradingbots" | grep -v grep)
     CPU=$(echo $PS_INFO | awk '{print $3}')
     MEM=$(echo $PS_INFO | awk '{print $4}')
     echo -e "   CPU Usage: ${GREEN}$CPU%${NC}"
@@ -108,7 +108,7 @@ echo -e "${BLUE}VALIDATION CHECKLIST:${NC}"
 echo -e "${BLUE}════════════════════════════════════════════════════════════${NC}"
 
 # Check each criterion
-if pgrep -f "target/release/redrobot" > /dev/null; then
+if pgrep -f "target/release/tradingbots" > /dev/null; then
     echo -e "${GREEN}✅${NC} Bot is running"
 else
     echo -e "${RED}❌${NC} Bot is not running"
@@ -141,6 +141,6 @@ echo -e "${BLUE}═════════════════════�
 echo -e "${BLUE}Next steps:${NC}"
 echo -e "   1. Let the bot run for 72 hours continuously"
 echo -e "   2. Run this script periodically: ./scripts/monitor-testnet.sh"
-echo -e "   3. Check logs: tail -f /tmp/redrobot_testnet.log"
+echo -e "   3. Check logs: tail -f /tmp/tradingbots_testnet.log"
 echo -e "   4. After 72 hours, proceed to mainnet deployment"
 echo -e "${BLUE}════════════════════════════════════════════════════════════${NC}"

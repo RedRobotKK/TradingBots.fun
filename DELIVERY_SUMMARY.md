@@ -1,4 +1,4 @@
-# 🎉 RedRobot-HedgeBot: COMPLETE DELIVERY SUMMARY
+# 🎉 tradingbots-fun: COMPLETE DELIVERY SUMMARY
 
 **Date:** February 21, 2026
 **Status:** ✅ **PRODUCTION READY**
@@ -78,7 +78,7 @@ Complete account management system with:
 ## File Structure
 
 ```
-RedRobot-HedgeBot/
+tradingbots-fun/
 ├── Cargo.toml                           # All dependencies configured
 ├── src/
 │   ├── lib.rs                          # Library root
@@ -186,7 +186,7 @@ cargo tarpaulin --out Html
 
 ### Step 1: Clone/Download
 ```bash
-cd /path/to/RedRobot-HedgeBot
+cd /path/to/tradingbots-fun
 ```
 
 ### Step 2: Build
@@ -211,14 +211,14 @@ let config = HyperliquidConfig::mainnet(
 ### Step 4: Test on Testnet First
 ```bash
 export HYPERLIQUID_TESTNET=true
-./target/release/redrobot
+./target/release/tradingbots
 ```
 
 ### Step 5: Deploy to Mainnet
 ```bash
 export HYPERLIQUID_TESTNET=false
 export HYPERLIQUID_WALLET=<your-mainnet-wallet>
-./target/release/redrobot
+./target/release/tradingbots
 ```
 
 ---
@@ -326,7 +326,7 @@ Before deploying to mainnet:
 
 All files are in:
 ```
-/sessions/confident-eloquent-wozniak/mnt/Development/RedRobot-HedgeBot/
+/sessions/confident-eloquent-wozniak/mnt/Development/tradingbots-fun/
 ```
 
 Key files:
@@ -360,7 +360,7 @@ Key files:
 
 ## Version Information
 
-- **Project Name:** RedRobot-HedgeBot
+- **Project Name:** tradingbots-fun
 - **Version:** 0.2.0
 - **Edition:** 2021
 - **Status:** Production Ready
@@ -393,7 +393,7 @@ cargo fmt
 ### Runtime Issues
 Check logs:
 ```bash
-RUST_LOG=debug ./target/release/redrobot 2>&1 | tee bot.log
+RUST_LOG=debug ./target/release/tradingbots 2>&1 | tee bot.log
 ```
 
 ---

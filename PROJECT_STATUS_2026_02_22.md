@@ -1,4 +1,4 @@
-# 📊 Project Status Report: RedRobot-HedgeBot
+# 📊 Project Status Report: tradingbots-fun
 **Date**: February 22, 2026
 **Capital**: $300-500 (starting with $100-1000 simulation)
 **Stage**: Theory Validation → Ready for Testnet Deployment
@@ -317,7 +317,7 @@ Win Rate: 52% ✗
 
 ### Run This Now
 ```bash
-cd /sessions/confident-eloquent-wozniak/mnt/Development/RedRobot-HedgeBot
+cd /sessions/confident-eloquent-wozniak/mnt/Development/tradingbots-fun
 cargo test --test theory_validation -- --nocapture
 ```
 
@@ -439,7 +439,7 @@ Your system should:
 
 ### Immediate (Today)
 ```bash
-1. cd /sessions/confident-eloquent-wozniak/mnt/Development/RedRobot-HedgeBot
+1. cd /sessions/confident-eloquent-wozniak/mnt/Development/tradingbots-fun
 2. cargo test --test theory_validation -- --nocapture
 3. Review output (5-10 minutes)
 4. Check: Theory validated? (yes/no)

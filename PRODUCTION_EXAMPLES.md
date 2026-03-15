@@ -7,8 +7,8 @@ This document provides real-world examples for using both critical modules in pr
 ### Setup and Initialization
 
 ```rust
-use redrobot_hedgebot::modules::HyperliquidClient;
-use redrobot_hedgebot::models::market::{LimitOrder, OrderSide};
+use tradingbots_fun::modules::HyperliquidClient;
+use tradingbots_fun::models::market::{LimitOrder, OrderSide};
 use tracing::info;
 
 #[tokio::main]
@@ -198,7 +198,7 @@ async fn resilient_trading(client: &HyperliquidClient) -> Result<()> {
 ### Basic Backtest
 
 ```rust
-use redrobot_hedgebot::modules::{Backtester, BacktestConfig};
+use tradingbots_fun::modules::{Backtester, BacktestConfig};
 use std::collections::HashMap;
 
 #[tokio::main]

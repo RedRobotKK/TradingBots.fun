@@ -1,4 +1,4 @@
-# 🌙 RedRobot-HedgeBot: Testnet Execution Tonight
+# 🌙 tradingbots-fun: Testnet Execution Tonight
 
 **Timeline:** Complete execution in ~30 minutes setup, then 72-hour automated run
 **Cost:** $0 (completely free)
@@ -90,7 +90,7 @@ solana address --url devnet
 
 ```bash
 # Open the file:
-nano /sessions/confident-eloquent-wozniak/mnt/Development/RedRobot-HedgeBot/.env.testnet
+nano /sessions/confident-eloquent-wozniak/mnt/Development/tradingbots-fun/.env.testnet
 
 # Find and UPDATE these lines:
 
@@ -120,13 +120,13 @@ DRIFT_KEYPAIR_PATH=/home/user/.config/solana/devnet_keypair.json
 ### Step 3A: Navigate to Project
 
 ```bash
-cd /sessions/confident-eloquent-wozniak/mnt/Development/RedRobot-HedgeBot
+cd /sessions/confident-eloquent-wozniak/mnt/Development/tradingbots-fun
 pwd  # Verify you're in right directory
 ```
 
 **Expected:**
 ```
-/sessions/confident-eloquent-wozniak/mnt/Development/RedRobot-HedgeBot
+/sessions/confident-eloquent-wozniak/mnt/Development/tradingbots-fun
 ```
 
 ### Step 3B: Clean and Build
@@ -144,18 +144,18 @@ cargo build --release --features full
 
 **Expected Output (at the end):**
 ```
-   Compiling redrobot v0.1.0 (/path/to/RedRobot-HedgeBot)
+   Compiling tradingbots v0.1.0 (/path/to/tradingbots-fun)
     Finished `release` profile [optimized] target(s) in 245.32s
 ```
 
 ### Step 3C: Verify Build Success
 
 ```bash
-ls -lh target/release/redrobot
-# Should show: -rwxr-xr-x ... 42M ... redrobot
+ls -lh target/release/tradingbots
+# Should show: -rwxr-xr-x ... 42M ... tradingbots
 
-./target/release/redrobot --version
-# Should show: RedRobot-HedgeBot 1.0.0
+./target/release/tradingbots --version
+# Should show: tradingbots-fun 1.0.0
 ```
 
 **⏱️ Time: 5 minutes**
@@ -178,7 +178,7 @@ echo $HYPERLIQUID_WALLET
 
 ```bash
 # Start the bot (it runs 24/7 in background)
-nohup ./target/release/redrobot > /tmp/redrobot_testnet.log 2>&1 &
+nohup ./target/release/tradingbots > /tmp/tradingbots_testnet.log 2>&1 &
 
 # You'll see output like:
 # [1] 12345
@@ -190,10 +190,10 @@ nohup ./target/release/redrobot > /tmp/redrobot_testnet.log 2>&1 &
 ```bash
 # Check if process started
 sleep 2
-ps aux | grep redrobot | grep -v grep
+ps aux | grep tradingbots | grep -v grep
 
 # Should show something like:
-# user  12345  0.5  0.2 500000 8000 ?  Sl  19:25:00  0:00 ./target/release/redrobot
+# user  12345  0.5  0.2 500000 8000 ?  Sl  19:25:00  0:00 ./target/release/tradingbots
 ```
 
 **✅ If you see that output, the bot is RUNNING!**
@@ -211,7 +211,7 @@ ps aux | grep redrobot | grep -v grep
 sleep 5
 
 # Check first 30 lines
-head -30 /tmp/redrobot_testnet.log
+head -30 /tmp/tradingbots_testnet.log
 
 # EXPECTED OUTPUT:
 # [2026-02-21T19:25:15Z] Loading configuration...
@@ -230,7 +230,7 @@ head -30 /tmp/redrobot_testnet.log
 sleep 30
 
 # Check for trading activity
-grep "Trade executed\|Order placed" /tmp/redrobot_testnet.log | head -5
+grep "Trade executed\|Order placed" /tmp/tradingbots_testnet.log | head -5
 
 # EXPECTED OUTPUT (should see trades):
 # [2026-02-21T19:25:45Z] Trade executed: BUY 0.5 SOL
@@ -242,7 +242,7 @@ grep "Trade executed\|Order placed" /tmp/redrobot_testnet.log | head -5
 
 ```bash
 # Look for any errors
-grep "ERROR\|PANIC" /tmp/redrobot_testnet.log | head -5
+grep "ERROR\|PANIC" /tmp/tradingbots_testnet.log | head -5
 
 # EXPECTED OUTPUT:
 # (nothing - no errors!)
@@ -268,7 +268,7 @@ Now the bot will:
 - ✅ Rebalance every 5 minutes
 - ✅ Check health every 5 seconds
 - ✅ Run 24/7 for 72 hours
-- ✅ Log everything to `/tmp/redrobot_testnet.log`
+- ✅ Log everything to `/tmp/tradingbots_testnet.log`
 
 ---
 
@@ -278,7 +278,7 @@ Now the bot will:
 
 ```bash
 # Quick final check
-tail -20 /tmp/redrobot_testnet.log
+tail -20 /tmp/tradingbots_testnet.log
 
 # You should see:
 # - Recent trades
@@ -293,7 +293,7 @@ tail -20 /tmp/redrobot_testnet.log
 
 ```bash
 # Check overnight activity
-bash /sessions/confident-eloquent-wozniak/mnt/Development/RedRobot-HedgeBot/scripts/monitor-testnet.sh
+bash /sessions/confident-eloquent-wozniak/mnt/Development/tradingbots-fun/scripts/monitor-testnet.sh
 
 # This will show:
 # ✅ Bot Status: RUNNING
@@ -321,13 +321,13 @@ bash scripts/monitor-testnet.sh
 
 ```bash
 # Final analysis
-tail -100 /tmp/redrobot_testnet.log
+tail -100 /tmp/tradingbots_testnet.log
 
 # Extract summary stats
-grep "Total P&L\|Win rate\|Max drawdown" /tmp/redrobot_testnet.log | tail -5
+grep "Total P&L\|Win rate\|Max drawdown" /tmp/tradingbots_testnet.log | tail -5
 
 # Save results to GitHub
-cd /sessions/confident-eloquent-wozniak/mnt/Development/RedRobot-HedgeBot
+cd /sessions/confident-eloquent-wozniak/mnt/Development/tradingbots-fun
 git add -A
 git commit -m "Testnet validation complete - 72 hour run results"
 git push origin main
@@ -341,7 +341,7 @@ git push origin main
 
 ```bash
 # Open in browser (on any machine on your network):
-file:///sessions/confident-eloquent-wozniak/mnt/Development/RedRobot-HedgeBot/dashboard.html
+file:///sessions/confident-eloquent-wozniak/mnt/Development/tradingbots-fun/dashboard.html
 
 # OR
 
@@ -357,13 +357,13 @@ done
 
 ```bash
 # See trades in real-time:
-tail -f /tmp/redrobot_testnet.log | grep "Trade executed"
+tail -f /tmp/tradingbots_testnet.log | grep "Trade executed"
 
 # See health checks:
-tail -f /tmp/redrobot_testnet.log | grep "Health check"
+tail -f /tmp/tradingbots_testnet.log | grep "Health check"
 
 # See errors:
-tail -f /tmp/redrobot_testnet.log | grep "ERROR"
+tail -f /tmp/tradingbots_testnet.log | grep "ERROR"
 ```
 
 ---
@@ -374,7 +374,7 @@ tail -f /tmp/redrobot_testnet.log | grep "ERROR"
 
 ```bash
 # Check logs for error
-tail -50 /tmp/redrobot_testnet.log
+tail -50 /tmp/tradingbots_testnet.log
 
 # Common causes:
 1. Credentials wrong - check .env.testnet
@@ -382,10 +382,10 @@ tail -50 /tmp/redrobot_testnet.log
 3. Port already in use - kill other processes
 
 # Restart:
-pkill -f redrobot
+pkill -f tradingbots
 sleep 2
 source .env.testnet
-nohup ./target/release/redrobot > /tmp/redrobot_testnet.log 2>&1 &
+nohup ./target/release/tradingbots > /tmp/tradingbots_testnet.log 2>&1 &
 ```
 
 ### **No trades executing**
@@ -396,7 +396,7 @@ curl https://testnet-api.hyperliquid.com/ping
 # Should return: {"status":"ok"}
 
 # Check for connection errors
-grep "Connection\|timeout\|refused" /tmp/redrobot_testnet.log
+grep "Connection\|timeout\|refused" /tmp/tradingbots_testnet.log
 
 # Likely causes:
 1. Testnet API is down (rare)
@@ -404,21 +404,21 @@ grep "Connection\|timeout\|refused" /tmp/redrobot_testnet.log
 3. Firewall blocking
 
 # Try restarting
-pkill -f redrobot
+pkill -f tradingbots
 sleep 5
 source .env.testnet
-nohup ./target/release/redrobot > /tmp/redrobot_testnet.log 2>&1 &
+nohup ./target/release/tradingbots > /tmp/tradingbots_testnet.log 2>&1 &
 ```
 
 ### **High error rate**
 
 ```bash
 # Count errors
-grep -c "ERROR" /tmp/redrobot_testnet.log
+grep -c "ERROR" /tmp/tradingbots_testnet.log
 
 # If > 100 in 24 hours, something's wrong
 # View them:
-grep "ERROR" /tmp/redrobot_testnet.log | head -20
+grep "ERROR" /tmp/tradingbots_testnet.log | head -20
 
 # Common causes:
 1. Testnet tokens ran out (very unlikely)

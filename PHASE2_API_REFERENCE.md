@@ -4,7 +4,7 @@
 
 ### Initialization
 ```rust
-use redrobot_hedgebot::HyperliquidClient;
+use tradingbots_fun::HyperliquidClient;
 
 let client = HyperliquidClient::new(
     "account-123".to_string(),
@@ -34,7 +34,7 @@ println!("Bid volume (5 levels): {}", order_book.bid_volume(5));
 
 #### Place Limit Order
 ```rust
-use redrobot_hedgebot::models::market::{LimitOrder, OrderSide};
+use tradingbots_fun::models::market::{LimitOrder, OrderSide};
 
 let order = LimitOrder {
     symbol: "SOLUSDT".to_string(),
@@ -52,7 +52,7 @@ println!("Filled: {} at {}", response.filled_size, response.average_price);
 
 #### Place Market Order
 ```rust
-use redrobot_hedgebot::models::market::MarketOrder;
+use tradingbots_fun::models::market::MarketOrder;
 
 let order = MarketOrder {
     symbol: "BTCUSDT".to_string(),
@@ -145,14 +145,14 @@ client.clear_caches().await;
 
 #### Create Repository
 ```rust
-use redrobot_hedgebot::ExecutionRepository;
+use tradingbots_fun::ExecutionRepository;
 
 let repository = ExecutionRepository::new();
 ```
 
 #### Create Engine
 ```rust
-use redrobot_hedgebot::OrderExecutionEngine;
+use tradingbots_fun::OrderExecutionEngine;
 
 let engine = OrderExecutionEngine::new(repository);
 ```
@@ -161,7 +161,7 @@ let engine = OrderExecutionEngine::new(repository);
 
 #### Set Default Strategy
 ```rust
-use redrobot_hedgebot::RoutingStrategy;
+use tradingbots_fun::RoutingStrategy;
 
 // Available strategies:
 // - RoutingStrategy::BestPrice
@@ -181,7 +181,7 @@ println!("Current routing strategy: {:?}", strategy);
 ### Protocol Availability
 
 ```rust
-use redrobot_hedgebot::ExecutionProtocol;
+use tradingbots_fun::ExecutionProtocol;
 
 // Mark a protocol as unavailable
 engine.set_protocol_available(ExecutionProtocol::Drift, false);
@@ -194,7 +194,7 @@ engine.set_protocol_available(ExecutionProtocol::Hyperliquid, true);
 
 #### Plan Execution with Analysis
 ```rust
-use redrobot_hedgebot::{ExecutionVenue, ExecutionProtocol};
+use tradingbots_fun::{ExecutionVenue, ExecutionProtocol};
 
 // Prepare execution venues
 let drift_venue = ExecutionVenue {
@@ -371,7 +371,7 @@ repository.clear_history().await;
 ## Complete Example: Market Making Bot
 
 ```rust
-use redrobot_hedgebot::{
+use tradingbots_fun::{
     HyperliquidClient, OrderExecutionEngine, ExecutionRepository,
     RoutingStrategy, ExecutionVenue, ExecutionProtocol,
     models::market::{MarketOrder, OrderSide, Order},

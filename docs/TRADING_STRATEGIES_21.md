@@ -1,4 +1,4 @@
-# 🎯 RedRobot-HedgeBot: Complete 21 Technical Strategies Guide
+# 🎯 tradingbots-fun: Complete 21 Technical Strategies Guide
 
 **Status:** All 21 strategies implemented and integrated
 **Confluence System:** Multi-signal validation for >90% win rate trades

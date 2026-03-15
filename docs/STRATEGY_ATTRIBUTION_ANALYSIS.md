@@ -366,7 +366,7 @@ Monthly Return: 860% 🚀
 
 ### Record a Trade:
 ```rust
-use redrobot_hedgebot::{StrategyAttributor, MarketRegime};
+use tradingbots_fun::{StrategyAttributor, MarketRegime};
 
 let mut attributor = StrategyAttributor::new();
 
@@ -393,7 +393,7 @@ for (name, metrics) in report {
 
 ### Analyze Strategy Viability:
 ```rust
-use redrobot_hedgebot::StrategyAnalytics;
+use tradingbots_fun::StrategyAnalytics;
 
 let viability = StrategyAnalytics::calculate_viability(&metrics);
 println!("Score: {:.0}", viability.viability_score);

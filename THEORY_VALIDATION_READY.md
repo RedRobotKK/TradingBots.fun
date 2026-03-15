@@ -33,7 +33,7 @@ All components have been implemented:
 
 **How to run**:
 ```bash
-cd /sessions/confident-eloquent-wozniak/mnt/Development/RedRobot-HedgeBot
+cd /sessions/confident-eloquent-wozniak/mnt/Development/tradingbots-fun
 cargo test --test theory_validation -- --nocapture
 ```
 
@@ -313,7 +313,7 @@ On $10K capital: ~$7,000 monthly
 
 ```bash
 # 1. Navigate to project
-cd /sessions/confident-eloquent-wozniak/mnt/Development/RedRobot-HedgeBot
+cd /sessions/confident-eloquent-wozniak/mnt/Development/tradingbots-fun
 
 # 2. Install Rust (if needed)
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh

@@ -54,7 +54,7 @@ assert_matches = "1.5"
 // tests/indicators_test.rs
 #[cfg(test)]
 mod tests {
-    use redrobot::indicators::*;
+    use tradingbots::indicators::*;
 
     #[test]
     fn test_rsi_oversold() {

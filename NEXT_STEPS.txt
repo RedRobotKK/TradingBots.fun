@@ -1,5 +1,5 @@
 ═══════════════════════════════════════════════════════════════════
-  REDROBOT-HEDGEBOT: YOUR TRADING SYSTEM IS READY
+  TRADINGBOTS-HEDGEBOT: YOUR TRADING SYSTEM IS READY
 ═══════════════════════════════════════════════════════════════════
 
 ✅ ALL CODE IS COMMITTED AND READY TO PUSH
@@ -19,7 +19,7 @@ STEP 1: Push code to GitHub (1 minute)
 ────────────────────────────────────────
 Open terminal and run:
 
-    cd ~/Development/RedRobot-HedgeBot
+    cd ~/Development/tradingbots-fun
     git push origin master
 
 That's it! This pushes all 25 commits to your existing repo.
@@ -37,15 +37,15 @@ It has 10 easy steps:
 6. Create .env file
 7. Build: cargo build --release
 8. Start with screen: screen -S trading
-9. Run: ./target/release/redrobot-hedgebot
-10. Verify with: ps aux | grep redrobot
+9. Run: ./target/release/tradingbots-fun
+10. Verify with: ps aux | grep tradingbots
 
 STEP 3: Monitor (first week)
 ──────────────────────────────
 Run with TESTNET_ONLY=true in .env
 
 Check logs daily:
-    tail -f /var/log/redrobot/trading.log
+    tail -f /var/log/tradingbots/trading.log
 
 Review signals and scoring accuracy.
 
@@ -122,16 +122,16 @@ On Digital Ocean droplet:
     
     # Run in background
     screen -S trading
-    ./target/release/redrobot-hedgebot
+    ./target/release/tradingbots-fun
     
     # Detach: Ctrl+A then D
     # Reconnect: screen -r trading
     
     # Check logs
-    tail -f /var/log/redrobot/trading.log
+    tail -f /var/log/tradingbots/trading.log
     
     # Check if running
-    ps aux | grep redrobot
+    ps aux | grep tradingbots
 
 ═══════════════════════════════════════════════════════════════════
 THE BOTTOM LINE:

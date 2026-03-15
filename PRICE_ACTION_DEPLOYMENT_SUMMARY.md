@@ -70,12 +70,12 @@ ab0cc1e - Add final deployment readiness summary
 
 ### Step 1: Push to GitHub (2 minutes)
 ```bash
-cd ~/Development/RedRobot-HedgeBot
+cd ~/Development/tradingbots-fun
 git push origin master
 ```
 
 ### Step 2: Verify on GitHub
-- Visit: https://github.com/RedRobotKK/RedRobot-HedgeBot
+- Visit: https://github.com/TradingBots.funKK/tradingbots-fun
 - Should see 29 commits
 - 3 new files: price_action.rs, price_action_backtest.rs, price_action_scoring.rs
 - New doc: PRICE_ACTION_INTEGRATION.md
@@ -84,8 +84,8 @@ git push origin master
 Follow `DEPLOYMENT_DIGITALOCEAN.md`:
 ```bash
 # On your Digital Ocean droplet:
-git clone git@github.com:RedRobotKK/RedRobot-HedgeBot.git
-cd RedRobot-HedgeBot
+git clone git@github.com:TradingBots.funKK/tradingbots-fun.git
+cd tradingbots-fun
 cargo build --release
 ```
 
@@ -241,7 +241,7 @@ backtester.print_summary(&results);
 - [ ] `git push origin master` from your Mac
 - [ ] Deploy on Digital Ocean
 - [ ] Build: `cargo build --release`
-- [ ] Run: `./target/release/redrobot-hedgebot`
+- [ ] Run: `./target/release/tradingbots-fun`
 
 **Week 1:**
 - [ ] Run in `TESTNET_ONLY=true` mode
@@ -340,7 +340,7 @@ Before going live, verify:
 2. **Push to GitHub**: `git push origin master`
 3. **Deploy on Digital Ocean**: Follow `DEPLOYMENT_DIGITALOCEAN.md`
 4. **Build**: `cargo build --release`
-5. **Run**: `./target/release/redrobot-hedgebot`
+5. **Run**: `./target/release/tradingbots-fun`
 6. **Profit**: 70-73% win rate on institutional patterns
 
 ---

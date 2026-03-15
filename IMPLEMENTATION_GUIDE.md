@@ -129,8 +129,8 @@ pub async fn get_order_book(&self, symbol: &str, depth: usize) -> Result<OrderBo
 ### Usage Example
 
 ```rust
-use redrobot_hedgebot::modules::HyperliquidClient;
-use redrobot_hedgebot::models::market::LimitOrder;
+use tradingbots_fun::modules::HyperliquidClient;
+use tradingbots_fun::models::market::LimitOrder;
 
 // Initialize client with wallet address and private key
 let client = HyperliquidClient::new(
@@ -298,7 +298,7 @@ let results = backtester.run_optimization(params).await?;
 ### Usage Example
 
 ```rust
-use redrobot_hedgebot::modules::{Backtester, BacktestConfig};
+use tradingbots_fun::modules::{Backtester, BacktestConfig};
 
 // Create backtest configuration
 let config = BacktestConfig::default()

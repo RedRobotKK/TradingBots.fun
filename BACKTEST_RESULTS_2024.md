@@ -1,4 +1,4 @@
-# 🎯 RedRobot-HedgeBot: Comprehensive Backtest Results 2024
+# 🎯 tradingbots-fun: Comprehensive Backtest Results 2024
 
 **Status:** ✅ FULLY INTEGRATED AND BACKTESTED
 **Date:** February 21, 2026
@@ -10,7 +10,7 @@
 
 ## Executive Summary
 
-The RedRobot-HedgeBot autonomous trading system was backtested over the entire 2024 calendar year using real historical OHLCV data from Binance. The system demonstrates **consistent profitability with positive risk-adjusted returns**, validating the multi-account strategy with autonomous capital rebalancing.
+The tradingbots-fun autonomous trading system was backtested over the entire 2024 calendar year using real historical OHLCV data from Binance. The system demonstrates **consistent profitability with positive risk-adjusted returns**, validating the multi-account strategy with autonomous capital rebalancing.
 
 | Metric | Value | Status |
 |--------|-------|--------|
@@ -229,7 +229,7 @@ This Sharpe ratio of 1.89 is EXCEPTIONAL:
 - S&P 500 (2024):                     0.87
 - Bitcoin (2024):                      0.92
 - Hedge Fund Average:                  0.54
-- RedRobot-HedgeBot:                  1.89 ✅✅✅
+- tradingbots-fun:                  1.89 ✅✅✅
 ```
 
 ### Value at Risk (VaR) Analysis
@@ -375,7 +375,7 @@ Rebalance Sharpe Gain:   +0.34 points (0.31% better returns)
 
 | Strategy | 2024 Return | Sharpe | Max DD | Win Rate |
 |----------|------------|--------|--------|----------|
-| **RedRobot (Backtested)** | **+287.4%** | **1.89** | **-9.3%** | **61.2%** |
+| **TradingBots.fun (Backtested)** | **+287.4%** | **1.89** | **-9.3%** | **61.2%** |
 | Hold Bitcoin | +151.2% | 0.92 | -25.3% | 51.0%* |
 | Hold Ethereum | +43.8% | 0.34 | -45.2% | 48.2%* |
 | Hold SOL | +92.4% | 0.67 | -38.1% | 49.8%* |
@@ -385,7 +385,7 @@ Rebalance Sharpe Gain:   +0.34 points (0.31% better returns)
 
 *Win rate for passive strategies = days closing higher than open
 
-**RedRobot Outperformance:**
+**TradingBots.fun Outperformance:**
 - vs Bitcoin: +136.2% better return
 - vs S&P 500: +263.2% better return
 - vs Hedge Fund: +258.9% better return
@@ -462,7 +462,7 @@ export DRIFT_TESTNET=true
 export INITIAL_CAPITAL=100  # 100 SOL/USDC per testnet
 
 # Run autonomous trader
-./target/release/redrobot
+./target/release/tradingbots
 
 # Monitor for 72 hours
 - Health checks every 5s ✅
@@ -479,8 +479,8 @@ export DRIFT_MAINNET=true
 export INITIAL_CAPITAL=5000  # $5K USDC
 
 # Start autonomous trader with monitoring
-nohup ./target/release/redrobot > redrobot.log 2>&1 &
-tail -f redrobot.log
+nohup ./target/release/tradingbots > tradingbots.log 2>&1 &
+tail -f tradingbots.log
 
 # Expected daily returns
 - Conservative: +0.8% per day ($40/day)
@@ -537,7 +537,7 @@ This backtest demonstrates **historical performance only**. Actual future result
 
 ## Conclusion
 
-The RedRobot-HedgeBot autonomous trading system is **PRODUCTION READY** for mainnet deployment with the following validation:
+The tradingbots-fun autonomous trading system is **PRODUCTION READY** for mainnet deployment with the following validation:
 
 ✅ **Proven Profitability:** +287.4% return on 2024 historical data
 ✅ **Risk Control:** -9.3% max drawdown with zero liquidations
@@ -572,5 +572,5 @@ The system is ready. Time to trade on mainnet.
 **Status:** ✅ READY FOR PRODUCTION
 **Next Action:** Deploy to Hyperliquid Mainnet with $5,000 USDC
 
-🚀 **RedRobot-HedgeBot is fully integrated and ready for autonomous trading.**
+🚀 **tradingbots-fun is fully integrated and ready for autonomous trading.**
 

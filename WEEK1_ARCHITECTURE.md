@@ -4,7 +4,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                     REDROBOT-HEDGEBOT MVP                       │
+│                     TRADINGBOTS-HEDGEBOT MVP                       │
 │              High-Speed DEX Trading System (Solana)             │
 └─────────────────────────────────────────────────────────────────┘
 
@@ -608,7 +608,7 @@ Ready for: Testnet validation (Week 2)
 ## File Structure: Week 1 Complete
 
 ```
-redrobot-hedgebot/
+tradingbots-fun/
 ├── Cargo.toml
 ├── src/
 │   ├── main.rs                  # Entry point

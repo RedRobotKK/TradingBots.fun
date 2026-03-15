@@ -434,4 +434,4 @@ RUST_LOG=debug cargo test -- --nocapture
 - No data races possible
 - Comprehensive test coverage
 
-All code is production-ready and follows Phase 1 patterns established in the RedRobot-HedgeBot project.
+All code is production-ready and follows Phase 1 patterns established in the tradingbots-fun project.

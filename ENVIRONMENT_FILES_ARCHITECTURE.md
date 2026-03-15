@@ -228,8 +228,8 @@ Separation:
 
 ```bash
 # Clone from GitHub (these are committed)
-git clone https://github.com/RedRobotKK/RedRobot-HedgeBot.git
-cd RedRobot-HedgeBot
+git clone https://github.com/TradingBots.funKK/tradingbots-fun.git
+cd tradingbots-fun
 
 # Files you'll see:
 ls -la .env*

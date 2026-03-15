@@ -1,4 +1,4 @@
-# RedRobot HedgeBot - Production Trading System
+# TradingBots.fun - Production Trading System
 
 **Real-money autonomous trading bot for Solana DEX**
 
@@ -14,8 +14,8 @@
 
 ```bash
 # 1. Clone repo
-git clone https://github.com/yourusername/redrobot-hedgebot.git
-cd redrobot-hedgebot
+git clone https://github.com/yourusername/tradingbots-fun.git
+cd tradingbots-fun
 
 # 2. Configure
 cp .env.example .env
@@ -46,20 +46,20 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source $HOME/.cargo/env
 
 # 2. Clone & build
-git clone https://github.com/yourusername/redrobot-hedgebot.git
-cd redrobot-hedgebot
+git clone https://github.com/yourusername/tradingbots-fun.git
+cd tradingbots-fun
 cargo build --release
 
 # 3. Run database
-createdb redrobot
-psql redrobot < migrations/init.sql
+createdb tradingbots
+psql tradingbots < migrations/init.sql
 
 # 4. Configure
 cp .env.example .env
 # Edit with your API keys
 
 # 5. Run
-./target/release/redrobot
+./target/release/tradingbots
 ```
 
 ## Architecture
@@ -123,7 +123,7 @@ HYPERLIQUID_KEY=your_key
 HYPERLIQUID_SECRET=your_secret
 
 # Database
-DATABASE_URL=postgres://user:pass@localhost/redrobot
+DATABASE_URL=postgres://user:pass@localhost/tradingbots
 
 # Logging
 RUST_LOG=info
@@ -190,7 +190,7 @@ Avg Loss: -0.63%
 ### Real-time Logs
 ```bash
 # Docker
-docker-compose logs -f redrobot
+docker-compose logs -f tradingbots
 
 # Local
 RUST_LOG=debug cargo run
@@ -199,13 +199,13 @@ RUST_LOG=debug cargo run
 ### Database Queries
 ```bash
 # Recent trades
-psql redrobot -c "SELECT * FROM trades ORDER BY created_at DESC LIMIT 10;"
+psql tradingbots -c "SELECT * FROM trades ORDER BY created_at DESC LIMIT 10;"
 
 # Account status
-psql redrobot -c "SELECT COUNT(*), AVG(confidence), SUM(pnl) FROM trades;"
+psql tradingbots -c "SELECT COUNT(*), AVG(confidence), SUM(pnl) FROM trades;"
 
 # Positions
-psql redrobot -c "SELECT * FROM positions WHERE status='OPEN';"
+psql tradingbots -c "SELECT * FROM positions WHERE status='OPEN';"
 ```
 
 ### Health Check
@@ -232,7 +232,7 @@ cat .env | grep API
 ### Error: No trades executing
 ```bash
 # Check logs
-docker-compose logs redrobot | grep "Signal\|Decision\|Risk"
+docker-compose logs tradingbots | grep "Signal\|Decision\|Risk"
 
 # Test indicators
 # Add debug logging: RUST_LOG=debug
@@ -244,7 +244,7 @@ docker-compose logs redrobot | grep "Signal\|Decision\|Risk"
 docker stats
 
 # Restart
-docker-compose restart redrobot
+docker-compose restart tradingbots
 ```
 
 ## Performance Optimization
@@ -275,7 +275,7 @@ docker-compose restart redrobot
 ALTER USER postgres WITH PASSWORD 'complex_password';
 
 # Backup regularly
-pg_dump redrobot > backup.sql
+pg_dump tradingbots > backup.sql
 ```
 
 ### Network Security

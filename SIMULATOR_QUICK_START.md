@@ -7,7 +7,7 @@ Run a 7-day historical backtest on $1,000 simulated capital and validate the 9-s
 
 ```bash
 # Make sure you're in the project directory
-cd RedRobot-HedgeBot
+cd tradingbots-fun
 
 # Verify Rust is installed
 rustc --version  # Should be 1.70+
@@ -81,7 +81,7 @@ PYTHON
 cargo build --release
 
 # This compiles all 9 strategies + backtester + simulator
-# Output: target/release/redrobot-hedgebot
+# Output: target/release/tradingbots-fun
 ```
 
 ## Step 3: Create Backtest Script (2 minutes)
@@ -92,7 +92,7 @@ Create a simple test runner:
 cat > backtest_runner.sh << 'SCRIPT'
 #!/bin/bash
 
-echo "🎯 RedRobot HedgeBot - 7-Day Historical Backtest"
+echo "🎯 TradingBots.fun - 7-Day Historical Backtest"
 echo "=================================================="
 echo ""
 echo "📊 Running $1,000 simulation on SOL/USDT..."

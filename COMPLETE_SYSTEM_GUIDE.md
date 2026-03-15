@@ -1,4 +1,4 @@
-# 🤖 RedRobot-HedgeBot: Complete Autonomous Trading System
+# 🤖 tradingbots-fun: Complete Autonomous Trading System
 
 **Status:** ✅ Phases 1-3 COMPLETE + Foundation for Phase 4
 **Version:** 0.2.0
@@ -9,7 +9,7 @@
 
 ## System Overview
 
-RedRobot-HedgeBot is a **fully autonomous multi-protocol trading system** that operates 24/7 without human intervention. The system:
+tradingbots-fun is a **fully autonomous multi-protocol trading system** that operates 24/7 without human intervention. The system:
 
 - ✅ Manages **5 trading accounts** across **2+ protocols** (Drift, Hyperliquid)
 - ✅ **Autonomously rebalances capital** every 5 minutes based on market conditions
@@ -171,7 +171,7 @@ runner.get_performance() → PerformanceMetrics
 
 ### Build the Project
 ```bash
-cd RedRobot-HedgeBot
+cd tradingbots-fun
 
 # Debug build
 cargo build
@@ -204,10 +204,10 @@ cargo tarpaulin --out Html
 cargo run
 
 # Release mode (faster)
-./target/release/redrobot
+./target/release/tradingbots
 
 # With logging
-RUST_LOG=info ./target/release/redrobot
+RUST_LOG=info ./target/release/tradingbots
 ```
 
 ---
@@ -266,10 +266,10 @@ cargo build --release
 # Go to faucet or send testnet USDC
 
 # 4. Run the bot
-./target/release/redrobot
+./target/release/tradingbots
 
 # 5. Monitor logs
-tail -f /tmp/redrobot.log
+tail -f /tmp/tradingbots.log
 ```
 
 ### Mainnet Deployment
@@ -286,10 +286,10 @@ cargo build --release --features full
 # Send funds to wallet address
 
 # 4. Start bot with monitoring
-nohup ./target/release/redrobot > redrobot.log 2>&1 &
+nohup ./target/release/tradingbots > tradingbots.log 2>&1 &
 
 # 5. Monitor performance
-watch -n 5 'tail redrobot.log'
+watch -n 5 'tail tradingbots.log'
 ```
 
 ---

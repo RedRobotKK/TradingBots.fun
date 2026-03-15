@@ -165,7 +165,7 @@ Execute with DCA/Pyramiding framework
 ### 1. Basic Detection
 
 ```rust
-use redrobot_hedgebot::price_action::{PriceActionDetector, Candle};
+use tradingbots_fun::price_action::{PriceActionDetector, Candle};
 
 let mut detector = PriceActionDetector::new();
 
@@ -194,7 +194,7 @@ for pattern in patterns {
 ### 2. Scoring Patterns
 
 ```rust
-use redrobot_hedgebot::price_action_scoring::PriceActionScorer;
+use tradingbots_fun::price_action_scoring::PriceActionScorer;
 
 let score = PriceActionScorer::score_pattern(&pattern, &detector);
 
@@ -210,7 +210,7 @@ match score.action {
 ### 3. Confluence Analysis
 
 ```rust
-use redrobot_hedgebot::price_action_scoring::PatternConfluence;
+use tradingbots_fun::price_action_scoring::PatternConfluence;
 
 let patterns = detector.get_patterns();
 let confluence = PatternConfluence::analyze(patterns);
@@ -224,7 +224,7 @@ if confluence.confluence_strength > 75.0 {
 ### 4. Backtesting
 
 ```rust
-use redrobot_hedgebot::price_action_backtest::PriceActionBacktester;
+use tradingbots_fun::price_action_backtest::PriceActionBacktester;
 
 let candles = load_historical_data(symbol, timeframe, 1000);
 let mut backtester = PriceActionBacktester::new(candles);

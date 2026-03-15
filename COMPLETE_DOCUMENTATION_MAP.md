@@ -1,4 +1,4 @@
-# 📚 Complete Documentation Map: RedRobot-HedgeBot Trading System
+# 📚 Complete Documentation Map: tradingbots-fun Trading System
 
 **Total Documentation:** 10 files, 60,000+ words
 **Status:** ✅ Production-ready architecture and specifications

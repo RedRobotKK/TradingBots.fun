@@ -579,7 +579,7 @@ impl CompleteDashboard {
         let mut output = String::new();
 
         output.push_str("╔════════════════════════════════════════════════════════════════════╗\n");
-        output.push_str("║              🤖 REDROBOT TRADING BOT - LIVE DASHBOARD 🤖            ║\n");
+        output.push_str("║             🤖 TRADINGBOTS.FUN - LIVE DASHBOARD 🤖                   ║\n");
         output.push_str("╚════════════════════════════════════════════════════════════════════╝\n\n");
 
         // Equity header

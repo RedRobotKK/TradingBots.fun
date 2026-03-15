@@ -1,4 +1,4 @@
-# 🧪 RedRobot-HedgeBot: Complete Testnet Setup & Validation Guide
+# 🧪 tradingbots-fun: Complete Testnet Setup & Validation Guide
 
 **Status:** Ready for 72-Hour Validation
 **Capital:** 100 USDC equivalent (testnet tokens)
@@ -17,15 +17,15 @@
 
 # 2. Edit .env.testnet with your testnet credentials
 # 3. Build the project
-cd /sessions/confident-eloquent-wozniak/mnt/Development/RedRobot-HedgeBot
+cd /sessions/confident-eloquent-wozniak/mnt/Development/tradingbots-fun
 cargo build --release
 
 # 4. Start the bot
 source .env.testnet
-nohup ./target/release/redrobot > /tmp/redrobot_testnet.log 2>&1 &
+nohup ./target/release/tradingbots > /tmp/tradingbots_testnet.log 2>&1 &
 
 # 5. Monitor it
-tail -f /tmp/redrobot_testnet.log
+tail -f /tmp/tradingbots_testnet.log
 ```
 
 ---
@@ -60,7 +60,7 @@ solana balance -u devnet
 ### 1.3 Update .env.testnet
 
 ```bash
-# Edit: /path/to/RedRobot-HedgeBot/.env.testnet
+# Edit: /path/to/tradingbots-fun/.env.testnet
 
 # Replace these values:
 HYPERLIQUID_WALLET=0x<YOUR_TESTNET_WALLET>
@@ -94,7 +94,7 @@ cargo --version
 ### 2.2 Clean and Build
 
 ```bash
-cd /sessions/confident-eloquent-wozniak/mnt/Development/RedRobot-HedgeBot
+cd /sessions/confident-eloquent-wozniak/mnt/Development/tradingbots-fun
 
 # Clean previous builds
 cargo clean
@@ -103,18 +103,18 @@ cargo clean
 cargo build --release --features full
 
 # Expected compile time: 3-5 minutes
-# Result: target/release/redrobot (~42MB)
+# Result: target/release/tradingbots (~42MB)
 ```
 
 ### 2.3 Verify Build
 
 ```bash
 # Check binary exists
-ls -lh target/release/redrobot
+ls -lh target/release/tradingbots
 
 # Test binary
-./target/release/redrobot --version
-# Expected: RedRobot-HedgeBot 1.0.0
+./target/release/tradingbots --version
+# Expected: tradingbots-fun 1.0.0
 
 # Run all tests
 cargo test --release -- --nocapture
@@ -130,7 +130,7 @@ cargo test --release -- --nocapture
 **Option A: Foreground (for quick testing)**
 ```bash
 source .env.testnet
-./target/release/redrobot
+./target/release/tradingbots
 
 # You'll see output like:
 # [2026-02-21T14:32:15Z] 🤖 Autonomous trader started
@@ -144,33 +144,33 @@ source .env.testnet
 source .env.testnet
 
 # Start in background
-nohup ./target/release/redrobot > /tmp/redrobot_testnet.log 2>&1 &
+nohup ./target/release/tradingbots > /tmp/tradingbots_testnet.log 2>&1 &
 
 # Save PID
-echo $! > /tmp/redrobot.pid
+echo $! > /tmp/tradingbots.pid
 
 # Verify it's running
-ps -p $(cat /tmp/redrobot.pid)
+ps -p $(cat /tmp/tradingbots.pid)
 
 # View live logs
-tail -f /tmp/redrobot_testnet.log
+tail -f /tmp/tradingbots_testnet.log
 ```
 
 **Option C: systemd Service (Recommended)**
 ```bash
 # Create service file
-sudo tee /etc/systemd/system/redrobot-testnet.service > /dev/null <<EOF
+sudo tee /etc/systemd/system/tradingbots-testnet.service > /dev/null <<EOF
 [Unit]
-Description=RedRobot-HedgeBot Testnet Validation
+Description=tradingbots-fun Testnet Validation
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 User=$USER
-WorkingDirectory=$HOME/RedRobot-HedgeBot
-EnvironmentFile=$HOME/RedRobot-HedgeBot/.env.testnet
-ExecStart=$HOME/RedRobot-HedgeBot/target/release/redrobot
+WorkingDirectory=$HOME/tradingbots-fun
+EnvironmentFile=$HOME/tradingbots-fun/.env.testnet
+ExecStart=$HOME/tradingbots-fun/target/release/tradingbots
 Restart=always
 RestartSec=10
 StandardOutput=journal
@@ -182,22 +182,22 @@ EOF
 
 # Enable and start
 sudo systemctl daemon-reload
-sudo systemctl enable redrobot-testnet
-sudo systemctl start redrobot-testnet
+sudo systemctl enable tradingbots-testnet
+sudo systemctl start tradingbots-testnet
 
 # Check status
-sudo systemctl status redrobot-testnet
-sudo journalctl -u redrobot-testnet -f
+sudo systemctl status tradingbots-testnet
+sudo journalctl -u tradingbots-testnet -f
 ```
 
 ### 3.2 Verify Bot Started
 
 ```bash
 # Check if process is running
-ps aux | grep redrobot | grep -v grep
+ps aux | grep tradingbots | grep -v grep
 
 # Check logs for startup messages
-head -20 /tmp/redrobot_testnet.log
+head -20 /tmp/tradingbots_testnet.log
 
 # Expected output:
 # [2026-02-21T14:32:15Z] Loading configuration...
@@ -217,7 +217,7 @@ head -20 /tmp/redrobot_testnet.log
 
 ```bash
 # Open dashboard.html in your browser
-# File: /path/to/RedRobot-HedgeBot/dashboard.html
+# File: /path/to/tradingbots-fun/dashboard.html
 # Auto-refreshes every 30 seconds
 # Shows:
 #   - Live performance metrics
@@ -249,18 +249,18 @@ bash scripts/monitor-testnet.sh
 
 ```bash
 # View last 20 lines
-tail -20 /tmp/redrobot_testnet.log
+tail -20 /tmp/tradingbots_testnet.log
 
 # View last 100 lines
-tail -100 /tmp/redrobot_testnet.log
+tail -100 /tmp/tradingbots_testnet.log
 
 # Follow in real-time
-tail -f /tmp/redrobot_testnet.log
+tail -f /tmp/tradingbots_testnet.log
 
 # Search for specific events
-grep "Trade executed" /tmp/redrobot_testnet.log | wc -l
-grep "ERROR" /tmp/redrobot_testnet.log | wc -l
-grep "Health check" /tmp/redrobot_testnet.log | tail -10
+grep "Trade executed" /tmp/tradingbots_testnet.log | wc -l
+grep "ERROR" /tmp/tradingbots_testnet.log | wc -l
+grep "Health check" /tmp/tradingbots_testnet.log | tail -10
 ```
 
 ### 4.4 Hourly Health Checks
@@ -268,16 +268,16 @@ grep "Health check" /tmp/redrobot_testnet.log | tail -10
 **Every 4 hours, check:**
 ```bash
 # Is bot still running?
-pgrep -f "target/release/redrobot" > /dev/null && echo "✅ Running" || echo "❌ Stopped"
+pgrep -f "target/release/tradingbots" > /dev/null && echo "✅ Running" || echo "❌ Stopped"
 
 # How many trades?
-grep -c "Trade executed" /tmp/redrobot_testnet.log
+grep -c "Trade executed" /tmp/tradingbots_testnet.log
 
 # Any critical errors?
-grep "ERROR\|PANIC\|panic" /tmp/redrobot_testnet.log | tail -5
+grep "ERROR\|PANIC\|panic" /tmp/tradingbots_testnet.log | tail -5
 
 # Recent performance
-tail -50 /tmp/redrobot_testnet.log | grep "P&L\|Health\|Win rate"
+tail -50 /tmp/tradingbots_testnet.log | grep "P&L\|Health\|Win rate"
 ```
 
 ---
@@ -366,7 +366,7 @@ grep "HYPERLIQUID_WALLET\|DRIFT_RPC" .env.testnet
 # Expected: Should show your testnet wallet
 
 # Check logs for errors
-grep "ERROR\|Connection\|Auth" /tmp/redrobot_testnet.log
+grep "ERROR\|Connection\|Auth" /tmp/tradingbots_testnet.log
 ```
 
 ### Issue: Low win rate (< 50%)
@@ -376,7 +376,7 @@ grep "ERROR\|Connection\|Auth" /tmp/redrobot_testnet.log
 # Check if it's a signal problem or just variance
 
 # Analyze trades
-grep "Trade executed" /tmp/redrobot_testnet.log | head -50
+grep "Trade executed" /tmp/tradingbots_testnet.log | head -50
 
 # The backtest used full year 2024
 # Testnet might have different market conditions
@@ -388,7 +388,7 @@ grep "Trade executed" /tmp/redrobot_testnet.log | head -50
 ```bash
 # This is expected - the system will auto-correct
 # Check liquidation prevention activating:
-grep "Health Alert\|Reduce\|Liquidation" /tmp/redrobot_testnet.log
+grep "Health Alert\|Reduce\|Liquidation" /tmp/tradingbots_testnet.log
 
 # Normal sequence:
 # Level 1 (1.5): Warning, reduce 10%
@@ -403,27 +403,27 @@ grep "Health Alert\|Reduce\|Liquidation" /tmp/redrobot_testnet.log
 
 ```bash
 # Fix file permissions
-chmod +x target/release/redrobot
+chmod +x target/release/tradingbots
 chmod 600 .env.testnet
 
 # If systemd service:
-sudo chown -R $USER:$USER /path/to/RedRobot-HedgeBot
+sudo chown -R $USER:$USER /path/to/tradingbots-fun
 ```
 
 ### Issue: Out of memory
 
 ```bash
 # Check memory usage
-ps aux | grep redrobot | grep -v grep | awk '{print $6}'
+ps aux | grep tradingbots | grep -v grep | awk '{print $6}'
 
 # If > 2GB, there's a memory leak
 # This shouldn't happen - report to development
 
 # Restart the bot
-pkill -f "target/release/redrobot"
+pkill -f "target/release/tradingbots"
 sleep 5
 source .env.testnet
-nohup ./target/release/redrobot > /tmp/redrobot_testnet.log 2>&1 &
+nohup ./target/release/tradingbots > /tmp/tradingbots_testnet.log 2>&1 &
 ```
 
 ---
@@ -437,7 +437,7 @@ nohup ./target/release/redrobot > /tmp/redrobot_testnet.log 2>&1 &
 mkdir -p testnet_results
 
 # Copy logs
-cp /tmp/redrobot_testnet.log testnet_results/
+cp /tmp/tradingbots_testnet.log testnet_results/
 
 # Extract metrics
 bash scripts/extract-testnet-metrics.sh > testnet_results/metrics.txt
@@ -447,10 +447,10 @@ cat > testnet_results/summary.txt << EOF
 Testnet Validation Complete
 Start Time: 2026-02-21T14:32:15Z
 Duration: 72 hours
-Total Trades: $(grep -c "Trade executed" /tmp/redrobot_testnet.log)
-Win Rate: $(grep "Win rate:" /tmp/redrobot_testnet.log | tail -1)
-Max Drawdown: $(grep "Max drawdown:" /tmp/redrobot_testnet.log | tail -1)
-Final P&L: $(grep "Total P&L:" /tmp/redrobot_testnet.log | tail -1)
+Total Trades: $(grep -c "Trade executed" /tmp/tradingbots_testnet.log)
+Win Rate: $(grep "Win rate:" /tmp/tradingbots_testnet.log | tail -1)
+Max Drawdown: $(grep "Max drawdown:" /tmp/tradingbots_testnet.log | tail -1)
+Final P&L: $(grep "Total P&L:" /tmp/tradingbots_testnet.log | tail -1)
 EOF
 
 # Commit to GitHub

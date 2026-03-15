@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TradingBots.fun · Ad Revenue Model</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#0d1117;color:#c9d1d9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:32px 20px;max-width:860px;margin:0 auto}
+  h1{font-size:1.3rem;font-weight:800;color:#e6edf3;margin-bottom:4px}
+  h1 .r{color:#e6343a} h1 .b{color:#3fb950}
+  .sub{color:#8b949e;font-size:.85rem;margin-bottom:28px}
+  h2{font-size:.78rem;text-transform:uppercase;letter-spacing:.1em;color:#8b949e;margin:24px 0 10px}
+  .card{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:20px 24px;margin-bottom:14px}
+  .assumptions{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;margin-bottom:20px}
+  .asm{background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:12px 14px}
+  .asm label{display:block;font-size:.72rem;color:#8b949e;margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em}
+  .asm input,.asm select{width:100%;background:transparent;border:none;color:#e6edf3;font-size:1rem;font-weight:700;outline:none}
+  table{width:100%;border-collapse:collapse;font-size:.82rem}
+  th{color:#8b949e;font-weight:500;padding:8px 10px;border-bottom:1px solid #30363d;text-align:right;white-space:nowrap}
+  th:first-child{text-align:left}
+  td{padding:8px 10px;border-bottom:1px solid #21262d;text-align:right;font-weight:600}
+  td:first-child{text-align:left;color:#8b949e;font-weight:400}
+  tr:last-child td{border-bottom:none}
+  .green{color:#3fb950} .yellow{color:#e3b341} .blue{color:#58a6ff} .red{color:#f85149}
+  .big{font-size:1.6rem;font-weight:800;line-height:1.1;letter-spacing:-.02em}
+  .kpi-row{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px;margin-bottom:8px}
+  .kpi{background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:14px}
+  .kpi .lbl{font-size:.68rem;color:#8b949e;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px}
+  .note{font-size:.75rem;color:#484f58;line-height:1.6;margin-top:12px}
+  .tag{display:inline-block;font-size:.7rem;padding:2px 8px;border-radius:10px;border:1px solid;margin-left:6px;vertical-align:middle}
+  .tag-green{color:#3fb950;border-color:#3fb95050;background:#3fb95010}
+  .tag-yellow{color:#e3b341;border-color:#e3b34150;background:#e3b34110}
+  .tag-red{color:#f85149;border-color:#f8514950;background:#f8514910}
+  .separator{height:1px;background:#21262d;margin:18px 0}
+  .formula{font-family:monospace;font-size:.78rem;color:#58a6ff;background:#0d1117;padding:8px 12px;border-radius:6px;margin:8px 0}
+</style>
+</head>
+<body>
+
+<h1><span class="r">Red</span><span class="b">Robot</span> · Coinzilla Ad Revenue Model</h1>
+<p class="sub">How much you earn from advertising on Free/Trial user sessions · adjust sliders to model your scenario</p>
+
+<div class="card">
+  <h2>Inputs — adjust to your situation</h2>
+  <div class="assumptions">
+    <div class="asm">
+      <label>Free/Trial Active Users (DAU)</label>
+      <input type="number" id="dau" value="100" min="1" max="100000">
+    </div>
+    <div class="asm">
+      <label>Avg hours dashboard open / day</label>
+      <input type="number" id="hours" value="4" min="0.25" max="16" step="0.25">
+    </div>
+    <div class="asm">
+      <label>Ad refresh interval (seconds)</label>
+      <select id="refresh">
+        <option value="30" selected>30s — Coinzilla refreshable</option>
+        <option value="60">60s</option>
+        <option value="120">120s</option>
+        <option value="9999">No refresh (1 per session)</option>
+      </select>
+    </div>
+    <div class="asm">
+      <label>CPM (USD per 1,000 impressions)</label>
+      <select id="cpm">
+        <option value="0.50">$0.50 — new publisher, low traffic</option>
+        <option value="1.20" selected>$1.20 — established, crypto audience</option>
+        <option value="2.00">$2.00 — verified quality traffic</option>
+        <option value="3.50">$3.50 — premium Tier 1, high engagement</option>
+      </select>
+    </div>
+    <div class="asm">
+      <label>Coinzilla fill rate</label>
+      <select id="fill">
+        <option value="0.55">55% — first month</option>
+        <option value="0.70" selected>70% — after 4–6 weeks</option>
+        <option value="0.85">85% — established publisher</option>
+        <option value="0.95">95% — premium partner</option>
+      </select>
+    </div>
+    <div class="asm">
+      <label>% users in Tier 1 countries</label>
+      <select id="tier1">
+        <option value="0.40">40%</option>
+        <option value="0.60" selected>60% (typical crypto)</option>
+        <option value="0.80">80%</option>
+        <option value="1.00">100%</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="separator"></div>
+
+  <h2>Daily KPIs</h2>
+  <div class="kpi-row" id="kpi-row"></div>
+
+  <div class="formula" id="formula-line"></div>
+
+  <div class="separator"></div>
+
+  <h2>Monthly Revenue Projection</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Scenario</th>
+        <th>Free DAU</th>
+        <th>Daily Impressions</th>
+        <th>Monthly Impressions</th>
+        <th>Monthly Revenue</th>
+      </tr>
+    </thead>
+    <tbody id="proj-table"></tbody>
+  </table>
+
+  <div class="separator"></div>
+
+  <h2>Annual Revenue vs Subscription Revenue</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Users</th>
+        <th>Ad Revenue / yr</th>
+        <th>If 10% convert → Pro</th>
+        <th>Sub Revenue / yr</th>
+        <th>Total / yr</th>
+      </tr>
+    </thead>
+    <tbody id="compare-table"></tbody>
+  </table>
+
+  <p class="note" id="notes"></p>
+</div>
+
+<div class="card">
+  <h2>How the 30-second refresh works</h2>
+  <p style="font-size:.84rem;color:#8b949e;line-height:1.7">
+    Coinzilla's <strong style="color:#c9d1d9">Refreshable Zone</strong> rotates the creative every 30 seconds
+    without a full page reload — only the ad iframe updates. Each rotation counts as a new impression
+    against your CPM contract. This is the standard mechanism used by crypto media sites (CoinDesk,
+    CoinTelegraph) to multiply impression volume without degrading UX. Coinzilla requires that the ad
+    is in-view for ≥1 second before the refresh fires, which also protects your CPM rate (low-quality
+    refresh impressions are discarded by their fraud filter).
+  </p>
+  <div class="separator"></div>
+  <h2>Revenue levers ranked by impact</h2>
+  <table>
+    <thead><tr><th>Lever</th><th>Impact</th><th>Difficulty</th></tr></thead>
+    <tbody>
+      <tr><td>Grow Free DAU (SEO, referrals)</td><td class="green">Very High — linear</td><td>Medium</td></tr>
+      <tr><td>Increase avg session length</td><td class="green">High</td><td>Low — better UX hooks users</td></tr>
+      <tr><td>Get verified by Coinzilla (fill rate ↑)</td><td class="yellow">Medium</td><td>Low — just wait 4–6 wks</td></tr>
+      <tr><td>Add a second ad unit (e.g. sticky footer)</td><td class="green">High — 2× impressions</td><td>Low</td></tr>
+      <tr><td>Upgrade CPM tier (traffic quality proof)</td><td class="yellow">Medium</td><td>Medium</td></tr>
+      <tr><td>Add Adsterra Social Bar as fallback</td><td class="green">High — fills unsold inventory</td><td>Low</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<script>
+function fmt(n) {
+  if (n >= 1e6) return '$' + (n/1e6).toFixed(2) + 'M';
+  if (n >= 1e3) return '$' + (n/1e3).toFixed(1) + 'k';
+  return '$' + n.toFixed(2);
+}
+function fmtN(n) {
+  if (n >= 1e6) return (n/1e6).toFixed(1) + 'M';
+  if (n >= 1e3) return (n/1e3).toFixed(0) + 'k';
+  return n.toFixed(0);
+}
+
+function calc() {
+  const dau     = parseFloat(document.getElementById('dau').value)     || 100;
+  const hours   = parseFloat(document.getElementById('hours').value)   || 4;
+  const refresh = parseFloat(document.getElementById('refresh').value);
+  const cpm     = parseFloat(document.getElementById('cpm').value)     || 1.20;
+  const fill    = parseFloat(document.getElementById('fill').value)    || 0.70;
+  const t1pct   = parseFloat(document.getElementById('tier1').value)   || 0.60;
+
+  // Impressions per user per hour
+  const impPerHour = refresh >= 9999 ? (1/hours) : (3600/refresh);
+  const impPerUserDay = impPerHour * hours;
+  // Effective impressions (fill rate × tier1 CPM weight)
+  // Tier 2/3 traffic earns ~35% of Tier 1 CPM on Coinzilla
+  const effectiveCpm = cpm * (t1pct + (1-t1pct)*0.35);
+  const effectiveImpPerUserDay = impPerUserDay * fill;
+  const totalDailyImp = effectiveImpPerUserDay * dau;
+  const dailyRev = (totalDailyImp / 1000) * effectiveCpm;
+  const monthlyRev = dailyRev * 30;
+
+  // KPIs
+  document.getElementById('kpi-row').innerHTML = `
+    <div class="kpi"><div class="lbl">Impressions / user / day</div><div class="big green">${fmtN(effectiveImpPerUserDay)}</div></div>
+    <div class="kpi"><div class="lbl">Total daily impressions</div><div class="big blue">${fmtN(totalDailyImp)}</div></div>
+    <div class="kpi"><div class="lbl">Effective CPM</div><div class="big yellow">$${effectiveCpm.toFixed(2)}</div></div>
+    <div class="kpi"><div class="lbl">Daily revenue</div><div class="big green">${fmt(dailyRev)}</div></div>
+    <div class="kpi"><div class="lbl">Monthly revenue</div><div class="big green">${fmt(monthlyRev)}</div></div>
+    <div class="kpi"><div class="lbl">Annual revenue</div><div class="big green">${fmt(monthlyRev*12)}</div></div>
+  `;
+
+  document.getElementById('formula-line').textContent =
+    `(${fmtN(effectiveImpPerUserDay)} imp/user/day × ${dau} users) / 1000 × $${effectiveCpm.toFixed(2)} eCPM = ${fmt(dailyRev)}/day`;
+
+  // Projection table
+  const dauScenarios = [10, 50, 100, 500, 1000, 5000];
+  let rows = '';
+  dauScenarios.forEach(d => {
+    const di = effectiveImpPerUserDay * d;
+    const mr = (di * 30 / 1000) * effectiveCpm;
+    let cls = mr > 10000 ? 'green' : mr > 1000 ? 'yellow' : '';
+    let tag = d === Math.round(dau) ? '<span class="tag tag-blue" style="color:#58a6ff;border-color:#58a6ff50;background:#58a6ff10">← you</span>' : '';
+    rows += `<tr>
+      <td>${d.toLocaleString()} free users${tag}</td>
+      <td>${fmtN(d)}</td>
+      <td>${fmtN(di)}</td>
+      <td>${fmtN(di*30)}</td>
+      <td class="${cls}">${fmt(mr)}</td>
+    </tr>`;
+  });
+  document.getElementById('proj-table').innerHTML = rows;
+
+  // Comparison table
+  const subPriceAnnual = 19.99 * 12;
+  let crows = '';
+  dauScenarios.forEach(d => {
+    const adAnnual = (effectiveImpPerUserDay * d * 365 / 1000) * effectiveCpm;
+    const converters = Math.round(d * 0.10);
+    const subAnnual = converters * subPriceAnnual;
+    const total = adAnnual + subAnnual;
+    let cls = total > 100000 ? 'green' : total > 10000 ? 'yellow' : '';
+    crows += `<tr>
+      <td>${d.toLocaleString()}</td>
+      <td>${fmt(adAnnual)}</td>
+      <td>${converters} Pro</td>
+      <td class="green">${fmt(subAnnual)}</td>
+      <td class="${cls}">${fmt(total)}</td>
+    </tr>`;
+  });
+  document.getElementById('compare-table').innerHTML = crows;
+
+  const refreshLabel = refresh >= 9999 ? 'no refresh' : `${refresh}s refresh`;
+  document.getElementById('notes').textContent =
+    `Assumes: ${refreshLabel} · $${cpm} gross CPM · ${(fill*100).toFixed(0)}% fill · ${(t1pct*100).toFixed(0)}% Tier 1 traffic · ` +
+    `effective eCPM blended to $${effectiveCpm.toFixed(2)} after fill and geo mix. ` +
+    `Coinzilla pays out monthly with a $50 minimum. ` +
+    `Second ad unit (sticky footer) would roughly double these figures at no extra cost.`;
+}
+
+['dau','hours','refresh','cpm','fill','tier1'].forEach(id =>
+  document.getElementById(id).addEventListener('input', calc));
+
+calc();
+</script>
+</body>
+</html>

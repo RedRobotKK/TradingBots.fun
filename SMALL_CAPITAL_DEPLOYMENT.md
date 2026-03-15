@@ -1,4 +1,4 @@
-# 🚀 RedRobot-HedgeBot: Small Capital Deployment Strategy
+# 🚀 tradingbots-fun: Small Capital Deployment Strategy
 
 **Your Capital:** $300-500 USD
 **Status:** ✅ FULLY FUNCTIONAL
@@ -262,7 +262,7 @@ System has never liquidated despite 487 trades
 # Duration: 72 hours
 
 source .env.testnet
-./target/release/redrobot
+./target/release/tradingbots
 
 # Monitor for:
 ✅ No errors in logs
@@ -279,18 +279,18 @@ source .env.testnet
 source .env.mainnet
 
 # Start the bot
-nohup ./target/release/redrobot > redrobot.log 2>&1 &
+nohup ./target/release/tradingbots > tradingbots.log 2>&1 &
 
 # Monitor daily
-tail -f redrobot.log | grep "P&L\|Health\|Trade"
+tail -f tradingbots.log | grep "P&L\|Health\|Trade"
 ```
 
 ### Step 4: Daily Monitoring
 ```bash
 # Every morning, check:
-1. Is bot still running? (ps aux | grep redrobot)
+1. Is bot still running? (ps aux | grep tradingbots)
 2. What's the P&L? (curl localhost:8888/api/performance)
-3. Any errors? (tail -20 redrobot.log)
+3. Any errors? (tail -20 tradingbots.log)
 4. Health factor ok? (should be >1.5)
 
 Time required: 5 minutes per day

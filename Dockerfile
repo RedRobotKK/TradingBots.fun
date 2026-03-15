@@ -22,14 +22,14 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Copy binary
-COPY --from=builder /app/target/release/redrobot /app/redrobot
+COPY --from=builder /app/target/release/tradingbots /app/tradingbots
 COPY --from=builder /app/migrations ./migrations
 COPY --from=builder /app/.env ./
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD /app/redrobot health || exit 1
+    CMD /app/tradingbots health || exit 1
 
 EXPOSE 8080
 
-CMD ["/app/redrobot"]
+CMD ["/app/tradingbots"]

@@ -294,7 +294,7 @@ This means max loss per trade = 3% (stop at entry - 3%) = $30 per $1000
 
 ```
 ╔══════════════════════════════════════════════════════════════╗
-║          REDROBOT HEDGEBOT - 7 DAY PAPER TRADING            ║
+║          TRADINGBOTS HEDGEBOT - 7 DAY PAPER TRADING            ║
 ║                     BACKTEST RESULTS                         ║
 ╚══════════════════════════════════════════════════════════════╝
 

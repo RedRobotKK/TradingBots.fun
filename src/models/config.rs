@@ -95,9 +95,9 @@ impl Default for TradingConfig {
 /// Capital allocation configuration
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CapitalAllocationConfig {
-    pub drift_scalp_pct: f64,
-    pub drift_swing_pct: f64,
-    pub drift_position_pct: f64,
+    pub tb_scalp_pct: f64,
+    pub tb_swing_pct: f64,
+    pub tb_position_pct: f64,
     pub hyperliquid_hft_pct: f64,
     pub hyperliquid_swing_pct: f64,
     pub reserve_pct: f64,
@@ -106,9 +106,9 @@ pub struct CapitalAllocationConfig {
 impl Default for CapitalAllocationConfig {
     fn default() -> Self {
         Self {
-            drift_scalp_pct: 0.30,
-            drift_swing_pct: 0.25,
-            drift_position_pct: 0.20,
+            tb_scalp_pct: 0.30,
+            tb_swing_pct: 0.25,
+            tb_position_pct: 0.20,
             hyperliquid_hft_pct: 0.15,
             hyperliquid_swing_pct: 0.10,
             reserve_pct: 0.0,  // Calculated from rest
@@ -118,9 +118,9 @@ impl Default for CapitalAllocationConfig {
 
 impl CapitalAllocationConfig {
     pub fn validate(&self) -> crate::utils::Result<()> {
-        let total: f64 = self.drift_scalp_pct
-            + self.drift_swing_pct
-            + self.drift_position_pct
+        let total: f64 = self.tb_scalp_pct
+            + self.tb_swing_pct
+            + self.tb_position_pct
             + self.hyperliquid_hft_pct
             + self.hyperliquid_swing_pct
             + self.reserve_pct;
@@ -176,11 +176,11 @@ mod tests {
         assert!(config.validate().is_ok());
 
         // Invalid: sum > 1.0
-        config.drift_scalp_pct = 0.6;
+        config.tb_scalp_pct = 0.6;
         assert!(config.validate().is_err());
 
         // Valid again
-        config.drift_scalp_pct = 0.30;
+        config.tb_scalp_pct = 0.30;
         assert!(config.validate().is_ok());
     }
 

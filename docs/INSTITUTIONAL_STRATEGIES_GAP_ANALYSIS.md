@@ -1,7 +1,7 @@
 # 🏛️ Institutional Trading Strategies: Gap Analysis
 
 **Date:** February 22, 2026
-**Analysis:** Current RedRobot vs. BlackRock, Renaissance Technologies, Two Sigma, Citadel
+**Analysis:** Current TradingBots.fun vs. BlackRock, Renaissance Technologies, Two Sigma, Citadel
 **Purpose:** Identify which institutional strategies are missing from the 21-strategy system
 
 ---

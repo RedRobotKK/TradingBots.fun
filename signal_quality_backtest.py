@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Signal Quality Backtest — RedRobot HedgeBot
+Signal Quality Backtest — TradingBots.fun
 ============================================
 Tests all 10 bot signals across 8 assets × 2 years of 15-minute data.
 
@@ -70,7 +70,7 @@ BASE_FUTURES = "https://fapi.binance.com"
 def _get_json(url: str, retries: int = 3) -> object:
     for attempt in range(retries):
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "RedRobotBot/1.0"})
+            req = urllib.request.Request(url, headers={"User-Agent": "TradingBots.funBot/1.0"})
             with urllib.request.urlopen(req, timeout=20) as r:
                 return json.loads(r.read())
         except Exception as e:
@@ -745,7 +745,7 @@ def build_html(all_results: dict, meta: dict) -> str:
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>RedRobot Signal Quality Backtest</title>
+<title>TradingBots.fun Signal Quality Backtest</title>
 <style>
   :root { --bg: #0f172a; --card: #1e293b; --border: #334155; --text: #e2e8f0; --muted: #94a3b8; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -780,7 +780,7 @@ def build_html(all_results: dict, meta: dict) -> str:
 
     ts = datetime.fromtimestamp(meta["run_time"], tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     html += f"""
-<h1>📊 RedRobot Signal Quality Backtest</h1>
+<h1>📊 TradingBots.fun Signal Quality Backtest</h1>
 <div class="meta">
   Run: {ts} &nbsp;|&nbsp;
   Symbols: {meta['symbols']} &nbsp;|&nbsp;
@@ -940,7 +940,7 @@ def build_html(all_results: dict, meta: dict) -> str:
     # ── Footer ─────────────────────────────────────────────────────────────────
     html += f"""
 <div class="meta" style="margin-top:32px; text-align:center;">
-  RedRobot HedgeBot • Signal Quality Backtest • Generated {ts}
+  TradingBots.fun • Signal Quality Backtest • Generated {ts}
 </div>
 </body></html>
 """
@@ -959,7 +959,7 @@ def main():
     run_time      = time.time()
 
     print(f"\n{'='*60}")
-    print(f"  RedRobot Signal Quality Backtest")
+    print(f"  TradingBots.fun Signal Quality Backtest")
     print(f"  Symbols: {', '.join(SYMBOLS)}")
     print(f"  Interval: {INTERVAL}  |  Lookback: {YEARS} year(s)")
     print(f"{'='*60}\n")

@@ -1,4 +1,4 @@
-# 🚀 Deploy RedRobot-HedgeBot to GitHub
+# 🚀 Deploy tradingbots-fun to GitHub
 
 Your code is ready to push! Follow these steps:
 
@@ -6,23 +6,23 @@ Your code is ready to push! Follow these steps:
 
 1. Go to https://github.com/new
 2. Fill in repository details:
-   - **Repository name:** `RedRobot-HedgeBot`
+   - **Repository name:** `tradingbots-fun`
    - **Description:** Autonomous multi-protocol trading system with Hyperliquid + Drift integration
    - **Visibility:** Public (so others can see your code) or Private (for security)
    - **Initialize with:** Leave unchecked (we already have code)
 3. Click **Create repository**
 
-Copy the HTTPS URL shown (looks like: `https://github.com/YOUR_USERNAME/RedRobot-HedgeBot.git`)
+Copy the HTTPS URL shown (looks like: `https://github.com/YOUR_USERNAME/tradingbots-fun.git`)
 
 ## Step 2: Push to GitHub
 
-Run these commands in your RedRobot-HedgeBot directory:
+Run these commands in your tradingbots-fun directory:
 
 ```bash
-cd /sessions/confident-eloquent-wozniak/mnt/Development/RedRobot-HedgeBot
+cd /sessions/confident-eloquent-wozniak/mnt/Development/tradingbots-fun
 
 # Add GitHub remote
-git remote add origin https://github.com/YOUR_USERNAME/RedRobot-HedgeBot.git
+git remote add origin https://github.com/YOUR_USERNAME/tradingbots-fun.git
 
 # Rename branch to main (optional but recommended)
 git branch -M main
@@ -35,7 +35,7 @@ git push -u origin main
 
 ## Step 3: Verify on GitHub
 
-Visit: `https://github.com/YOUR_USERNAME/RedRobot-HedgeBot`
+Visit: `https://github.com/YOUR_USERNAME/tradingbots-fun`
 
 You should see:
 - ✅ All 38 files uploaded
@@ -96,7 +96,7 @@ Add these to your GitHub:
 
 ```bash
 # This would create repo directly
-gh repo create RedRobot-HedgeBot \
+gh repo create tradingbots-fun \
   --source=. \
   --remote=origin \
   --push \
@@ -119,13 +119,13 @@ You may be asked for GitHub credentials. Choose one:
 ### Option B: SSH Key (More Secure)
 1. Generate SSH key: `ssh-keygen -t ed25519`
 2. Add to GitHub: https://github.com/settings/keys
-3. Use SSH URL: `git@github.com:YOUR_USERNAME/RedRobot-HedgeBot.git`
+3. Use SSH URL: `git@github.com:YOUR_USERNAME/tradingbots-fun.git`
 
 ### Option C: GitHub CLI (After Installation)
 ```bash
 # Simplest once installed
 gh auth login
-gh repo create RedRobot-HedgeBot --source=. --push
+gh repo create tradingbots-fun --source=. --push
 ```
 
 ---
@@ -136,7 +136,7 @@ gh repo create RedRobot-HedgeBot --source=. --push
 This means the remote is already set. Try:
 ```bash
 git remote remove origin
-git remote add origin https://github.com/YOUR_USERNAME/RedRobot-HedgeBot.git
+git remote add origin https://github.com/YOUR_USERNAME/tradingbots-fun.git
 git push -u origin main
 ```
 
@@ -163,7 +163,7 @@ git push -u origin main -f
 
 Once pushed to GitHub:
 
-1. **Share the link:** `https://github.com/YOUR_USERNAME/RedRobot-HedgeBot`
+1. **Share the link:** `https://github.com/YOUR_USERNAME/tradingbots-fun`
 2. **Start trading:** Follow SMALL_CAPITAL_DEPLOYMENT.md to deploy locally
 3. **Monitor GitHub:** Push updates as you optimize the bot
 4. **Track issues:** Use GitHub Issues to manage improvements
@@ -174,8 +174,8 @@ Once pushed to GitHub:
 
 ```bash
 # One-liner to push everything:
-cd /sessions/confident-eloquent-wozniak/mnt/Development/RedRobot-HedgeBot && \
-git remote add origin https://github.com/YOUR_USERNAME/RedRobot-HedgeBot.git && \
+cd /sessions/confident-eloquent-wozniak/mnt/Development/tradingbots-fun && \
+git remote add origin https://github.com/YOUR_USERNAME/tradingbots-fun.git && \
 git branch -M main && \
 git push -u origin main
 ```

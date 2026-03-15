@@ -1,4 +1,4 @@
-# 🎯 RedRobot HedgeBot - Production Ready for Deployment
+# 🎯 TradingBots.fun - Production Ready for Deployment
 
 **Status:** ✅ PRODUCTION READY
 **Code:** 59 files, 2000+ LOC
@@ -56,10 +56,10 @@ A **professional institutional-grade trading bot** that:
 
 ### Step 1: Prepare GitHub (5 minutes)
 ```bash
-cd ~/Development/RedRobot-HedgeBot
+cd ~/Development/tradingbots-fun
 git add -A
 git commit -m "Production ready"
-git remote add origin https://github.com/YOUR_USERNAME/RedRobot-HedgeBot.git
+git remote add origin https://github.com/YOUR_USERNAME/tradingbots-fun.git
 git push -u origin main
 ```
 
@@ -78,8 +78,8 @@ apt update && apt upgrade -y
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source ~/.cargo/env
 cd ~
-git clone https://github.com/YOUR_USERNAME/RedRobot-HedgeBot.git
-cd RedRobot-HedgeBot
+git clone https://github.com/YOUR_USERNAME/tradingbots-fun.git
+cd tradingbots-fun
 
 # Configure
 cat > .env << 'CONF'
@@ -92,7 +92,7 @@ CONF
 # Build & run
 cargo build --release
 screen -S trading
-./target/release/redrobot-hedgebot --config deployment.toml
+./target/release/tradingbots-fun --config deployment.toml
 ```
 
 That's it! 🚀
@@ -126,10 +126,10 @@ That's it! 🚀
 ### Morning
 ```bash
 # Check if running
-ps aux | grep redrobot-hedgebot
+ps aux | grep tradingbots-fun
 
 # Check logs
-tail -f /var/log/redrobot/trading.log
+tail -f /var/log/tradingbots/trading.log
 ```
 
 ### If Something Goes Wrong
@@ -204,7 +204,7 @@ Hyperliquid     ↓          Entry/Exit
 | "Permission denied" | Run: chmod +x start-trading.sh |
 | "Out of memory" | Upgrade droplet from $6 to $12/month |
 | "Won't compile" | Run: rustup update then rebuild |
-| "System crashed" | Check logs: tail -f /var/log/redrobot/trading.log |
+| "System crashed" | Check logs: tail -f /var/log/tradingbots/trading.log |
 
 ---
 
@@ -291,7 +291,7 @@ Hyperliquid     ↓          Entry/Exit
 1. DEPLOYMENT_DIGITALOCEAN.md - Step-by-step
 2. QUICK_REFERENCE.md - Handy commands
 3. docs/COMPLETE_IMPLEMENTATION_GUIDE.md - Deep dive
-4. Logs - tail -f /var/log/redrobot/trading.log
+4. Logs - tail -f /var/log/tradingbots/trading.log
 
 ---
 

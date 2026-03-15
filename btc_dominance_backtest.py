@@ -412,7 +412,7 @@ html = f"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>BTC Dominance Backtest — RedRobot</title>
+<title>BTC Dominance Backtest — TradingBots.fun</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
 *{{box-sizing:border-box;margin:0;padding:0}}
@@ -557,7 +557,7 @@ tr:hover td{{background:rgba(255,255,255,.02)}}
 <div class="card">
   <h2>🤖 Bot Integration — Signal Weight Recommendation</h2>
   <div class="insight-box">
-    <strong>How to use this in RedRobot HedgeBot:</strong><br><br>
+    <strong>How to use this in TradingBots.fun:</strong><br><br>
     Add a <code>btc_dominance_weight</code> factor to the signal scoring in <code>decision.rs</code>.
     The weight modulates confidence based on whether BTC's current direction aligns with the proposed trade direction.<br><br>
     • <strong>High dominance + BTC trending up</strong> → add +10–15% to LONG altcoin confidence<br>

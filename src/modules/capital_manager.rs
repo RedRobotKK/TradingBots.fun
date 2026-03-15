@@ -86,11 +86,11 @@ impl CapitalManager {
         let hedge_alloc = 0.10 * (1.0 - momentum_factor); // More in downturns
         let reserve_alloc = 1.0 - scalp_alloc - swing_alloc - position_alloc - hft_alloc - hedge_alloc;
 
-        allocations.insert("drift-scalp".to_string(), scalp_alloc);
-        allocations.insert("drift-swing".to_string(), swing_alloc);
-        allocations.insert("drift-position".to_string(), position_alloc);
+        allocations.insert("tb-scalp".to_string(), scalp_alloc);
+        allocations.insert("tb-swing".to_string(), swing_alloc);
+        allocations.insert("tb-position".to_string(), position_alloc);
         allocations.insert("hyperliquid-hft".to_string(), hft_alloc);
-        allocations.insert("drift-hedge".to_string(), hedge_alloc);
+        allocations.insert("tb-hedge".to_string(), hedge_alloc);
         allocations.insert("reserve".to_string(), reserve_alloc.max(0.0));
 
         Ok(allocations)

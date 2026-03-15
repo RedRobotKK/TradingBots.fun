@@ -1,4 +1,4 @@
-# 🏗️ RedRobot-HedgeBot: Data Feeds & Signal Architecture
+# 🏗️ tradingbots-fun: Data Feeds & Signal Architecture
 
 **Purpose:** Design a production-grade data architecture that avoids RPC polling while providing real-time pricing for autonomous trading
 **Status:** Specification Complete, Ready for Implementation

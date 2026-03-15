@@ -523,7 +523,7 @@ mod tests {
     fn test_multiple_protocols() {
         let mut manager = AccountManager::new();
 
-        let mut drift_scalp = create_test_account("drift-scalp", AccountPurpose::Scalp);
+        let mut drift_scalp = create_test_account("tb-scalp", AccountPurpose::Scalp);
         drift_scalp.protocol = Protocol::Drift;
 
         let mut hpl_scalp = create_test_account("hpl-scalp", AccountPurpose::Scalp);

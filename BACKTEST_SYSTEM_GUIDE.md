@@ -1,4 +1,4 @@
-# 🎯 RedRobot HedgeBot: Full Backtest System
+# 🎯 TradingBots.fun: Full Backtest System
 
 ## Overview
 
@@ -142,7 +142,7 @@ timestamp,open,high,low,close,volume,rsi_14,rsi_7,macd,macd_signal,macd_histogra
 ### 2. **Run Simulation**
 
 ```rust
-use redrobot_hedgebot::{Simulator, strategies::MarketSnapshot};
+use tradingbots_fun::{Simulator, strategies::MarketSnapshot};
 
 fn main() {
     let simulator = Simulator::new(1000.0);  // $1000 starting capital
