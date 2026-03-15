@@ -460,6 +460,18 @@ if $DO_PUSH; then
     echo ""
   fi
 
+  # ── Auto-bump patch version in Cargo.toml ─────────────────────────────────
+  CURRENT_VER=$(grep '^version' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+  MAJOR=$(echo "${CURRENT_VER}" | cut -d. -f1)
+  MINOR=$(echo "${CURRENT_VER}" | cut -d. -f2)
+  PATCH=$(echo "${CURRENT_VER}" | cut -d. -f3)
+  NEXT_PATCH=$((PATCH + 1))
+  NEXT_VER="${MAJOR}.${MINOR}.${NEXT_PATCH}"
+  sed -i.bak "s/^version = \"${CURRENT_VER}\"/version = \"${NEXT_VER}\"/" Cargo.toml && rm -f Cargo.toml.bak
+  git add Cargo.toml
+  git commit -m "chore: bump version ${CURRENT_VER} → ${NEXT_VER}" --no-verify 2>/dev/null || true
+  echo "✓ Version bumped ${CURRENT_VER} → ${NEXT_VER}"
+
   # Update local remote if GitHub renamed the repo
   LOCAL_REMOTE=$(git remote get-url origin 2>/dev/null || true)
   if echo "${LOCAL_REMOTE}" | grep -q "RedRobot-HedgeBot"; then
