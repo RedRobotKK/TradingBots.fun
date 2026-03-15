@@ -635,32 +635,33 @@ async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
         let h       = &s.equity_history;
         let initial = s.initial_capital;
         if h.len() < 2 {
-            // Not enough data yet — show a flat placeholder line at baseline.
-            // NOTE: raw string uses r##"..."## because the hex colour "#484f58"
-            // contains the sequence `"#` which would otherwise close r#"..."#.
-            r##"<svg width="240" height="56" viewBox="0 0 240 56"
-     style="display:block;flex-shrink:0;overflow:hidden;opacity:0.35">
-  <line x1="0" y1="28" x2="240" y2="28"
+            // Not enough data yet — flat placeholder
+            r##"<svg width="320" height="80" viewBox="0 0 320 80"
+     style="display:block;flex-shrink:0;overflow:visible;opacity:0.4">
+  <text x="2" y="10" fill="#484f58" font-size="9" font-family="monospace">PORTFOLIO</text>
+  <line x1="0" y1="46" x2="280" y2="46"
         stroke="#484f58" stroke-width="1.5" stroke-dasharray="4 4"/>
+  <text x="284" y="50" fill="#484f58" font-size="9" font-family="monospace">—</text>
 </svg>"##.to_string()
         } else {
-            let w_px:   f64 = 240.0;
-            let h_px:   f64 = 56.0;
-            let pad:    f64 = 7.0;   // vertical padding so line never clips edges
-            let inner_h     = h_px - 2.0 * pad;
+            let w_px:   f64 = 280.0;   // chart area width (label gutter on right)
+            let h_px:   f64 = 80.0;
+            let pad_t:  f64 = 14.0;    // top padding (for "PORTFOLIO" label)
+            let pad_b:  f64 = 6.0;
+            let inner_h     = h_px - pad_t - pad_b;
 
             // Y-scale anchored to initial_capital so baseline is always visible
             let data_min = h.iter().cloned().fold(f64::INFINITY,     f64::min).min(initial);
             let data_max = h.iter().cloned().fold(f64::NEG_INFINITY, f64::max).max(initial);
             // Symmetric 15 % buffer so the line never presses against the edges
-            let buf   = ((data_max - data_min).max(initial * 0.002)) * 0.15;
+            let buf   = ((data_max - data_min).max(initial * 0.005)) * 0.18;
             let min_v = data_min - buf;
             let max_v = data_max + buf;
             let range = (max_v - min_v).max(0.01);
 
             // Map a $ value to an SVG y coordinate (top = high equity)
             let to_y = |v: f64| -> f64 {
-                h_px - pad - (v - min_v) / range * inner_h
+                h_px - pad_b - (v - min_v) / range * inner_h
             };
 
             let n = h.len() as f64;
@@ -670,36 +671,63 @@ async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
                 format!("{x:.1},{y:.1}")
             }).collect::<Vec<_>>().join(" ");
 
-            let base_y  = to_y(initial);
-            let last_y  = to_y(*h.last().unwrap_or(&initial));
+            let base_y   = to_y(initial);
+            let last_y   = to_y(*h.last().unwrap_or(&initial));
             let last_val = *h.last().unwrap_or(&initial);
+            let max_y    = to_y(data_max);
 
             // Green when above initial capital, red when below
-            let trend_c = if last_val >= initial { "#3fb950" } else { "#f85149" };
+            let trend_c  = if last_val >= initial { "#3fb950" } else { "#f85149" };
 
             // Fill polygon: line path → close back along the baseline
-            // This highlights the profit (above baseline) or loss (below baseline) area
             let fill_pts = format!("{pts} {w_px:.1},{base_y:.1} 0.0,{base_y:.1}");
 
+            // Y-axis tick label values
+            let lbl_cur  = format!("${:.0}", last_val);
+            let lbl_base = format!("${:.0}", initial);
+            let lbl_max  = format!("${:.0}", data_max);
+
+            // Label positions (right gutter starting at x=284)
+            let ly_cur  = last_y.max(pad_t + 4.0).min(h_px - 4.0);
+            let ly_base = base_y.max(pad_t + 4.0).min(h_px - 4.0);
+            let ly_max  = max_y.max(pad_t + 4.0).min(h_px - 4.0);
+
             format!(
-                r#"<svg width="240" height="56" viewBox="0 0 240 56"
-     style="display:block;flex-shrink:0;overflow:hidden">
+                r#"<svg width="320" height="80" viewBox="0 0 320 80"
+     style="display:block;flex-shrink:0;overflow:visible">
+  <!-- Chart label -->
+  <text x="2" y="10" fill="#484f58" font-size="9" font-family="monospace">PORTFOLIO</text>
   <!-- Baseline at initial capital (dashed break-even line) -->
-  <line x1="0" y1="{by:.1}" x2="240" y2="{by:.1}"
-        stroke="{c}" stroke-width="0.8" stroke-dasharray="3 3" stroke-opacity="0.45"/>
+  <line x1="0" y1="{by:.1}" x2="{w:.1}" y2="{by:.1}"
+        stroke="{c}" stroke-width="0.75" stroke-dasharray="3 3" stroke-opacity="0.5"/>
   <!-- Profit / loss fill area -->
-  <polygon points="{fp}" fill="{c}" fill-opacity="0.13"/>
+  <polygon points="{fp}" fill="{c}" fill-opacity="0.12"/>
   <!-- Equity line -->
   <polyline points="{pts}" fill="none" stroke="{c}"
             stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
-  <!-- Current value dot -->
-  <circle cx="240" cy="{ly:.1}" r="3.5" fill="{c}"/>
+  <!-- Current value dot with pulse ring -->
+  <circle cx="{w:.1}" cy="{ly:.1}" r="5" fill="{c}" fill-opacity="0.2"/>
+  <circle cx="{w:.1}" cy="{ly:.1}" r="3" fill="{c}"/>
+  <!-- Y-axis value labels (right gutter) -->
+  <text x="286" y="{lc_y:.1}" fill="{c}" font-size="9" font-family="monospace"
+        font-weight="bold" dominant-baseline="middle">{lc}</text>
+  <text x="286" y="{lb_y:.1}" fill="#484f58" font-size="8" font-family="monospace"
+        dominant-baseline="middle">{lb}</text>
+  <text x="286" y="{lm_y:.1}" fill="#484f58" font-size="8" font-family="monospace"
+        dominant-baseline="middle">{lm}</text>
 </svg>"#,
-                c   = trend_c,
-                by  = base_y,
-                fp  = fill_pts,
-                pts = pts,
-                ly  = last_y,
+                c    = trend_c,
+                w    = w_px,
+                by   = base_y,
+                fp   = fill_pts,
+                pts  = pts,
+                ly   = last_y,
+                lc   = lbl_cur,
+                lb   = lbl_base,
+                lm   = lbl_max,
+                lc_y = ly_cur,
+                lb_y = ly_base,
+                lm_y = ly_max,
             )
         }
     };
@@ -1885,63 +1913,180 @@ async fn login_handler(
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RedRobot · Sign In</title>
+<title>RedRobot HedgeBot · Sign In</title>
 <style>
-  *{{box-sizing:border-box;margin:0;padding:0}}
-  body{{background:#0d1117;color:#c9d1d9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-        min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}}
-  .card{{background:#161b22;border:1px solid #30363d;border-radius:16px;
-         padding:40px 36px;max-width:400px;width:100%;text-align:center}}
-  .logo{{font-weight:800;font-size:1.4rem;color:#e6edf3;letter-spacing:.04em;margin-bottom:8px}}
-  .logo .r{{color:#e6343a}}
-  .logo .b{{color:#3fb950}}
-  .sub{{font-size:.88rem;color:#8b949e;margin-bottom:32px}}
-  .btn{{display:block;width:100%;padding:13px;border-radius:8px;font-size:.95rem;
-        font-weight:600;cursor:pointer;border:none;margin-bottom:12px;transition:.15s}}
-  .btn-primary{{background:#3fb950;color:#0d1117}}
-  .btn-primary:hover{{background:#52c965}}
-  .btn-primary:disabled{{background:#3fb95060;cursor:not-allowed}}
-  .err{{color:#f85149;font-size:.82rem;margin-top:12px;min-height:20px}}
-  .note{{font-size:.75rem;color:#484f58;margin-top:20px;line-height:1.5}}
-  a{{color:#58a6ff}}
-  #status{{color:#8b949e;font-size:.82rem;margin-top:8px;min-height:18px}}
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{background:#0d1117;color:#c9d1d9;
+      font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+      min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;
+      background-image:linear-gradient(rgba(88,166,255,.03) 1px,transparent 1px),
+                       linear-gradient(90deg,rgba(88,166,255,.03) 1px,transparent 1px);
+      background-size:44px 44px}}
+.wrap{{display:flex;max-width:860px;width:100%;border-radius:18px;overflow:hidden;
+       box-shadow:0 24px 80px rgba(0,0,0,.75),0 0 0 1px rgba(88,166,255,.09)}}
+/* ── Left branding panel ── */
+.pl{{background:linear-gradient(155deg,#161b22 0%,#0d1117 55%,#0a0e14 100%);
+     border-right:1px solid #21262d;padding:52px 44px;flex:1;
+     display:flex;flex-direction:column;gap:30px;position:relative;overflow:hidden}}
+.pl::before{{content:'';position:absolute;top:-90px;right:-90px;width:300px;height:300px;
+             background:radial-gradient(circle,rgba(227,52,58,.1) 0%,transparent 68%);
+             pointer-events:none}}
+.pl::after{{content:'';position:absolute;bottom:-60px;left:-60px;width:220px;height:220px;
+            background:radial-gradient(circle,rgba(63,185,80,.07) 0%,transparent 68%);
+            pointer-events:none}}
+.brand{{display:flex;align-items:center;gap:12px}}
+.brand img{{height:42px;width:auto;flex-shrink:0}}
+.brand-text .name{{font-size:1.45rem;font-weight:800;color:#e6edf3;letter-spacing:.02em;line-height:1}}
+.brand-text .name .r{{color:#e6343a}}
+.brand-text .name .g{{color:#3fb950}}
+.brand-text .sub{{font-size:.68rem;color:#484f58;letter-spacing:.6px;text-transform:uppercase;margin-top:3px}}
+.tagline{{font-size:1.65rem;font-weight:700;color:#e6edf3;line-height:1.35;letter-spacing:-.02em}}
+.tagline .acc{{color:#58a6ff}}
+.feats{{display:flex;flex-direction:column;gap:15px}}
+.feat{{display:flex;align-items:flex-start;gap:13px}}
+.feat-ic{{width:34px;height:34px;border-radius:8px;display:flex;align-items:center;
+           justify-content:center;font-size:1rem;flex-shrink:0}}
+.feat-ic.red{{background:rgba(227,52,58,.13)}}
+.feat-ic.grn{{background:rgba(63,185,80,.11)}}
+.feat-ic.blu{{background:rgba(88,166,255,.11)}}
+.feat-t .tt{{font-size:.88rem;font-weight:600;color:#e6edf3;margin-bottom:2px}}
+.feat-t .td{{font-size:.75rem;color:#6e7681;line-height:1.5}}
+.risk-foot{{font-size:.67rem;color:#3d444d;line-height:1.55;
+            border-top:1px solid #21262d;padding-top:14px;margin-top:auto}}
+/* ── Right login panel ── */
+.pr{{background:#0d1117;padding:52px 44px;width:360px;flex-shrink:0;
+     display:flex;flex-direction:column;justify-content:center;gap:22px}}
+.lh{{text-align:center}}
+.lh h2{{font-size:1.2rem;font-weight:700;color:#e6edf3;margin-bottom:5px}}
+.lh p{{font-size:.81rem;color:#6e7681}}
+/* Terms box */
+.tos{{background:rgba(248,81,73,.06);border:1px solid rgba(248,81,73,.22);
+      border-radius:10px;padding:15px;font-size:.76rem;line-height:1.6;color:#8b949e}}
+.tos-hd{{color:#f85149;font-size:.72rem;font-weight:700;letter-spacing:.6px;
+          text-transform:uppercase;display:block;margin-bottom:8px}}
+.tos-lbl{{display:flex;align-items:flex-start;gap:9px;margin-top:11px;cursor:pointer}}
+.tos-lbl input{{margin-top:2px;accent-color:#3fb950;width:13px;height:13px;flex-shrink:0;cursor:pointer}}
+.tos-lbl span{{font-size:.74rem;color:#8b949e}}
+.tos-lbl a{{color:#58a6ff;text-decoration:underline}}
+/* Button */
+.btn{{display:block;width:100%;padding:14px;border-radius:9px;font-size:.94rem;
+      font-weight:700;cursor:pointer;border:none;transition:.15s;letter-spacing:.01em}}
+.btn-p{{background:#3fb950;color:#0d1117}}
+.btn-p:hover:not(:disabled){{background:#52c965}}
+.btn-p:disabled{{background:#3fb95040;color:#3fb95070;cursor:not-allowed}}
+.err{{color:#f85149;font-size:.78rem;min-height:18px;text-align:center}}
+#status{{color:#8b949e;font-size:.78rem;min-height:16px;text-align:center}}
+/* Wallet note */
+.wnote{{display:flex;align-items:center;gap:8px;background:rgba(63,185,80,.06);
+        border:1px solid rgba(63,185,80,.16);border-radius:8px;
+        padding:9px 12px;font-size:.73rem;color:#8b949e}}
+.wnote-dot{{width:6px;height:6px;border-radius:50%;background:#3fb950;
+             flex-shrink:0;box-shadow:0 0 5px #3fb950}}
+@media(max-width:600px){{
+  .pl{{display:none}}
+  .pr{{width:100%;padding:36px 24px}}
+  .wrap{{max-width:380px}}
+}}
 </style>
 </head>
 <body>
-<div class="card">
-  <div class="logo"><span class="r">Red</span><span class="b">Robot</span></div>
-  <div class="sub">Algorithmic trading · Sign in to your account</div>
+<div class="wrap">
+  <!-- Left: branding -->
+  <div class="pl">
+    <div class="brand">
+      <img src="data:image/png;base64,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" height="42" width="auto" alt="RedRobot">
+      <div class="brand-text">
+        <div class="name"><span class="r">Red</span><span class="g">Robot</span> HedgeBot</div>
+        <div class="sub">AI Algorithmic Trading</div>
+      </div>
+    </div>
+    <div class="tagline">Non-custodial trading<br><span class="acc">powered by AI</span></div>
+    <div class="feats">
+      <div class="feat">
+        <div class="feat-ic red">🔐</div>
+        <div class="feat-t">
+          <div class="tt">Non-custodial</div>
+          <div class="td">Your funds stay in your own Hyperliquid wallet. We never hold your assets.</div>
+        </div>
+      </div>
+      <div class="feat">
+        <div class="feat-ic grn">⚡</div>
+        <div class="feat-t">
+          <div class="tt">Live AI execution</div>
+          <div class="td">Autonomous trade management with risk-controlled position sizing and stop-losses.</div>
+        </div>
+      </div>
+      <div class="feat">
+        <div class="feat-ic blu">📊</div>
+        <div class="feat-t">
+          <div class="tt">Full transparency</div>
+          <div class="td">Every trade, signal, and AI reasoning step — visible in your dashboard.</div>
+        </div>
+      </div>
+    </div>
+    <div class="risk-foot">
+      Trading involves substantial risk of loss. Past performance does not guarantee future results.
+      AI-generated signals are not financial advice. Capital is at risk.
+    </div>
+  </div>
 
-  <button id="login-btn" class="btn btn-primary">Sign in with Privy</button>
-  <div id="status"></div>
-  <div id="err" class="err"></div>
+  <!-- Right: login -->
+  <div class="pr">
+    <div class="lh">
+      <h2>Sign in to your account</h2>
+      <p>Connect your wallet to access the dashboard</p>
+    </div>
 
-  <div class="note">
-    By signing in you agree to our terms of service.<br>
-    Your funds stay in your own Hyperliquid wallet at all times.
+    <div class="tos">
+      <span class="tos-hd">⚠ Risk &amp; Liability Notice</span>
+      All trades executed by the AI run in <b style="color:#e6edf3">your own wallet</b>.
+      RedRobot and its operators bear <b style="color:#e6edf3">no liability</b> for trading losses
+      arising from market conditions, AI decisions, or technical failures.
+      <label class="tos-lbl">
+        <input type="checkbox" id="tos-check">
+        <span>
+          I have read and agree to the
+          <a href="/app/onboarding" target="_blank">Terms of Service &amp; Risk Disclosure</a>.
+          I understand all trades are executed at my sole risk and responsibility.
+        </span>
+      </label>
+    </div>
+
+    <div>
+      <button id="login-btn" class="btn btn-p" disabled>Sign in with Privy</button>
+      <div id="status" style="margin-top:8px"></div>
+      <div id="err" class="err" style="margin-top:4px"></div>
+    </div>
+
+    <div class="wnote">
+      <div class="wnote-dot"></div>
+      Your funds remain in your Hyperliquid wallet at all times
+    </div>
   </div>
 </div>
 
 <script type="module">
-// RedRobot — Privy login integration
-// Uses @privy-io/js-sdk-core (framework-agnostic SDK) via esm.sh CDN.
 const PRIVY_APP_ID = '{app_id}';
 
-function status(msg) {{
-  document.getElementById('status').textContent = msg;
-}}
-function err(msg) {{
-  document.getElementById('err').textContent = msg;
-}}
+const tosCheck  = document.getElementById('tos-check');
+const loginBtn  = document.getElementById('login-btn');
+
+// Only enable sign-in once user has accepted ToS
+tosCheck.addEventListener('change', () => {{
+  if (!loginBtn.dataset.loading) loginBtn.disabled = !tosCheck.checked;
+}});
+
+function setStatus(msg) {{ document.getElementById('status').textContent = msg; }}
+function setErr(msg)    {{ document.getElementById('err').textContent    = msg; }}
 function setLoading(yes) {{
-  const btn = document.getElementById('login-btn');
-  btn.disabled = yes;
-  btn.textContent = yes ? 'Signing in…' : 'Sign in with Privy';
+  loginBtn.dataset.loading = yes ? '1' : '';
+  loginBtn.disabled = yes;
+  loginBtn.textContent = yes ? 'Signing in…' : 'Sign in with Privy';
 }}
 
 async function exchangeToken(privyToken) {{
   const res = await fetch('/auth/session', {{
-    method:  'POST',
+    method: 'POST',
     headers: {{ 'Content-Type': 'application/json' }},
     body:    JSON.stringify({{ token: privyToken }}),
   }});
@@ -1949,67 +2094,49 @@ async function exchangeToken(privyToken) {{
   return res.json();
 }}
 
-// Dynamically load Privy SDK from CDN.
-// Supports both the older class-based API (new PrivyClient(...))
-// and the newer factory-based API (createPrivyClient({{appId}})).
 import('https://esm.sh/@privy-io/js-sdk-core')
   .then(async (mod) => {{
-    // Detect which API variant is available in this SDK version.
     let privy;
     if (typeof mod.PrivyClient === 'function') {{
-      // Older class-based API
-      try {{
-        privy = new mod.PrivyClient(PRIVY_APP_ID, {{ storage: window.localStorage }});
-      }} catch (_) {{
-        // Some builds export it as a factory rather than a class
-        privy = mod.PrivyClient(PRIVY_APP_ID, {{ storage: window.localStorage }});
-      }}
+      try {{ privy = new mod.PrivyClient(PRIVY_APP_ID, {{ storage: window.localStorage }}); }}
+      catch (_) {{ privy = mod.PrivyClient(PRIVY_APP_ID, {{ storage: window.localStorage }}); }}
     }} else if (typeof mod.createPrivyClient === 'function') {{
-      // Newer factory API
       privy = mod.createPrivyClient({{ appId: PRIVY_APP_ID }});
     }} else if (mod.default && typeof mod.default === 'function') {{
-      try {{
-        privy = new mod.default(PRIVY_APP_ID, {{ storage: window.localStorage }});
-      }} catch (_) {{
-        privy = mod.default({{ appId: PRIVY_APP_ID }});
-      }}
+      try {{ privy = new mod.default(PRIVY_APP_ID, {{ storage: window.localStorage }}); }}
+      catch (_) {{ privy = mod.default({{ appId: PRIVY_APP_ID }}); }}
     }} else {{
-      const available = Object.keys(mod).join(', ') || '(none)';
-      throw new Error('Unrecognised Privy SDK exports: ' + available);
+      throw new Error('Unrecognised Privy SDK: ' + Object.keys(mod).join(', '));
     }}
 
-    // If already authenticated, skip the login step
+    // Auto-login if already authenticated
     privy.getAccessToken().then(async (token) => {{
       if (token) {{
-        status('Already signed in — loading your account…');
-        setLoading(true);
-        try {{
-          await exchangeToken(token);
-          window.location.href = '/app';
-        }} catch(e) {{
-          status(''); setLoading(false);
-          err('Session setup failed. Please try signing in again.');
-        }}
+        setStatus('Already signed in — loading…'); setLoading(true);
+        try {{ await exchangeToken(token); window.location.href = '/app'; }}
+        catch(e) {{ setStatus(''); setLoading(false); setErr('Session setup failed. Please sign in again.'); }}
       }}
     }}).catch(() => {{}});
 
-    document.getElementById('login-btn').addEventListener('click', async () => {{
-      err(''); setLoading(true); status('Opening Privy…');
+    loginBtn.addEventListener('click', async () => {{
+      if (!tosCheck.checked) return;
+      setErr(''); setLoading(true); setStatus('Opening Privy…');
       try {{
         await privy.login();
-        status('Authenticated — setting up your account…');
+        setStatus('Authenticated — setting up your account…');
         const token = await privy.getAccessToken();
         await exchangeToken(token);
         window.location.href = '/app';
       }} catch(e) {{
-        setLoading(false); status('');
-        err(e.message || 'Login failed. Please try again.');
+        setLoading(false); setStatus('');
+        setErr(e.message || 'Login failed. Please try again.');
+        loginBtn.disabled = !tosCheck.checked;
       }}
     }});
   }})
   .catch((e) => {{
-    err('Could not load authentication SDK: ' + e.message);
-    setLoading(false);
+    setErr('Could not load authentication SDK: ' + e.message);
+    loginBtn.disabled = !tosCheck.checked;
   }});
 </script>
 </body></html>"#, app_id = app_id)
