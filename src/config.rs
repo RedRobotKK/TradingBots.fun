@@ -28,6 +28,17 @@ pub struct Config {
     pub lunarcrush_api_key: String,
     pub anthropic_api_key: Option<String>,
 
+    // Hyperliquid wallet — required for testnet/mainnet
+    /// Ethereum-style wallet address (0x…) — used for clearinghouseState queries
+    /// and as the signer identity for all order submissions.
+    pub hyperliquid_wallet_address: Option<String>,
+
+    // Revenue — builder code embedded in every HL order
+    /// Hyperliquid builder address (0x…).  When set, every order routed through
+    /// this bot embeds the builder code so the platform earns the builder fee.
+    /// Leave unset in paper mode; set on testnet to validate the code path.
+    pub builder_code: Option<String>,
+
     // Database – optional
     pub database_url: String,
 
@@ -40,7 +51,7 @@ pub struct Config {
 
 impl Config {
     pub fn from_env() -> Result<Self> {
-        dotenv::dotenv().ok();
+        dotenvy::dotenv().ok();
 
         let mode_str = env::var("MODE").unwrap_or_else(|_| "paper".to_string());
         let mode = match mode_str.to_lowercase().as_str() {
@@ -75,12 +86,14 @@ impl Config {
             max_leverage: 10.0,
             daily_loss_limit: 50.0,
             min_health_factor: 2.0,
-            binance_api_key:      env::var("BINANCE_API_KEY").ok(),
-            hyperliquid_key:      env::var("HYPERLIQUID_KEY").ok(),
-            hyperliquid_secret:   env::var("HYPERLIQUID_SECRET").ok(),
-            lunarcrush_api_key:   env::var("LUNARCRUSH_API_KEY")
+            binance_api_key:            env::var("BINANCE_API_KEY").ok(),
+            hyperliquid_key:            env::var("HYPERLIQUID_KEY").ok(),
+            hyperliquid_secret:         env::var("HYPERLIQUID_SECRET").ok(),
+            hyperliquid_wallet_address: env::var("HYPERLIQUID_WALLET_ADDRESS").ok(),
+            builder_code:               env::var("BUILDER_CODE").ok(),
+            lunarcrush_api_key:         env::var("LUNARCRUSH_API_KEY")
                 .unwrap_or_else(|_| "77c4fcm050bnxe49qo1h2n252umls0rrtkevh5uni".to_string()),
-            anthropic_api_key:    env::var("ANTHROPIC_API_KEY").ok(),
+            anthropic_api_key:          env::var("ANTHROPIC_API_KEY").ok(),
             database_url: env::var("DATABASE_URL")
                 .unwrap_or_else(|_| "sqlite:./redrobot.db".to_string()),
             max_concurrent_trades: 3,

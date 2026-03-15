@@ -44,6 +44,7 @@ mod decision;
 mod db;
 mod learner;
 mod metrics;
+mod persistence;
 mod sentiment;
 mod web_dashboard;
 mod candlestick_patterns;
@@ -194,6 +195,18 @@ async fn main() -> Result<()> {
         ..BotState::default()
     }));
 
+    // ── Restore persisted state (positions, P&L, metrics, equity window) ──
+    if let Some(snapshot) = persistence::PersistedState::load() {
+        snapshot.apply_to(&mut *bot_state.write().await);
+        // Always keep initial_capital from current config (operator may change it)
+        bot_state.write().await.initial_capital = config.initial_capital;
+        info!("✓ State restored: {} open positions · {} closed trades · capital=${:.2}",
+            bot_state.read().await.positions.len(),
+            bot_state.read().await.closed_trades.len(),
+            bot_state.read().await.capital,
+        );
+    }
+
     // Dashboard
     {
         let ds = bot_state.clone();
@@ -204,13 +217,16 @@ async fn main() -> Result<()> {
         });
     }
 
-    // Ctrl-C handler
+    // Ctrl-C handler — saves state before exiting
     let running = Arc::new(RwLock::new(true));
     {
         let r = running.clone();
+        let bs_shutdown = bot_state.clone();
         tokio::spawn(async move {
             let _ = tokio::signal::ctrl_c().await;
-            info!("Shutdown signal");
+            info!("Shutdown signal — saving state…");
+            persistence::save_snapshot(&bs_shutdown).await;
+            info!("💾 State saved on shutdown");
             *r.write().await = false;
         });
     }
@@ -248,6 +264,11 @@ async fn main() -> Result<()> {
                         &trade_logger).await
         {
             Ok(_) => {
+                // Persist state every N cycles (cheap; atomic rename)
+                let cycle_n = bot_state.read().await.cycle_count;
+                if cycle_n % persistence::SAVE_EVERY_N_CYCLES == 0 {
+                    persistence::save_snapshot(&bot_state).await;
+                }
                 set_status(&bot_state, "⏳ Waiting for next cycle (30s)…").await;
                 tokio::time::sleep(std::time::Duration::from_secs(30)).await;
             }
