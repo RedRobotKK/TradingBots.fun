@@ -1,0 +1,105 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-03-15T07:02:02Z",
+    "commit": "ed89430",
+    "commit_full": "ed89430e7f807d9221cd72303c10eb9dde01b182",
+    "commit_message": "fix: sqlx full-path after install + StartLimitIntervalSec in [Unit]",
+    "branch": "master",
+    "overall_status": "FAILED",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
+    "cargo": "cargo 1.93.1 (083ac5135 2025-12-15)",
+    "os_kernel": "6.8.0-101-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 15,
+      "total_passed": 0,
+      "total_failed": 0,
+      "total_ignored": 0,
+      "failures": []
+    },
+    "clippy": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 11,
+      "error_count": 5,
+      "errors": [
+        {
+          "code": "E0308",
+          "message": "mismatched types",
+          "file": "src/db.rs",
+          "line": 191,
+          "col": 13
+        },
+        {
+          "code": "E0308",
+          "message": "mismatched types",
+          "file": "src/db.rs",
+          "line": 264,
+          "col": 13
+        },
+        {
+          "code": "E0308",
+          "message": "mismatched types",
+          "file": "src/db.rs",
+          "line": 432,
+          "col": 13
+        },
+        {
+          "code": "E",
+          "message": "unused variable: `db`",
+          "file": "src/main.rs",
+          "line": 967,
+          "col": 5
+        },
+        {
+          "code": "E",
+          "message": "could not compile `redrobot-hedgebot` (bin \"redrobot-hedgebot\" test) due to 4 previous errors"
+        }
+      ]
+    },
+    "audit": {
+      "status": "ADVISORY",
+      "exit_code": 1,
+      "duration_seconds": 2,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2023-0071",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2023-0071",
+          "severity": "5.9 (medium)",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "hedgebot",
+    "status": "active",
+    "active_since": "Sun 2026-03-15 07:02:04 UTC",
+    "recent_logs": [
+      "Mar 15 07:02:04 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: hedgebot.service: Deactivated successfully.",
+      "Mar 15 07:02:04 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Stopped hedgebot.service - RedRobot HedgeBot.",
+      "Mar 15 07:02:04 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: hedgebot.service: Consumed 1.112s CPU time, 10.6M memory peak, 0B memory swap peak.",
+      "Mar 15 07:02:04 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Starting hedgebot.service - RedRobot HedgeBot...",
+      "Mar 15 07:02:04 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Started hedgebot.service - RedRobot HedgeBot."
+    ]
+  }
+}
