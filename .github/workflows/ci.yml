@@ -157,7 +157,7 @@ jobs:
           | 🧪 | `cargo test` | {badge(t.get('status','?'))} | {t.get('total_passed',0)} passed · {t.get('total_failed',0)} failed · {t.get('duration_seconds',0)}s |
           | 🔍 | `cargo clippy` | {badge(c.get('status','?'))} | {c.get('error_count',0)} errors · {c.get('duration_seconds',0)}s |
           | 🔒 | `cargo audit` | {badge(a.get('status','?'))} | {a.get('vulnerability_count',0)} vulns · {a.get('duration_seconds',0)}s |
-          | 💚 | Service | {'✅ ' if svc.get('status')=='active' else '❌ '}{svc.get('status','?')} | hedgebot |
+          | 💚 | Service | {'✅ ' if svc.get('status')=='active' else '❌ '}{svc.get('status','?')} | tradingbots |
 
           **Commit:** `{meta.get('commit','?')}` — {meta.get('commit_message','')[:80]}
           **Environment:** {env.get('rustc','?')}

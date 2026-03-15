@@ -1,4 +1,4 @@
-//! RedRobot HedgeBot – Autonomous Cryptocurrency Trading System
+//! TradingBots.fun – Autonomous Cryptocurrency Trading System
 //!
 //! Professional quant trade management:
 //!   • Kelly Criterion position sizing (half-Kelly, confidence-scaled)
@@ -120,7 +120,7 @@ fn classify_cycle_error(err: &str) -> (u64, String) {
         format!(
             "⚠ Unexpected error — the bot will retry in 10 s. \
              If this keeps happening, restart the service with: \
-             `sudo systemctl restart redrobot-hedgebot`\n\
+             `sudo systemctl restart tradingbots-fun`\n\
              Detail: {}",
             err
         ),
@@ -161,7 +161,7 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    info!("🤖 RedRobot HedgeBot Starting — Professional Quant Mode");
+    info!("🤖 TradingBots.fun Starting — Professional Quant Mode");
 
     let config = config::Config::from_env()?;
     info!("✓ Config: mode={:?}  capital=${:.0}  paper={}", config.mode, config.initial_capital, config.paper_trading);
@@ -190,7 +190,7 @@ async fn main() -> Result<()> {
             }
             Err(e) => {
                 warn!("⚠ PostgreSQL unavailable — running without persistence: {e}");
-                warn!("  Set DATABASE_URL=postgresql://redrobot:<pass>@localhost/redrobot to enable");
+                warn!("  Set DATABASE_URL=postgresql://tradingbots:<pass>@localhost/tradingbots to enable");
                 None
             }
         }

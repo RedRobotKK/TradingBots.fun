@@ -112,7 +112,7 @@ def main():
                 "clippy": {"status":"ERROR","exit_code":-1,"duration_seconds":0,"error_count":0,"errors":[]},
                 "audit":  {"status":"ERROR","exit_code":-1,"duration_seconds":0,"vulnerability_count":0,"vulnerabilities":[]}
             },
-            "service": {"name":"hedgebot","status":"unknown","active_since":"","recent_logs":[]},
+            "service": {"name":"tradingbots","status":"unknown","active_since":"","recent_logs":[]},
             "raw_output_tail": raw[-3000:]
         }
         open(output_path, 'w').write(json.dumps(doc, indent=2))
@@ -178,7 +178,7 @@ def main():
             }
         },
         "service": {
-            "name":         "hedgebot",
+            "name":         "tradingbots",
             "status":       svc_status,
             "active_since": svc_since,
             "recent_logs":  svc_logs

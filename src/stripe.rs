@@ -216,7 +216,7 @@ pub async fn success_handler(
     Html(format!(r#"<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RedRobot · Welcome to Pro</title>
+<title>TradingBots.fun · Welcome to Pro</title>
 <style>
   *{{box-sizing:border-box;margin:0;padding:0}}
   body{{background:#0d1117;color:#c9d1d9;font-family:-apple-system,sans-serif;

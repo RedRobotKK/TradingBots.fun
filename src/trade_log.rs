@@ -17,7 +17,7 @@
 //! # Log directory
 //!
 //! Logs are written to `./logs/` relative to the binary's working directory.
-//! On the VPS this is `/root/RedRobot-HedgeBot/logs/`.
+//! On the VPS this is `/root/tradingbots-fun/logs/`.
 //!
 //! # Event types
 //!

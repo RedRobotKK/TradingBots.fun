@@ -203,7 +203,7 @@ pub async fn ad_impression(
 ///      `data-ad-network` and `data-ad-cpm` attributes.
 pub fn client_tracking_script() -> &'static str {
     r#"<script>
-// ── RedRobot funnel tracking (first-party, no cookies sold to third parties) ──
+// ── TradingBots.fun funnel tracking (first-party, no cookies sold to third parties) ──
 (function() {
   // Initialise or read the anonymous visitor ID (uuid4 in localStorage)
   let aid = localStorage.getItem('rr_anon_id');

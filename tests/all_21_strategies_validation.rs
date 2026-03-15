@@ -7,7 +7,7 @@
 
 #[cfg(test)]
 mod tests {
-    use redrobot_hedgebot::strategies::*;
+    use tradingbots_fun::strategies::*;
 
     /// Create a realistic market snapshot for strategy testing
     fn create_test_snapshot() -> MarketSnapshot {

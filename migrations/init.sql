@@ -1,4 +1,4 @@
--- RedRobot Trading System Database Schema
+-- TradingBots.fun Trading System Database Schema
 
 CREATE TABLE IF NOT EXISTS trades (
     id BIGSERIAL PRIMARY KEY,

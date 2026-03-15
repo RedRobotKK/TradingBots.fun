@@ -564,7 +564,7 @@ pub async fn analyse_log_file(
 
     // Write markdown report
     let report = format!(
-        "# RedRobot HedgeBot — Daily Trading Analysis\n\
+        "# TradingBots.fun — Daily Trading Analysis\n\
          **Date:** {}\n\
          **Generated:** {}\n\
          **Log events:** {}\n\n\

@@ -3,7 +3,7 @@
 # Each section is delimited by === markers so parse_ci.py can extract them unambiguously.
 set -uo pipefail
 
-cd /RedRobot-HedgeBot
+cd /tradingbots-fun
 export PATH="$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 source "$HOME/.cargo/env" 2>/dev/null || true
 swapon /swapfile 2>/dev/null || true
@@ -74,9 +74,9 @@ echo "=== STEP audit exit=${AUDIT_EXIT} duration=$((A_END - A_START))s ==="
 # ── Service health ─────────────────────────────────────────────────────────────
 echo ""
 echo "=== STEP service ==="
-systemctl is-active hedgebot 2>/dev/null || echo "unknown"
-systemctl show hedgebot --property=ActiveEnterTimestamp --value 2>/dev/null || echo ""
-journalctl -u hedgebot -n 5 --no-pager --output=short 2>/dev/null || echo "(no journal)"
+systemctl is-active tradingbots 2>/dev/null || echo "unknown"
+systemctl show tradingbots --property=ActiveEnterTimestamp --value 2>/dev/null || echo ""
+journalctl -u tradingbots -n 5 --no-pager --output=short 2>/dev/null || echo "(no journal)"
 echo "=== STEP service ==="
 
 echo ""

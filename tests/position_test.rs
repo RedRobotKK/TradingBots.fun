@@ -10,8 +10,8 @@
 ///
 /// These tests target the shared library crate (lib.rs) and the types
 /// exported from fee_calculator and position_manager modules.
-use redrobot_hedgebot::fee_calculator::{FeeCalculator, FeeStructure};
-use redrobot_hedgebot::position_manager::{AggregatePosition, DCARules, PositionEntry};
+use tradingbots_fun::fee_calculator::{FeeCalculator, FeeStructure};
+use tradingbots_fun::position_manager::{AggregatePosition, DCARules, PositionEntry};
 
 // ── Risk constant sanity checks ───────────────────────────────────────────────
 

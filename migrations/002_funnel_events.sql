@@ -1,5 +1,5 @@
 -- ══════════════════════════════════════════════════════════════════════════════
--- RedRobot HedgeBot — Migration 002: conversion funnel + ad impression tracking
+-- TradingBots.fun — Migration 002: conversion funnel + ad impression tracking
 --
 -- Purpose:
 --   Track every meaningful step from anonymous landing-page visit → trial

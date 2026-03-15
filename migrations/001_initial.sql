@@ -1,5 +1,5 @@
 -- ══════════════════════════════════════════════════════════════════════════════
--- RedRobot HedgeBot — PostgreSQL schema
+-- TradingBots.fun — PostgreSQL schema
 -- Migration 001: initial tables
 --
 -- Design principles:

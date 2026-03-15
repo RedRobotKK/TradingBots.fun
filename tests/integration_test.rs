@@ -1,5 +1,5 @@
 /// Integration tests for the trading system
-use redrobot_hedgebot::*;
+use tradingbots_fun::*;
 
 #[test]
 fn test_complete_account_lifecycle() {

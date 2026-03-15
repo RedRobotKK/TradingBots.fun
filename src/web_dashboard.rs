@@ -749,7 +749,7 @@ async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
 <html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
-<title>RedRobot HedgeBot</title>
+<title>TradingBots.fun</title>
 <meta http-equiv="refresh" content="35">
 <style>
 *{{box-sizing:border-box;margin:0;padding:0}}
@@ -916,9 +916,9 @@ tr:hover td{{background:rgba(255,255,255,.025)}}
 <div class="header">
   <h1>
     <img src="data:image/png;base64,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"
-         height="28" width="auto" alt="RedRobot"
+         height="28" width="auto" alt="TradingBots.fun"
          style="vertical-align:middle;margin-right:7px">
-    <span class="live-ring"></span> RedRobot HedgeBot
+    <span class="live-ring"></span> TradingBots<span style="color:#3fb950">.fun</span>
   </h1>
   <div class="header-right">
     <span class="ts">⟳ <span id="cntdn">30s</span> &nbsp;·&nbsp; {last_update}</span>
@@ -1339,7 +1339,7 @@ fn consumer_shell_open(title: &str, active: &str) -> String {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RedRobot · {title}</title>
+<title>TradingBots.fun · {title}</title>
 <style>
   *{{box-sizing:border-box;margin:0;padding:0}}
   body{{background:#0d1117;color:#c9d1d9;
@@ -1409,8 +1409,8 @@ fn consumer_shell_close() -> &'static str {
     r#"</div>
 <footer style="text-align:center;padding:32px 16px 24px;font-size:.72rem;color:#484f58;
                border-top:1px solid #21262d;margin-top:24px">
-  &copy; 2026 Red Robot K.K. &nbsp;&middot;&nbsp;
-  All rights reserved. &nbsp;&middot;&nbsp;
+  &copy; 2026 TradingBots Ltd. &nbsp;&middot;&nbsp;
+  <a href="https://tradingbots.fun" style="color:#484f58;text-decoration:none">tradingbots.fun</a> &nbsp;&middot;&nbsp;
   <a href="/app/onboarding" style="color:#484f58;text-decoration:none">Terms &amp; Risk Disclosure</a>
 </footer>
 </body></html>"#
@@ -1461,7 +1461,7 @@ async fn consumer_app_handler(
     <b>fee discount</b> on every trade.<br><br>
     <a class="btn btn-blue" href="https://app.hyperliquid.xyz/join/{code}"
        target="_blank" style="display:inline-block;margin-top:4px">
-       Create HL Account → redrobot
+       Create HL Account → tradingbots
     </a><br>
     <span class="note">Referral code: <b style="color:#e6edf3">{code}</b> · After creating your account,
     fund it with USDC and share your wallet address with us to get started.</span>
@@ -1829,7 +1829,7 @@ async fn consumer_tax_csv_handler(
         ConsumerStateResult::Ok { .. }           => {},
     }
     let (csv, _) = crate::ledger::read_all();
-    let filename  = format!("redrobot_trades_{}.csv",
+    let filename  = format!("tradingbots_trades_{}.csv",
         chrono::Utc::now().format("%Y%m%d"));
     (
         [
@@ -2006,7 +2006,7 @@ async fn login_handler(
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RedRobot HedgeBot · Sign In</title>
+<title>TradingBots.fun · Sign In</title>
 <style>
 *{{box-sizing:border-box;margin:0;padding:0}}
 body{{background:#0d1117;color:#c9d1d9;
@@ -2087,9 +2087,9 @@ body{{background:#0d1117;color:#c9d1d9;
   <!-- Left: branding -->
   <div class="pl">
     <div class="brand">
-      <img src="data:image/png;base64,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" height="42" width="auto" alt="RedRobot">
+      <img src="data:image/png;base64,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" height="42" width="auto" alt="TradingBots.fun">
       <div class="brand-text">
-        <div class="name"><span class="r">Red</span><span class="g">Robot</span> HedgeBot</div>
+        <div class="name">TradingBots<span style="color:#3fb950">.fun</span></div>
         <div class="sub">AI Algorithmic Trading</div>
       </div>
     </div>
@@ -2133,7 +2133,7 @@ body{{background:#0d1117;color:#c9d1d9;
     <div class="tos">
       <span class="tos-hd">⚠ Risk &amp; Liability Notice</span>
       All trades executed by the AI run in <b style="color:#e6edf3">your own wallet</b>.
-      RedRobot and its operators bear <b style="color:#e6edf3">no liability</b> for trading losses
+      TradingBots.fun and its operators bear <b style="color:#e6edf3">no liability</b> for trading losses
       arising from market conditions, AI decisions, or technical failures.
       <label class="tos-lbl">
         <input type="checkbox" id="tos-check">
@@ -2238,7 +2238,7 @@ import('https://esm.sh/@privy-io/js-sdk-core')
         r#"<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RedRobot · Login</title>
+<title>TradingBots.fun · Login</title>
 <style>
   body{background:#0d1117;color:#c9d1d9;font-family:-apple-system,sans-serif;
        min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
@@ -2315,7 +2315,7 @@ async fn onboarding_handler(
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RedRobot · Terms & Risk Disclosure</title>
+<title>TradingBots.fun · Terms & Risk Disclosure</title>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
   body{background:#0d1117;color:#c9d1d9;
@@ -2349,7 +2349,7 @@ async fn onboarding_handler(
 </head>
 <body>
 <div class="wrap">
-<p class="logo"><span class="r">Red</span><span class="b">Robot</span></p>
+<p class="logo">TradingBots<span class="b">.fun</span></p>
 <h1>Terms &amp; Risk Disclosure</h1>
 <p class="sub">Please read and accept these terms before accessing the trading platform.</p>
 
@@ -2364,7 +2364,7 @@ async fn onboarding_handler(
 
 <div class="section">
   <h2>Not Investment Advice</h2>
-  <p>RedRobot is an <strong>automated trading tool</strong>, not a licensed financial advisor,
+  <p>TradingBots.fun is an <strong>automated trading tool</strong>, not a licensed financial advisor,
      broker, or investment manager. Nothing displayed on this platform constitutes investment
      advice, a solicitation to trade, or a recommendation to buy or sell any asset.</p>
   <p>All trading decisions are made by the algorithmic system. You are solely responsible
@@ -2374,7 +2374,7 @@ async fn onboarding_handler(
 <div class="section">
   <h2>Self-Custody &amp; Fund Safety</h2>
   <p>Your funds remain in <strong>your Hyperliquid account at all times</strong>.
-     RedRobot never holds, custodies, or has direct access to withdraw your funds.
+     TradingBots.fun never holds, custodies, or has direct access to withdraw your funds.
      The platform holds an API key with trading permissions only — not withdrawal access.</p>
   <p>You retain full custody and can withdraw your funds directly from
      <a href="https://app.hyperliquid.xyz" target="_blank" style="color:#58a6ff">
@@ -2383,7 +2383,7 @@ async fn onboarding_handler(
 
 <div class="section">
   <h2>Fees &amp; Revenue Disclosure</h2>
-  <p>RedRobot earns revenue through the following mechanisms:</p>
+  <p>TradingBots.fun earns revenue through the following mechanisms:</p>
   <p>• <strong>Subscription:</strong> $19.99/month for the Pro plan (live trading).<br>
      • <strong>Builder fee:</strong> A small fee (approximately 0.01–0.03% per fill) is
        embedded in every order and credited to the platform's Hyperliquid builder address.
@@ -2405,7 +2405,7 @@ async fn onboarding_handler(
 
 <div class="section">
   <h2>Platform Availability &amp; Liability</h2>
-  <p>RedRobot is provided <strong>"as is"</strong> without warranty of any kind. The
+  <p>TradingBots.fun is provided <strong>"as is"</strong> without warranty of any kind. The
      platform may experience downtime, connectivity issues, or bugs that cause trading
      to be delayed, skipped, or executed at unfavourable prices. The operator accepts
      no liability for losses arising from system failures, network outages, exchange
@@ -2747,7 +2747,7 @@ fn www_authenticate_response() -> axum::response::Response {
     use axum::response::IntoResponse;
     axum::response::Response::builder()
         .status(401)
-        .header("WWW-Authenticate", r#"Basic realm="RedRobot Admin", charset="UTF-8""#)
+        .header("WWW-Authenticate", r#"Basic realm="TradingBots.fun Admin", charset="UTF-8""#)
         .body(axum::body::Body::from("Unauthorized"))
         .unwrap_or_else(|_| axum::http::StatusCode::UNAUTHORIZED.into_response())
 }
@@ -2783,7 +2783,7 @@ async fn admin_dashboard_handler(
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RedRobot · Admin</title>
+<title>TradingBots.fun · Admin</title>
 <style>
   *{{box-sizing:border-box;margin:0;padding:0}}
   body{{background:#0d1117;color:#c9d1d9;
@@ -2899,7 +2899,7 @@ async fn admin_users_handler(
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RedRobot · Admin Users</title>
+<title>TradingBots.fun · Admin Users</title>
 <style>
   *{{box-sizing:border-box;margin:0;padding:0}}
   body{{background:#0d1117;color:#c9d1d9;

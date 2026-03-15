@@ -19,7 +19,7 @@
 #   Deploy is BLOCKED if any of the above fail.
 #
 # Infrastructure provisioned by --provision (idempotent, safe to re-run):
-#   PostgreSQL 16  – installed, redrobot DB + user created, pg_hba patched
+#   PostgreSQL 16  – installed, tradingbots DB + user created, pg_hba patched
 #   sqlx-cli       – schema migrations run automatically on every deploy
 #   MCP server     – @modelcontextprotocol/server-postgres for Claude DB access
 #   NOTE: Ollama is NOT installed here. It runs on a dedicated droplet to avoid
@@ -32,8 +32,8 @@
 #   OLLAMA_BASE_URL is written into /etc/environment on the *trading bot* VPS
 #
 # Logs:
-#   /var/log/hedgebot-ci.log      (CI gate output, persistent)
-#   /var/log/hedgebot-deploy.log  (build + restart output)
+#   /var/log/tradingbots-ci.log      (CI gate output, persistent)
+#   /var/log/tradingbots-deploy.log  (build + restart output)
 #   CI logs also pushed to GitHub: logs/ci/
 
 set -euo pipefail
@@ -41,11 +41,11 @@ set -euo pipefail
 # ── Config ────────────────────────────────────────────────────────────────────
 VPS_IP="${VPS_IP:-165.232.160.43}"
 VPS_USER="${VPS_USER:-root}"
-VPS_DIR="/RedRobot-HedgeBot"
-SERVICE="hedgebot"
+VPS_DIR="/tradingbots-fun"
+SERVICE="tradingbots"
 BRANCH="master"
-CI_LOG="/var/log/hedgebot-ci.log"
-DEPLOY_LOG="/var/log/hedgebot-deploy.log"
+CI_LOG="/var/log/tradingbots-ci.log"
+DEPLOY_LOG="/var/log/tradingbots-deploy.log"
 
 # ── Colours ───────────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
@@ -159,40 +159,40 @@ if $DO_PROVISION || $DO_DEPLOY; then
     sudo -u postgres psql -c "
       DO \$\$
       BEGIN
-        IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'redrobot') THEN
-          CREATE ROLE redrobot WITH LOGIN PASSWORD '${DB_PASSWORD}';
-          RAISE NOTICE 'Created role redrobot';
+        IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'tradingbots') THEN
+          CREATE ROLE tradingbots WITH LOGIN PASSWORD '${DB_PASSWORD}';
+          RAISE NOTICE 'Created role tradingbots';
         ELSE
-          ALTER ROLE redrobot WITH PASSWORD '${DB_PASSWORD}';
-          RAISE NOTICE 'Updated password for existing role redrobot';
+          ALTER ROLE tradingbots WITH PASSWORD '${DB_PASSWORD}';
+          RAISE NOTICE 'Updated password for existing role tradingbots';
         END IF;
       END \$\$;
     " 2>&1 | grep -v "^$"
 
     # Create database if it doesn't exist
     # Note: \gexec only works in interactive psql, not -c. Use createdb instead.
-    if sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='redrobot'" \
+    if sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname='tradingbots'" \
         | grep -q 1; then
-      ok "Database redrobot already exists"
+      ok "Database tradingbots already exists"
     else
-      sudo -u postgres createdb -O redrobot redrobot
-      ok "Database redrobot created"
+      sudo -u postgres createdb -O tradingbots tradingbots
+      ok "Database tradingbots created"
     fi
 
-    ok "PostgreSQL: role=redrobot database=redrobot"
+    ok "PostgreSQL: role=tradingbots database=tradingbots"
 
     # ── pg_hba.conf: allow password auth over localhost TCP ───────────────────
     # PostgreSQL defaults to 'peer' auth for local Unix sockets, which means
-    # the 'root' OS user can't authenticate as 'redrobot'.  We allow md5 auth
+    # the 'root' OS user can't authenticate as 'tradingbots'.  We allow md5 auth
     # over the loopback interface so the Rust binary can connect normally.
     PG_HBA=$(sudo -u postgres psql -tAc "SHOW hba_file")
-    if ! grep -q "redrobot" "${PG_HBA}" 2>/dev/null; then
+    if ! grep -q "tradingbots" "${PG_HBA}" 2>/dev/null; then
       # Prepend our rules (first match wins in pg_hba.conf)
       TMP=$(mktemp)
       {
-        echo "# RedRobot — allow password auth over loopback"
-        echo "host    redrobot    redrobot    127.0.0.1/32    md5"
-        echo "host    redrobot    redrobot    ::1/128         md5"
+        echo "# TradingBots — allow password auth over loopback"
+        echo "host    tradingbots    tradingbots    127.0.0.1/32    md5"
+        echo "host    tradingbots    tradingbots    ::1/128         md5"
         cat "${PG_HBA}"
       } > "${TMP}"
       cp "${TMP}" "${PG_HBA}"
@@ -200,16 +200,16 @@ if $DO_PROVISION || $DO_DEPLOY; then
       sudo -u postgres pg_ctlcluster 16 main reload 2>/dev/null \
         || systemctl reload postgresql \
         || systemctl restart postgresql
-      ok "pg_hba.conf: TCP md5 auth added for redrobot"
+      ok "pg_hba.conf: TCP md5 auth added for tradingbots"
     else
-      ok "pg_hba.conf: redrobot rules already present"
+      ok "pg_hba.conf: tradingbots rules already present"
     fi
 
     # ── Write DATABASE_URL to /etc/environment ────────────────────────────────
     # /etc/environment is sourced by systemd EnvironmentFile= directive in the
-    # hedgebot.service unit.  We only write if not already present.
+    # tradingbots.service unit.  We only write if not already present.
     if ! grep -q "^DATABASE_URL=" /etc/environment 2>/dev/null; then
-      echo "DATABASE_URL=postgresql://redrobot:${DB_PASSWORD}@127.0.0.1/redrobot" \
+      echo "DATABASE_URL=postgresql://tradingbots:${DB_PASSWORD}@127.0.0.1/tradingbots" \
         >> /etc/environment
       ok "DATABASE_URL written to /etc/environment"
     else
@@ -219,11 +219,11 @@ if $DO_PROVISION || $DO_DEPLOY; then
     # ── Verify connection ──────────────────────────────────────────────────────
     source /etc/environment
     if PGPASSWORD="${DB_PASSWORD}" psql \
-        -h 127.0.0.1 -U redrobot -d redrobot -c "SELECT version();" &>/dev/null; then
-      ok "PostgreSQL connection verified: redrobot@127.0.0.1/redrobot"
+        -h 127.0.0.1 -U tradingbots -d tradingbots -c "SELECT version();" &>/dev/null; then
+      ok "PostgreSQL connection verified: tradingbots@127.0.0.1/tradingbots"
     else
-      echo -e "${RED}✗ Cannot connect as redrobot — check pg_hba.conf and password${RESET}"
-      echo "  Run: PGPASSWORD='${DB_PASSWORD}' psql -h 127.0.0.1 -U redrobot redrobot"
+      echo -e "${RED}✗ Cannot connect as tradingbots — check pg_hba.conf and password${RESET}"
+      echo "  Run: PGPASSWORD='${DB_PASSWORD}' psql -h 127.0.0.1 -U tradingbots tradingbots"
     fi
 
     # ── sqlx-cli: run schema migrations ───────────────────────────────────────
@@ -242,7 +242,7 @@ if $DO_PROVISION || $DO_DEPLOY; then
       ok "sqlx-cli: $(${SQLX_BIN} --version 2>/dev/null || echo 'installed')"
     fi
 
-    cd /RedRobot-HedgeBot
+    cd /tradingbots-fun
     source /etc/environment
     "${SQLX_BIN}" migrate run --database-url "${DATABASE_URL}" 2>&1 \
       && ok "Migrations applied" \
@@ -293,7 +293,7 @@ if $DO_PROVISION || $DO_DEPLOY; then
     echo "Trading-bot provisioning complete"
     echo "────────────────────────────────────────────────────────────────"
     echo "  PostgreSQL : $(psql --version | head -1)"
-    echo "  Database   : redrobot @ 127.0.0.1"
+    echo "  Database   : tradingbots @ 127.0.0.1"
     echo "  MCP server : $(npm list -g @modelcontextprotocol/server-postgres 2>/dev/null | grep server-postgres || echo 'ok')"
     echo "────────────────────────────────────────────────────────────────"
     source /etc/environment 2>/dev/null || true
@@ -303,7 +303,7 @@ if $DO_PROVISION || $DO_DEPLOY; then
     echo ""
     echo "Next steps:"
     echo "  1. Provision Ollama droplet:  export OLLAMA_IP=<ip> && ./deploy.sh --provision-ollama"
-    echo "  2. Configure Claude MCP:      cat /RedRobot-HedgeBot/CLAUDE_MCP_SETUP.md"
+    echo "  2. Configure Claude MCP:      cat /tradingbots-fun/CLAUDE_MCP_SETUP.md"
 PROVISION
 
   if $DO_PROVISION; then
@@ -428,8 +428,8 @@ OLLAMA_PROVISION
       echo "OLLAMA_BASE_URL=http://${OLLAMA_IP}:11434" >> /etc/environment
       echo "✓ Wrote OLLAMA_BASE_URL to /etc/environment"
     fi
-    systemctl restart hedgebot 2>/dev/null || true
-    echo "✓ hedgebot restarted to pick up OLLAMA_BASE_URL"
+    systemctl restart tradingbots 2>/dev/null || true
+    echo "✓ tradingbots restarted to pick up OLLAMA_BASE_URL"
 BOTENV
 
   success "Ollama droplet ready — trading bot will use http://${OLLAMA_IP}:11434"
@@ -485,7 +485,7 @@ ENDSSH
   # ── 2b. CI Quality Gate ───────────────────────────────────────────────────
   # Each step is run independently with full error capture.
   # On any failure: full diagnostics are printed AND appended to CI_LOG.
-  # The log persists on the VPS at /var/log/hedgebot-ci.log for post-mortem.
+  # The log persists on the VPS at /var/log/tradingbots-ci.log for post-mortem.
   if $DO_TEST; then
     header "CI Quality Gate"
     dim "  Full output → ${CI_LOG} on VPS"
@@ -494,8 +494,8 @@ ENDSSH
     $SSH bash <<'ENDSSH'
       set -uo pipefail  # Note: NOT -e here — we capture each step's exit code manually
 
-      VPS_DIR="/RedRobot-HedgeBot"
-      CI_LOG="/var/log/hedgebot-ci.log"
+      VPS_DIR="/tradingbots-fun"
+      CI_LOG="/var/log/tradingbots-ci.log"
       export PATH="$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
       source "$HOME/.cargo/env" 2>/dev/null || true
       cd "$VPS_DIR"
@@ -675,7 +675,7 @@ ENDSSH
     if [ -z "${DATABASE_URL:-}" ]; then
       echo "⚠ DATABASE_URL not set — skipping migrations (run ./deploy.sh --provision first)"
     elif "${SQLX_BIN}" --version &>/dev/null; then
-      cd /RedRobot-HedgeBot
+      cd /tradingbots-fun
       echo "▸ Running sqlx migrations…"
       "${SQLX_BIN}" migrate run --database-url "${DATABASE_URL}" \
         && echo "✓ Migrations applied" \
@@ -725,14 +725,14 @@ MIGR
       fi
 
       echo "" | tee -a ${DEPLOY_LOG}
-      BIN_INFO=\$(ls -lh target/release/redrobot-hedgebot | awk '{print \$5, \$9}')
+      BIN_INFO=\$(ls -lh target/release/tradingbots-fun | awk '{print \$5, \$9}')
       echo "✓ Binary: \${BIN_INFO}" | tee -a ${DEPLOY_LOG}
 ENDSSH
     success "Build complete"
   fi
 
   # ── 2c-2. Sync systemd unit file if present in repo ──────────────────────
-  UNIT_FILE="${VPS_DIR}/hedgebot.service"
+  UNIT_FILE="${VPS_DIR}/tradingbots.service"
   if $SSH test -f "${UNIT_FILE}" 2>/dev/null; then
     $SSH bash <<ENDSSH
       set -euo pipefail
@@ -782,7 +782,7 @@ ENDSSH
           journalctl -u ${SERVICE} -n 60 --no-pager
           echo ""
           echo "── Binary info ─────────────────────────────────────────────────"
-          ls -lh ${VPS_DIR}/target/release/redrobot-hedgebot 2>/dev/null || echo "Binary not found"
+          ls -lh ${VPS_DIR}/target/release/tradingbots-fun 2>/dev/null || echo "Binary not found"
           echo ""
           echo "── Environment (sensitive values redacted) ─────────────────────"
           systemctl show ${SERVICE} --property=Environment --value 2>/dev/null \
@@ -792,7 +792,7 @@ ENDSSH
       fi
     else
       echo "systemd service '${SERVICE}' not found — falling back to pkill+nohup" | tee -a ${DEPLOY_LOG}
-      pkill -f redrobot-hedgebot 2>/dev/null || true
+      pkill -f tradingbots-fun 2>/dev/null || true
       sleep 2
 
       set -a
@@ -803,7 +803,7 @@ ENDSSH
         ANTHROPIC_API_KEY="\${ANTHROPIC_API_KEY}" \
         LUNARCRUSH_API_KEY="\${LUNARCRUSH_API_KEY}" \
         PAPER_TRADING="\${PAPER_TRADING:-true}" \
-        ${VPS_DIR}/target/release/redrobot-hedgebot >> ${DEPLOY_LOG} 2>&1 &
+        ${VPS_DIR}/target/release/tradingbots-fun >> ${DEPLOY_LOG} 2>&1 &
       BOT_PID=\$!
       echo "Bot PID: \${BOT_PID}" | tee -a ${DEPLOY_LOG}
       sleep 3

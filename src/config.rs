@@ -149,7 +149,7 @@ impl Config {
                 .unwrap_or_else(|_| "77c4fcm050bnxe49qo1h2n252umls0rrtkevh5uni".to_string()),
             anthropic_api_key:          env::var("ANTHROPIC_API_KEY").ok(),
             database_url: env::var("DATABASE_URL")
-                .unwrap_or_else(|_| "sqlite:./redrobot.db".to_string()),
+                .unwrap_or_else(|_| "sqlite:///var/data/tradingbots.db".to_string()),
             max_concurrent_trades: 3,
             paper_trading,
         })

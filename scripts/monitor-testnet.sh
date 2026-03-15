@@ -1,5 +1,5 @@
 #!/bin/bash
-# RedRobot-HedgeBot Testnet Monitoring Script
+# tradingbots-fun Testnet Monitoring Script
 # Run this to monitor the 72-hour testnet validation
 
 set -e
@@ -16,7 +16,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 echo -e "${BLUE}════════════════════════════════════════════════════════════${NC}"
-echo -e "${BLUE}    RedRobot-HedgeBot TESTNET MONITORING DASHBOARD${NC}"
+echo -e "${BLUE}    tradingbots-fun TESTNET MONITORING DASHBOARD${NC}"
 echo -e "${BLUE}════════════════════════════════════════════════════════════${NC}"
 echo ""
 

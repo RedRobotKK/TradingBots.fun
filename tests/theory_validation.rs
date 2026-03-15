@@ -9,9 +9,9 @@
 //! - Target Win Rate: 70-75%
 //! - Strategy: Dynamic position sizing based on pain (support distance) vs reward (expected move)
 
-use redrobot_hedgebot::backtest::{Backtester, BacktestConfig, TradeAction};
-use redrobot_hedgebot::dynamic_position_sizing::{DynamicSizer, SupportResistance, TechnicalSetup};
-use redrobot_hedgebot::strategies::MarketSnapshot;
+use tradingbots_fun::backtest::{Backtester, BacktestConfig, TradeAction};
+use tradingbots_fun::dynamic_position_sizing::{DynamicSizer, SupportResistance, TechnicalSetup};
+use tradingbots_fun::strategies::MarketSnapshot;
 use std::collections::HashMap;
 
 /// Simulated historical data for SOL (last 7 days, hourly)

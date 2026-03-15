@@ -1,5 +1,5 @@
 /**
- * 🎨 RedRobot Trading Bot - Web Dashboard
+ * 🎨 TradingBots.fun Trading Bot - Web Dashboard
  * Responsive design: Works perfect on desktop AND mobile
  * Real-time updates via WebSocket
  *
@@ -152,7 +152,7 @@ export const TradingDashboard: React.FC = () => {
       {/* Header */}
       <header className="dashboard-header">
         <div className="header-left">
-          <h1>🤖 RedRobot Trading Bot</h1>
+          <h1>🤖 TradingBots.fun Trading Bot</h1>
           <div className={`connection-status ${isConnected ? 'connected' : 'disconnected'}`}>
             <span className="status-dot"></span>
             {isConnected ? 'Live' : 'Offline'}

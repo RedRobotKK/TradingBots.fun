@@ -6,8 +6,8 @@
 
 #[cfg(test)]
 mod hyperliquid_integration_tests {
-    use redrobot_hedgebot::modules::HyperliquidClient;
-    use redrobot_hedgebot::models::market::{LimitOrder, MarketOrder, OrderSide};
+    use tradingbots_fun::modules::HyperliquidClient;
+    use tradingbots_fun::models::market::{LimitOrder, MarketOrder, OrderSide};
 
     /// Test HMAC-SHA256 signature generation for authentication
     #[test]
@@ -134,7 +134,7 @@ mod hyperliquid_integration_tests {
 
 #[cfg(test)]
 mod backtester_integration_tests {
-    use redrobot_hedgebot::modules::{Backtester, BacktestConfig};
+    use tradingbots_fun::modules::{Backtester, BacktestConfig};
     use std::collections::HashMap;
 
     /// Test backtest configuration building
@@ -259,8 +259,8 @@ mod backtester_integration_tests {
         let mut backtester = Backtester::new(BacktestConfig::default());
 
         // Add test trades
-        use redrobot_hedgebot::modules::SimulatedTrade;
-        use redrobot_hedgebot::models::market::{OrderSide, ExecutionStatus};
+        use tradingbots_fun::modules::SimulatedTrade;
+        use tradingbots_fun::models::market::{OrderSide, ExecutionStatus};
 
         // Winning trades
         for i in 0..3 {
@@ -312,8 +312,8 @@ mod backtester_integration_tests {
     #[test]
     fn test_consecutive_wins() {
         let mut backtester = Backtester::new(BacktestConfig::default());
-        use redrobot_hedgebot::modules::SimulatedTrade;
-        use redrobot_hedgebot::models::market::{OrderSide, ExecutionStatus};
+        use tradingbots_fun::modules::SimulatedTrade;
+        use tradingbots_fun::models::market::{OrderSide, ExecutionStatus};
 
         // Pattern: W W W L W W L L L W
         let pnls = vec![10.0, 10.0, 10.0, -5.0, 10.0, 10.0, -5.0, -5.0, -5.0, 10.0];
@@ -379,8 +379,8 @@ mod backtester_integration_tests {
 
 #[cfg(test)]
 mod multi_module_tests {
-    use redrobot_hedgebot::modules::{HyperliquidClient, Backtester, BacktestConfig};
-    use redrobot_hedgebot::models::market::OrderSide;
+    use tradingbots_fun::modules::{HyperliquidClient, Backtester, BacktestConfig};
+    use tradingbots_fun::models::market::OrderSide;
 
     /// Test that both modules can be used together
     #[tokio::test]
