@@ -1,6 +1,6 @@
-# 🚀 Drift Multi-Protocol Trading System
+# 🚀 TradingBots.fun AI trading platform
 
-A production-grade, high-performance trading bot written in Rust for trading across multiple protocols (Drift, Hyperliquid, etc.) with comprehensive unit testing and performance optimization.
+A production-grade, high-performance trading bot written in Rust for trading on Hyperliquid and soon on (across multiple protocols) with comprehensive unit testing and performance optimization.
 
 ## Features
 
