@@ -692,31 +692,31 @@ async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
             let ly_base = base_y.max(pad_t + 4.0).min(h_px - 4.0);
             let ly_max  = max_y.max(pad_t + 4.0).min(h_px - 4.0);
 
+            // NOTE: r##"..."## (two hashes) is required here because SVG colour
+            // attributes like fill="#484f58" contain the sequence `"#` which would
+            // prematurely close an r#"..."# raw string (single-hash delimiter).
+            // With two hashes the closing token is `"##`, which never appears in hex
+            // colour codes, so all `"#rrggbb"` attributes are safely inside the string.
             format!(
-                r#"<svg width="320" height="80" viewBox="0 0 320 80"
+                r##"<svg width="320" height="80" viewBox="0 0 320 80"
      style="display:block;flex-shrink:0;overflow:visible">
-  <!-- Chart label -->
-  <text x="2" y="10" fill="#484f58" font-size="9" font-family="monospace">PORTFOLIO</text>
-  <!-- Baseline at initial capital (dashed break-even line) -->
+  <text x="2" y="10" fill="{m}" font-size="9" font-family="monospace">PORTFOLIO</text>
   <line x1="0" y1="{by:.1}" x2="{w:.1}" y2="{by:.1}"
         stroke="{c}" stroke-width="0.75" stroke-dasharray="3 3" stroke-opacity="0.5"/>
-  <!-- Profit / loss fill area -->
   <polygon points="{fp}" fill="{c}" fill-opacity="0.12"/>
-  <!-- Equity line -->
   <polyline points="{pts}" fill="none" stroke="{c}"
             stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
-  <!-- Current value dot with pulse ring -->
   <circle cx="{w:.1}" cy="{ly:.1}" r="5" fill="{c}" fill-opacity="0.2"/>
   <circle cx="{w:.1}" cy="{ly:.1}" r="3" fill="{c}"/>
-  <!-- Y-axis value labels (right gutter) -->
   <text x="286" y="{lc_y:.1}" fill="{c}" font-size="9" font-family="monospace"
         font-weight="bold" dominant-baseline="middle">{lc}</text>
-  <text x="286" y="{lb_y:.1}" fill="#484f58" font-size="8" font-family="monospace"
+  <text x="286" y="{lb_y:.1}" fill="{m}" font-size="8" font-family="monospace"
         dominant-baseline="middle">{lb}</text>
-  <text x="286" y="{lm_y:.1}" fill="#484f58" font-size="8" font-family="monospace"
+  <text x="286" y="{lm_y:.1}" fill="{m}" font-size="8" font-family="monospace"
         dominant-baseline="middle">{lm}</text>
-</svg>"#,
+</svg>"##,
                 c    = trend_c,
+                m    = "#484f58",
                 w    = w_px,
                 by   = base_y,
                 fp   = fill_pts,
