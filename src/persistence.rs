@@ -96,7 +96,7 @@ impl PersistedState {
     /// existing snapshot.
     pub fn save(&self) -> std::io::Result<()> {
         let json = serde_json::to_string_pretty(self)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+            .map_err(std::io::Error::other)?;
         std::fs::write(STATE_FILE_TMP, &json)?;
         std::fs::rename(STATE_FILE_TMP, STATE_FILE)?;
         Ok(())
@@ -223,8 +223,7 @@ mod tests {
     #[test]
     fn apply_to_restores_financial_fields() {
         let snapshot = make_state();
-        let mut bot = BotState::default();
-        bot.initial_capital = 1000.0; // set by config
+        let mut bot = BotState { initial_capital: 1000.0, ..BotState::default() };
 
         snapshot.apply_to(&mut bot);
 
@@ -240,8 +239,7 @@ mod tests {
     fn apply_to_does_not_overwrite_initial_capital() {
         let mut snapshot = make_state();
         snapshot.initial_capital = 500.0; // operator previously had $500 configured
-        let mut bot = BotState::default();
-        bot.initial_capital = 2000.0; // new .env value — should win
+        let mut bot = BotState { initial_capital: 2000.0, ..BotState::default() }; // new .env value — should win
 
         snapshot.apply_to(&mut bot);
 

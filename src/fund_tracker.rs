@@ -156,6 +156,7 @@ pub fn read_tenant_history(tenant_id: &TenantId) -> Result<Vec<FundEvent>> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Net USD deposited by this tenant (deposits minus withdrawals).
+#[allow(dead_code)]
 pub fn net_deposits(tenant_id: &TenantId) -> f64 {
     read_tenant_history(tenant_id)
         .unwrap_or_default()
@@ -169,6 +170,7 @@ pub fn net_deposits(tenant_id: &TenantId) -> f64 {
 }
 
 /// Total lifetime deposits (withdrawals excluded).
+#[allow(dead_code)]
 pub fn total_deposited(tenant_id: &TenantId) -> f64 {
     read_tenant_history(tenant_id)
         .unwrap_or_default()
@@ -179,6 +181,7 @@ pub fn total_deposited(tenant_id: &TenantId) -> f64 {
 }
 
 /// Total lifetime withdrawals (deposits excluded).
+#[allow(dead_code)]
 pub fn total_withdrawn(tenant_id: &TenantId) -> f64 {
     read_tenant_history(tenant_id)
         .unwrap_or_default()
@@ -248,7 +251,9 @@ pub struct FundSummary {
     pub net_deposits:    f64,
     pub total_deposited: f64,
     pub total_withdrawn: f64,
+    #[allow(dead_code)]
     pub event_count:     usize,
+    #[allow(dead_code)]
     pub last_event:      Option<FundEvent>,
 }
 

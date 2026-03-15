@@ -264,11 +264,13 @@ impl HyperliquidClient {
     }
 
     /// STUB — Returns empty positions list.
+    #[allow(dead_code)]
     pub async fn get_positions(&self) -> Result<Vec<Position>> {
         Ok(vec![])
     }
 
     /// STUB — Logs close and returns a mock UUID.
+    #[allow(dead_code)]
     pub async fn close_position(&self, position: &Position) -> Result<String> {
         let id = uuid::Uuid::new_v4().to_string();
         log::info!("🔒 [STUB] Close {} ({})", id, position.symbol);

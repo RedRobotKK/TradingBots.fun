@@ -58,8 +58,10 @@ pub struct PrivyClaims {
     /// Format: `"did:privy:clxxxxxxxxxxxxxxxxx"`
     pub sub: String,
     /// Expiry (Unix seconds) — validated by `jsonwebtoken`.
+    #[allow(dead_code)]
     pub exp: usize,
     /// Issued-at (Unix seconds).
+    #[allow(dead_code)]
     pub iat: usize,
 }
 

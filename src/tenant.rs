@@ -61,6 +61,7 @@ pub enum TenantTier {
     /// Paid tier — live trading enabled, full feature access.
     Pro,
     /// Internal / operator — no fees, used for the platform's own capital.
+    #[allow(dead_code)]
     Internal,
 }
 
@@ -159,6 +160,7 @@ impl TenantConfig {
     /// True when:
     ///   - Tier is `Pro` or `Internal`, OR
     ///   - An active 14-day trial has not yet expired.
+    #[allow(dead_code)]
     pub fn is_live_enabled(&self) -> bool {
         match self.tier {
             TenantTier::Pro | TenantTier::Internal => self.live_trading,
@@ -191,11 +193,13 @@ pub struct TenantHandle {
 
 impl TenantHandle {
     pub fn new(id: TenantId, config: TenantConfig) -> Self {
-        let mut initial = BotState::default();
-        initial.capital         = config.initial_capital;
-        initial.initial_capital = config.initial_capital;
-        initial.peak_equity     = config.initial_capital;
-        initial.status          = format!("Tenant {} initialised", id);
+        let initial = BotState {
+            capital:         config.initial_capital,
+            initial_capital: config.initial_capital,
+            peak_equity:     config.initial_capital,
+            status:          format!("Tenant {} initialised", id),
+            ..BotState::default()
+        };
 
         TenantHandle {
             id,

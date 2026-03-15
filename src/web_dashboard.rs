@@ -1632,6 +1632,7 @@ pub enum ConsumerStateResult {
     NeedsLogin,
     /// Valid session but tenant has not accepted the Terms & Risk Disclosure.
     NeedsOnboarding {
+        #[allow(dead_code)]
         tenant_id: crate::tenant::TenantId,
     },
 }
@@ -1905,19 +1906,18 @@ import('https://esm.sh/@privy-io/js-sdk-core@latest')
 //  Apple Pay domain verification
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// `GET /.well-known/apple-developer-merchantid-domain-association`
-///
-/// Serves the Apple Pay domain-association file so Apple's servers can verify
-/// that this domain is allowed to initiate Apple Pay transactions.
-///
-/// ## Setup (one-time, ~2 minutes)
-///
-/// 1. Stripe Dashboard → Settings → Payment methods → Apple Pay
-/// 2. Click **Add new domain**, enter your domain.
-/// 3. Stripe shows a verification file — copy its *contents* (not the URL).
-/// 4. Set `APPLE_PAY_DOMAIN_ASSOC=<file contents>` in your `.env`.
-/// 5. Deploy.  Apple Pay button appears automatically in Stripe Checkout on
-///    Safari / iOS for your domain.
+// `GET /.well-known/apple-developer-merchantid-domain-association`
+//
+// Serves the Apple Pay domain-association file so Apple's servers can verify
+// that this domain is allowed to initiate Apple Pay transactions.
+//
+// Setup (one-time, ~2 minutes):
+//   1. Stripe Dashboard → Settings → Payment methods → Apple Pay
+//   2. Click "Add new domain", enter your domain.
+//   3. Stripe shows a verification file — copy its contents (not the URL).
+//   4. Set APPLE_PAY_DOMAIN_ASSOC=<file contents> in your .env.
+//   5. Deploy. Apple Pay button appears automatically in Stripe Checkout on
+//      Safari / iOS for your domain.
 // ─────────────────────────────────────────────────────────────────────────────
 //  Onboarding / Terms wall  (/app/onboarding)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1950,40 +1950,40 @@ async fn onboarding_handler(
         return axum::response::Redirect::to("/app").into_response();
     }
 
-    let html = format!(r#"<!DOCTYPE html>
+    let html = r#"<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>RedRobot · Terms & Risk Disclosure</title>
 <style>
-  *{{box-sizing:border-box;margin:0;padding:0}}
-  body{{background:#0d1117;color:#c9d1d9;
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#0d1117;color:#c9d1d9;
         font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-        min-height:100vh;padding:40px 16px}}
-  .wrap{{max-width:680px;margin:0 auto}}
-  .logo{{font-weight:700;font-size:.95rem;color:#e6edf3;letter-spacing:.04em;margin-bottom:32px}}
-  .logo span{{color:#3fb950}}
-  h1{{font-size:1.35rem;font-weight:700;color:#e6edf3;margin-bottom:8px}}
-  .sub{{font-size:.85rem;color:#8b949e;margin-bottom:28px}}
-  .section{{background:#161b22;border:1px solid #30363d;border-radius:12px;
-            padding:24px;margin-bottom:16px}}
-  h2{{font-size:.9rem;font-weight:700;color:#e6edf3;text-transform:uppercase;
-      letter-spacing:.06em;margin-bottom:12px}}
-  p{{font-size:.85rem;line-height:1.75;color:#8b949e;margin-bottom:10px}}
-  p:last-child{{margin-bottom:0}}
-  strong{{color:#c9d1d9}}
-  .warning{{border-color:#f8514950;background:#f8514908}}
-  .warning h2{{color:#f85149}}
-  .accept-row{{display:flex;flex-direction:column;gap:12px;margin-top:28px}}
-  .btn-accept{{background:#238636;color:#fff;border:none;border-radius:8px;
-               padding:14px 24px;font-size:1rem;font-weight:700;cursor:pointer;width:100%}}
-  .btn-accept:hover{{background:#2ea043}}
-  .cancel{{font-size:.8rem;color:#8b949e;text-align:center}}
-  .cancel a{{color:#58a6ff}}
-  input[type=checkbox]{{accent-color:#3fb950;width:16px;height:16px;cursor:pointer}}
-  .check-row{{display:flex;align-items:flex-start;gap:10px;font-size:.83rem;
-              color:#8b949e;line-height:1.55}}
+        min-height:100vh;padding:40px 16px}
+  .wrap{max-width:680px;margin:0 auto}
+  .logo{font-weight:700;font-size:.95rem;color:#e6edf3;letter-spacing:.04em;margin-bottom:32px}
+  .logo span{color:#3fb950}
+  h1{font-size:1.35rem;font-weight:700;color:#e6edf3;margin-bottom:8px}
+  .sub{font-size:.85rem;color:#8b949e;margin-bottom:28px}
+  .section{background:#161b22;border:1px solid #30363d;border-radius:12px;
+            padding:24px;margin-bottom:16px}
+  h2{font-size:.9rem;font-weight:700;color:#e6edf3;text-transform:uppercase;
+      letter-spacing:.06em;margin-bottom:12px}
+  p{font-size:.85rem;line-height:1.75;color:#8b949e;margin-bottom:10px}
+  p:last-child{margin-bottom:0}
+  strong{color:#c9d1d9}
+  .warning{border-color:#f8514950;background:#f8514908}
+  .warning h2{color:#f85149}
+  .accept-row{display:flex;flex-direction:column;gap:12px;margin-top:28px}
+  .btn-accept{background:#238636;color:#fff;border:none;border-radius:8px;
+               padding:14px 24px;font-size:1rem;font-weight:700;cursor:pointer;width:100%}
+  .btn-accept:hover{background:#2ea043}
+  .cancel{font-size:.8rem;color:#8b949e;text-align:center}
+  .cancel a{color:#58a6ff}
+  input[type=checkbox]{accent-color:#3fb950;width:16px;height:16px;cursor:pointer}
+  .check-row{display:flex;align-items:flex-start;gap:10px;font-size:.83rem;
+              color:#8b949e;line-height:1.55}
 </style>
 </head>
 <body>
@@ -2081,7 +2081,7 @@ async fn onboarding_handler(
 
 </div>
 </body>
-</html>"#);
+</html>"#.to_string();
     axum::response::Html(html).into_response()
 }
 
@@ -2325,10 +2325,8 @@ fn check_admin_auth(headers: &axum::http::HeaderMap, password: &str) -> bool {
         Some(e) => e,
         None    => return false,
     };
-    let decoded = match {
-        use base64::Engine as _;
-        base64::engine::general_purpose::STANDARD.decode(encoded)
-    } {
+    use base64::Engine as _;
+    let decoded = match base64::engine::general_purpose::STANDARD.decode(encoded) {
         Ok(bytes) => match String::from_utf8(bytes) { Ok(s) => s, Err(_) => return false },
         Err(_)    => return false,
     };
