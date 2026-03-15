@@ -108,6 +108,9 @@ pub struct BotState {
     pub last_update:      String,
     /// Unix-ms timestamp when the next 30 s cycle will fire.  0 = unknown.
     pub next_cycle_at:    i64,
+    /// Rolling equity snapshots (max 80) used to render the sparkline in the equity hero.
+    #[serde(default)]
+    pub equity_history:   Vec<f64>,
 }
 
 impl Default for BotState {
@@ -123,6 +126,7 @@ impl Default for BotState {
             metrics: PerformanceMetrics::default(),
             session_prices: HashMap::new(),
             status: String::new(), last_update: String::new(), next_cycle_at: 0,
+            equity_history: vec![],
         }
     }
 }
@@ -132,6 +136,15 @@ pub type SharedState = Arc<RwLock<BotState>>;
 // ─────────────────────────────── Dashboard ───────────────────────────────────
 
 async fn dashboard_handler(State(state): State<SharedState>) -> Html<String> {
+    // Briefly take write lock to snapshot equity into history, then drop it.
+    {
+        let mut w = state.write().await;
+        let unrealised: f64 = w.positions.iter().map(|p| p.unrealised_pnl).sum();
+        let committed:  f64 = w.positions.iter().map(|p| p.size_usd).sum();
+        let eq = w.capital + committed + unrealised;
+        w.equity_history.push(eq);
+        if w.equity_history.len() > 80 { w.equity_history.remove(0); }
+    }
     let s = state.read().await;
     let m = &s.metrics;
 
@@ -176,7 +189,7 @@ async fn dashboard_handler(State(state): State<SharedState>) -> Html<String> {
 
     // ── Position cards ────────────────────────────────────────────────────
     let pos_cards: String = if s.positions.is_empty() {
-        r#"<div class="empty-state">No open positions — scanning for signals…</div>"#.to_string()
+        r#"<div class="empty-state"><div class="radar"></div><p>No open positions — scanning for signals…</p></div>"#.to_string()
     } else {
         s.positions.iter().map(|p| {
             let r_mult = if p.r_dollars_risked > 1e-8 { p.unrealised_pnl / p.r_dollars_risked } else { 0.0 };
@@ -555,6 +568,49 @@ async fn dashboard_handler(State(state): State<SharedState>) -> Html<String> {
         }).collect()
     };
 
+    // ── Equity sparkline SVG ──────────────────────────────────────────────
+    let sparkline_svg: String = {
+        let h = &s.equity_history;
+        if h.len() < 3 {
+            String::new()
+        } else {
+            let min_v = h.iter().cloned().fold(f64::INFINITY,     f64::min);
+            let max_v = h.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            let range = (max_v - min_v).max(h.iter().cloned().fold(0.0_f64, f64::max) * 0.001).max(0.01);
+            let w_px  = 160.0_f64;
+            let h_px  = 40.0_f64;
+            let n     = h.len() as f64;
+            let pts: String = h.iter().enumerate().map(|(i, &v)| {
+                let x = i as f64 / (n - 1.0) * w_px;
+                let y = h_px - (v - min_v) / range * (h_px - 2.0) - 1.0;
+                format!("{x:.1},{y:.1}")
+            }).collect::<Vec<_>>().join(" ");
+            // Last endpoint for the fill polygon (close back to bottom-right then bottom-left)
+            let last_x = w_px;
+            let last_y = h.iter().last().map(|&v| h_px - (v - min_v) / range * (h_px - 2.0) - 1.0).unwrap_or(h_px);
+            let fill_pts = format!("{pts} {last_x:.1},{h_px:.1} 0,{h_px:.1}");
+            let trend_col = if h.last().unwrap_or(&0.0) >= h.first().unwrap_or(&0.0) { "#3fb950" } else { "#f85149" };
+            format!(
+                r#"<svg width="160" height="40" viewBox="0 0 160 40" style="display:block;flex-shrink:0;overflow:visible">
+  <defs>
+    <linearGradient id="spkg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="{c}" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="{c}" stop-opacity="0.01"/>
+    </linearGradient>
+  </defs>
+  <polygon points="{fp}" fill="url(#spkg)"/>
+  <polyline points="{pts}" fill="none" stroke="{c}" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>
+  <circle cx="{last_x}" cy="{last_y:.1}" r="2.5" fill="{c}"/>
+</svg>"#,
+                c       = trend_col,
+                fp      = fill_pts,
+                pts     = pts,
+                last_x  = last_x,
+                last_y  = last_y,
+            )
+        }
+    };
+
     // ── Signal weights: single-line inline strip ─────────────────────────
     let w  = &s.signal_weights;
     let wh = format!(
@@ -576,55 +632,76 @@ async fn dashboard_handler(State(state): State<SharedState>) -> Html<String> {
 <meta http-equiv="refresh" content="35">
 <style>
 *{{box-sizing:border-box;margin:0;padding:0}}
-:root{{--bg:#0d1117;--surface:#161b22;--border:#30363d;--muted:#8b949e;--text:#e6edf3;
-      --green:#3fb950;--red:#f85149;--blue:#58a6ff;--yellow:#e3b341;--dim:#21262d}}
-body{{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
-      font-size:14px;line-height:1.4;padding:12px;max-width:900px;margin:0 auto}}
+:root{{--bg:#080c10;--surface:#0d1117;--surface2:#161b22;--border:#21262d;--border2:#30363d;
+      --muted:#6e7681;--text:#e6edf3;--text2:#c9d1d9;
+      --green:#3fb950;--red:#f85149;--blue:#58a6ff;--yellow:#e3b341;--purple:#bc8cff;--dim:#161b22}}
+body{{background:var(--bg);color:var(--text);
+      font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
+      font-size:14px;line-height:1.4;padding:12px;max-width:940px;margin:0 auto;
+      background-image:radial-gradient(ellipse 80% 50% at 50% -10%,rgba(88,166,255,.06),transparent)}}
 /* ── Keyframe animations ── */
-@keyframes pulse{{0%,100%{{opacity:1}}50%{{opacity:.35}}}}
-@keyframes fadeSlide{{from{{opacity:0;transform:translateX(-10px)}}to{{opacity:1;transform:translateX(0)}}}}
-@keyframes scanBeam{{0%{{top:-4px;opacity:.9}}100%{{top:100%;opacity:0}}}}
+@keyframes pulse{{0%,100%{{opacity:1}}50%{{opacity:.3}}}}
+@keyframes fadeSlide{{from{{opacity:0;transform:translateY(6px)}}to{{opacity:1;transform:translateY(0)}}}}
+@keyframes scanBeam{{0%{{top:-4px;opacity:.8}}100%{{top:100%;opacity:0}}}}
 @keyframes progFill{{from{{width:0}}to{{width:100%}}}}
-@keyframes spinDot{{0%{{transform:rotate(0deg)}}100%{{transform:rotate(360deg)}}}}
-@keyframes glow{{0%,100%{{box-shadow:0 0 0 0 rgba(88,166,255,.0)}}50%{{box-shadow:0 0 8px 1px rgba(88,166,255,.25)}}}}
+@keyframes radar{{0%{{transform:rotate(0deg)}}100%{{transform:rotate(360deg)}}}}
+@keyframes shimmer{{0%{{background-position:-200% 0}}100%{{background-position:200% 0}}}}
+@keyframes liveDot{{0%,100%{{box-shadow:0 0 0 0 rgba(63,185,80,.6)}}70%{{box-shadow:0 0 0 5px rgba(63,185,80,0)}}}}
 /* ── Header ── */
-.header{{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:6px}}
-.header h1{{color:var(--blue);font-size:1.1em;font-weight:700;display:flex;align-items:center;gap:6px}}
-.header .ts{{font-size:.75em;color:var(--muted);white-space:nowrap}}
+.header{{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:6px;
+         padding-bottom:12px;border-bottom:1px solid var(--border)}}
+.header h1{{font-size:1.05em;font-weight:700;display:flex;align-items:center;gap:7px;
+            background:linear-gradient(90deg,#58a6ff,#bc8cff);-webkit-background-clip:text;
+            -webkit-text-fill-color:transparent;background-clip:text}}
+.header .ts{{font-size:.72em;color:var(--muted);white-space:nowrap}}
 .live-ring{{width:8px;height:8px;border-radius:50%;background:var(--green);display:inline-block;
-            animation:pulse 1.6s ease infinite;flex-shrink:0}}
+            animation:liveDot 2s ease infinite;flex-shrink:0}}
 /* ── Equity hero ── */
-.equity-hero{{background:var(--surface);border:1px solid var(--border);border-radius:10px;
-              padding:16px;margin-bottom:12px;display:flex;justify-content:space-between;
-              align-items:center;flex-wrap:wrap;gap:8px}}
-.equity-hero .eq-val{{font-size:2em;font-weight:700;color:var(--text);line-height:1}}
-.equity-hero .eq-label{{font-size:.7em;color:var(--muted);margin-top:2px}}
-.equity-hero .pnl-badge{{padding:6px 12px;border-radius:20px;font-size:.85em;font-weight:700}}
+.equity-hero{{background:linear-gradient(135deg,rgba(13,17,23,.95),rgba(22,27,34,.95));
+              border:1px solid rgba(88,166,255,.18);border-radius:12px;
+              padding:18px 20px;margin-bottom:12px;
+              display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;
+              box-shadow:0 0 0 1px rgba(88,166,255,.04),0 8px 32px rgba(0,0,0,.4),
+                         inset 0 1px 0 rgba(255,255,255,.04)}}
+.equity-hero .eq-left{{display:flex;flex-direction:column;gap:4px}}
+.equity-hero .eq-val{{font-size:2.1em;font-weight:800;line-height:1;letter-spacing:-.02em;
+                       background:linear-gradient(135deg,#e6edf3 30%,#58a6ff);
+                       -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}}
+.equity-hero .eq-label{{font-size:.68em;color:var(--muted);letter-spacing:.3px}}
+.equity-hero .pnl-badge{{padding:7px 14px;border-radius:22px;font-size:.9em;font-weight:700;
+                          letter-spacing:.2px}}
+.eq-right{{display:flex;align-items:center;gap:16px}}
 /* ── Metric strip ── */
 .metrics{{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:12px}}
 @media(min-width:500px){{.metrics{{grid-template-columns:repeat(3,1fr)}}}}
 @media(min-width:700px){{.metrics{{grid-template-columns:repeat(6,1fr)}}}}
-.metric{{background:var(--surface);border:1px solid var(--border);border-radius:8px;
-         padding:8px 10px;text-align:center}}
-.metric .mv{{font-size:1.05em;font-weight:700}}
-.metric .ml{{font-size:.65em;color:var(--muted);margin-top:2px;white-space:nowrap}}
+.metric{{background:var(--surface2);border:1px solid var(--border);border-radius:9px;
+         padding:9px 11px;text-align:center;
+         transition:border-color .2s,box-shadow .2s}}
+.metric:hover{{border-color:var(--border2);box-shadow:0 2px 8px rgba(0,0,0,.3)}}
+.metric .mv{{font-size:1.05em;font-weight:700;letter-spacing:-.01em}}
+.metric .ml{{font-size:.62em;color:var(--muted);margin-top:3px;white-space:nowrap;letter-spacing:.3px;text-transform:uppercase}}
 /* ── Status bar ── */
-.status-bar{{background:var(--surface);border:1px solid var(--border);border-radius:8px;
-             padding:0;margin-bottom:12px;font-size:.8em;color:var(--muted);overflow:hidden}}
+.status-bar{{background:var(--surface2);border:1px solid var(--border);border-radius:9px;
+             padding:0;margin-bottom:12px;font-size:.78em;color:var(--muted);overflow:hidden}}
 .status-inner{{display:flex;justify-content:space-between;align-items:center;
                gap:8px;flex-wrap:wrap;padding:8px 12px}}
 .status-bar .st-text{{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
-/* 5-second progress bar at bottom of status bar */
-.prog-track{{height:2px;background:var(--dim);position:relative;overflow:hidden}}
-.prog-fill{{height:2px;background:linear-gradient(90deg,var(--blue),var(--green));
+.prog-track{{height:2px;background:var(--border);position:relative;overflow:hidden}}
+.prog-fill{{height:2px;background:linear-gradient(90deg,var(--blue),var(--purple),var(--green));
             animation:progFill 30s linear forwards}}
-/* ── Section ── */
-.section{{background:var(--surface);border:1px solid var(--border);border-radius:10px;
-          padding:12px;margin-bottom:12px}}
-.section-title{{font-size:.7em;text-transform:uppercase;letter-spacing:1px;color:var(--muted);
-                margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:6px}}
+/* ── Sections ── */
+.section{{background:var(--surface2);border:1px solid var(--border);border-radius:11px;
+          padding:14px;margin-bottom:12px;border-top:1px solid rgba(255,255,255,.04)}}
+.section-positions{{border-left:3px solid rgba(63,185,80,.5)}}
+.section-signals{{border-left:3px solid rgba(88,166,255,.5)}}
+.section-candidates{{border-left:3px solid rgba(188,140,255,.5)}}
+.section-closed{{border-left:3px solid rgba(110,118,129,.35)}}
+.section-title{{font-size:.68em;text-transform:uppercase;letter-spacing:1.2px;color:var(--muted);
+                margin-bottom:11px;display:flex;justify-content:space-between;align-items:center;gap:6px}}
 .section-title-left{{display:flex;align-items:center;gap:6px}}
-.badge{{background:var(--dim);color:var(--muted);padding:2px 7px;border-radius:10px;font-size:.85em}}
+.badge{{background:var(--border);color:var(--muted);padding:2px 8px;border-radius:10px;
+        font-size:.85em;letter-spacing:.2px}}
 /* ── Position cards + flip ── */
 .pos-grid{{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}}
 /* Flip wrapper sits in the grid; inner uses CSS grid to stack front & back */
@@ -654,7 +731,11 @@ body{{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacS
 .pos-bar{{position:absolute;left:0;top:0;height:6px;border-radius:3px;transition:width .3s}}
 .pos-bar-marks{{display:flex;justify-content:space-between;font-size:.6em;color:var(--muted);margin-top:2px}}
 .pos-meta{{font-size:.72em;color:var(--muted);margin-top:3px;line-height:1.5}}
-.empty-state{{text-align:center;color:var(--muted);padding:20px;font-size:.85em}}
+.empty-state{{text-align:center;color:var(--muted);padding:28px 20px;font-size:.82em}}
+.empty-state .radar{{display:inline-block;width:36px;height:36px;border:2px solid rgba(88,166,255,.2);
+                     border-top-color:var(--blue);border-radius:50%;animation:radar 1.1s linear infinite;
+                     margin-bottom:10px}}
+.empty-state p{{color:var(--muted);margin-top:4px}}
 /* ── Signal feed ── */
 .sig-section{{position:relative}}
 .scan-wrap{{position:relative;overflow:hidden}}
@@ -665,13 +746,13 @@ body{{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacS
 .sig-row{{animation:fadeSlide .3s ease both}}
 /* ── Tables ── */
 .tbl-wrap{{overflow-x:auto;-webkit-overflow-scrolling:touch}}
-table{{width:100%;border-collapse:collapse;font-size:.75em;min-width:340px}}
-th{{color:var(--muted);text-align:left;padding:5px 7px;border-bottom:1px solid var(--border);
-    white-space:nowrap;font-weight:500}}
-td{{padding:5px 7px;border-bottom:1px solid var(--dim);vertical-align:middle}}
+table{{width:100%;border-collapse:collapse;font-size:.74em;min-width:340px}}
+th{{color:var(--muted);text-align:left;padding:6px 8px;border-bottom:1px solid var(--border);
+    white-space:nowrap;font-weight:500;font-size:.9em;letter-spacing:.4px;text-transform:uppercase}}
+td{{padding:6px 8px;border-bottom:1px solid rgba(48,54,61,.5);vertical-align:middle}}
 tr:last-child td{{border-bottom:none}}
-tr:hover td{{background:rgba(255,255,255,.03)}}
-.empty-td{{color:var(--muted);text-align:center;padding:14px}}
+tr:hover td{{background:rgba(255,255,255,.025)}}
+.empty-td{{color:var(--muted);text-align:center;padding:16px}}
 .ts{{color:var(--muted);font-size:.85em;white-space:nowrap}}
 /* Reason badges */
 .reason-stop{{color:#f85149}}.reason-take{{color:#3fb950}}
@@ -704,12 +785,16 @@ tr:hover td{{background:rgba(255,255,255,.03)}}
 </div>
 
 <div class="equity-hero">
-  <div>
+  <div class="eq-left">
+    <div class="eq-label">Total Equity</div>
     <div id="equity-val" class="eq-val">${equity:.2}</div>
-    <div id="equity-label" class="eq-label">Total Equity &nbsp;·&nbsp; free $<span id="equity-free">{capital:.2}</span></div>
+    <div id="equity-label" class="eq-label" style="margin-top:3px">Free $<span id="equity-free">{capital:.2}</span></div>
+    <div id="pnl-badge" class="pnl-badge" style="color:{pnl_colour};border:1px solid {pnl_colour}40;background:{pnl_colour}15;margin-top:8px;display:inline-block">
+      {pnl_sign}${total_pnl:.2} &nbsp; {pnl_sign}{total_pnl_pct:.2}%
+    </div>
   </div>
-  <div id="pnl-badge" class="pnl-badge" style="color:{pnl_colour};border:1px solid {pnl_colour}40;background:{pnl_colour}15">
-    {pnl_sign}${total_pnl:.2} &nbsp; {pnl_sign}{total_pnl_pct:.2}%
+  <div class="eq-right">
+    {sparkline_svg}
   </div>
 </div>
 
@@ -739,7 +824,7 @@ tr:hover td{{background:rgba(255,255,255,.03)}}
   <div class="prog-track"><div class="prog-fill"></div></div>
 </div>
 
-<div class="section">
+<div class="section section-positions">
   <div class="section-title">
     <span class="section-title-left"><span class="live-ring"></span> Active Positions</span>
     <span class="badge">{open_n} / 8 slots · max 4 per direction</span>
@@ -748,7 +833,7 @@ tr:hover td{{background:rgba(255,255,255,.03)}}
 </div>
 
 <!-- Signal feed immediately under positions -->
-<div class="section sig-section">
+<div class="section sig-section section-signals">
   <div class="section-title">
     <span class="section-title-left"><span class="live-ring"></span> Signal Feed</span>
     <span class="badge">last 20 decisions</span>
@@ -760,7 +845,7 @@ tr:hover td{{background:rgba(255,255,255,.03)}}
   </div>
 </div>
 
-<div class="section">
+<div class="section section-candidates">
   <div class="section-title">
     <span>Candidates <span class="badge">{cand_n} scanned · ● = open</span></span>
   </div>
@@ -770,7 +855,7 @@ tr:hover td{{background:rgba(255,255,255,.03)}}
   {wh}
 </div>
 
-<div class="section">
+<div class="section section-closed">
   <div class="section-title">Closed Trades <span class="badge">{total_closed} total</span></div>
   <div class="tbl-wrap">
     <table><tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>P&amp;L</th><th>Reason</th><th>Time</th></tr>
@@ -926,6 +1011,7 @@ function toggleDetail(id){{
         closed_rows  = closed_rows,
         dec_rows          = dec_rows,
         next_cycle_at_ms  = s.next_cycle_at,
+        sparkline_svg     = sparkline_svg,
     ))
 }
 
