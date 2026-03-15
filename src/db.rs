@@ -179,16 +179,19 @@ impl Database {
     ) -> Result<Vec<(DateTime<Utc>, f64)>> {
         struct Row { recorded_at: DateTime<Utc>, equity: Option<f64> }
 
+        let tid = uuid::Uuid::parse_str(tenant_id)
+            .with_context(|| format!("invalid tenant_id UUID: {tenant_id}"))?;
+
         let rows = sqlx::query_as!(
             Row,
             r#"
             SELECT recorded_at, equity::float8 AS equity
             FROM   equity_snapshots
-            WHERE  tenant_id = $1::uuid
+            WHERE  tenant_id = $1
             ORDER  BY recorded_at DESC
             LIMIT  $2
             "#,
-            tenant_id,
+            tid,
             limit,
         )
         .fetch_all(&self.pool)
@@ -233,9 +236,6 @@ impl Database {
     /// Return AUM time-series for the TVL graph.
     /// `days=90` for landing page; `days=3650` for all-time admin view.
     pub async fn get_aum_history(&self, days: i32) -> Result<Vec<AumPoint>> {
-        // Build interval string outside the query to avoid type inference issues.
-        let interval = format!("{days} days");
-
         struct Row {
             recorded_at:       DateTime<Utc>,
             total_aum:         Option<f64>,
@@ -258,10 +258,10 @@ impl Database {
                 active_tenant_count       AS active_tenants,
                 open_position_count       AS open_positions
             FROM  aum_snapshots
-            WHERE recorded_at > now() - $1::interval
+            WHERE recorded_at > now() - make_interval(days => $1)
             ORDER BY recorded_at ASC
             "#,
-            interval,
+            days,
         )
         .fetch_all(&self.pool)
         .await
@@ -427,9 +427,12 @@ impl Database {
         &self,
         tenant_id: &str,
     ) -> Result<Option<serde_json::Value>> {
+        let tid = uuid::Uuid::parse_str(tenant_id)
+            .with_context(|| format!("invalid tenant_id UUID: {tenant_id}"))?;
+
         let row = sqlx::query!(
-            "SELECT weights FROM signal_weights WHERE tenant_id = $1::uuid",
-            tenant_id,
+            "SELECT weights FROM signal_weights WHERE tenant_id = $1",
+            tid,
         )
         .fetch_optional(&self.pool)
         .await

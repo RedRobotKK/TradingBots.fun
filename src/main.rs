@@ -964,7 +964,7 @@ async fn analyse_symbol(
     symbol:       &str,
     market:       &Arc<data::MarketClient>,
     hl:           &Arc<exchange::HyperliquidClient>,
-    db:           &Option<SharedDb>,
+    _db:          &Option<SharedDb>,
     config:       &config::Config,
     bot_state:    &SharedState,
     weights:      &SharedWeights,

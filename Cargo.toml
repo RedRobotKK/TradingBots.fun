@@ -40,8 +40,8 @@ jsonwebtoken = "9"          # Privy JWT verification (ES256 + JWKS parsing)
 # chrono          → DateTime<Utc> ↔ TIMESTAMPTZ
 # uuid            → Uuid ↔ UUID
 # json            → serde_json::Value ↔ JSONB
-sqlx = { version = "0.8", features = [
-    "runtime-tokio",
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio-native-tls",
     "postgres",
     "macros",
     "chrono",
