@@ -1,4 +1,4 @@
-use axum::{extract::State, response::Html, routing::{get, post}, Json, Router};
+use axum::{extract::State, http::HeaderMap, response::Html, routing::{get, post}, Json, Router};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -27,6 +27,13 @@ pub struct AppState {
     pub stripe_webhook_secret: Option<String>,
     /// Stripe Price ID for the $19.99/month Pro plan.
     pub stripe_price_id:       Option<String>,
+    /// Privy App ID — when set, consumer routes require a valid Privy session.
+    /// Set via `PRIVY_APP_ID` env var.  `None` = single-operator fallback mode.
+    pub privy_app_id:          Option<String>,
+    /// HMAC-SHA256 signing key for session cookies.  Set via `SESSION_SECRET`.
+    pub session_secret:        String,
+    /// In-memory cache of Privy's JWKS — refreshed every hour on first use.
+    pub jwks_cache:            crate::privy::SharedJwksCache,
 }
 
 // ─────────────────────────────── Serde defaults ──────────────────────────────
@@ -1199,6 +1206,9 @@ fn consumer_shell_open(title: &str, active: &str) -> String {
     {nav_overview}
     {nav_history}
     {nav_tax}
+    <a href="/auth/logout" style="padding:8px 18px;border-radius:6px;font-size:.88rem;
+       font-weight:400;color:#8b949e;background:transparent;text-decoration:none"
+       title="Sign out">Sign out</a>
   </div>
 </div>
 <div class="wrap">
@@ -1215,8 +1225,17 @@ fn consumer_shell_close() -> &'static str {
 }
 
 /// Overview page — equity, P&L, deposit/withdraw, referral link.
-async fn consumer_app_handler(State(app): State<AppState>) -> axum::response::Html<String> {
-    let s = app.bot_state.read().await;
+async fn consumer_app_handler(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let state_arc = match resolve_consumer_state(&headers, &app).await {
+        Some(s) => s,
+        None    => return axum::response::Redirect::to("/login").into_response(),
+    };
+    let s = state_arc.read().await;
 
     let committed: f64  = s.positions.iter().map(|p| p.size_usd).sum();
     let unrealised: f64 = s.positions.iter().map(|p| p.unrealised_pnl).sum();
@@ -1326,13 +1345,22 @@ async fn consumer_app_handler(State(app): State<AppState>) -> axum::response::Ht
         referral_block  = referral_block,
     ));
     html.push_str(consumer_shell_close());
-    axum::response::Html(html)
+    axum::response::Html(html).into_response()
 }
 
 // ─── Trade history page /app/history ─────────────────────────────────────────
 
-async fn consumer_history_handler(State(app): State<AppState>) -> axum::response::Html<String> {
-    let s = app.bot_state.read().await;
+async fn consumer_history_handler(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let state_arc = match resolve_consumer_state(&headers, &app).await {
+        Some(s) => s,
+        None    => return axum::response::Redirect::to("/login").into_response(),
+    };
+    let s = state_arc.read().await;
 
     let rows: String = if s.closed_trades.is_empty() {
         "<tr><td colspan='9' style='color:#8b949e;text-align:center;padding:20px'>No closed trades yet.</td></tr>".to_string()
@@ -1436,12 +1464,24 @@ async fn consumer_history_handler(State(app): State<AppState>) -> axum::response
         rows  = rows,
     ));
     html.push_str(consumer_shell_close());
-    axum::response::Html(html)
+    axum::response::Html(html).into_response()
 }
 
 // ─── Tax report page /app/tax ─────────────────────────────────────────────────
 
-async fn consumer_tax_handler(State(_app): State<AppState>) -> axum::response::Html<String> {
+async fn consumer_tax_handler(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    // Auth gate — redirect to /login if Privy is configured and session is missing
+    if app.privy_app_id.is_some() && get_session_tenant_id(&headers, &app.session_secret).is_none() {
+        return axum::response::Redirect::to("/login").into_response();
+    }
+    consumer_tax_page().into_response()
+}
+
+fn consumer_tax_page() -> axum::response::Html<String> {
     let summary = crate::ledger::yearly_summary();
     let (_, total_rows) = crate::ledger::read_all();
 
@@ -1520,8 +1560,13 @@ async fn consumer_tax_handler(State(_app): State<AppState>) -> axum::response::H
 // ─── CSV download /app/tax/csv ────────────────────────────────────────────────
 
 async fn consumer_tax_csv_handler(
-    State(_app): State<AppState>,
+    State(app): State<AppState>,
+    headers: HeaderMap,
 ) -> impl axum::response::IntoResponse {
+    use axum::response::IntoResponse;
+    if app.privy_app_id.is_some() && get_session_tenant_id(&headers, &app.session_secret).is_none() {
+        return axum::response::Redirect::to("/login").into_response();
+    }
     let (csv, _) = crate::ledger::read_all();
     let filename  = format!("redrobot_trades_{}.csv",
         chrono::Utc::now().format("%Y%m%d"));
@@ -1533,7 +1578,269 @@ async fn consumer_tax_csv_handler(
             )),
         ],
         csv,
-    )
+    ).into_response()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Privy auth helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Extract and verify the session cookie from request headers.
+///
+/// Returns `Some(TenantId)` if the `rr_session` cookie is present and its
+/// HMAC is valid; `None` otherwise (missing, tampered, or expired).
+fn get_session_tenant_id(
+    headers: &axum::http::HeaderMap,
+    secret:  &str,
+) -> Option<crate::tenant::TenantId> {
+    let cookie_hdr  = headers.get("cookie")?.to_str().ok()?;
+    let session_val = crate::privy::extract_session_cookie(cookie_hdr)?;
+    crate::privy::verify_session(session_val, secret).ok()
+}
+
+/// Resolve the `SharedState` that should be rendered for this request.
+///
+/// - If `privy_app_id` is set → require a valid session → return the tenant's
+///   own `SharedState`.  Returns `None` if unauthenticated.
+/// - If `privy_app_id` is `None` (single-operator mode) → return the global
+///   `bot_state` without any authentication check.
+async fn resolve_consumer_state(
+    headers: &axum::http::HeaderMap,
+    app:     &AppState,
+) -> Option<SharedState> {
+    if app.privy_app_id.is_some() {
+        let tid     = get_session_tenant_id(headers, &app.session_secret)?;
+        let tenants = app.tenants.read().await;
+        let handle  = tenants.get(&tid)?;
+        Some(handle.state.clone())   // clone the Arc — cheap, no data copy
+    } else {
+        Some(app.bot_state.clone())  // single-operator fallback
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Auth handlers
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(serde::Deserialize)]
+struct SessionRequest {
+    token: String,
+}
+
+/// `POST /auth/session`
+///
+/// Receives a Privy access token (JWT) from the browser, verifies it against
+/// Privy's JWKS, auto-registers the user as a Free tenant if new, and sets
+/// the `rr_session` HMAC-signed cookie.
+///
+/// Response: `{"ok":true,"tenant_id":"…"}` on success, HTTP 401 on failure.
+async fn auth_session_handler(
+    State(app): State<AppState>,
+    axum::Json(req): axum::Json<SessionRequest>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    use axum::http::StatusCode;
+
+    let privy_app_id = match &app.privy_app_id {
+        Some(id) => id.clone(),
+        None     => return (StatusCode::SERVICE_UNAVAILABLE,
+                            "Privy is not configured on this server").into_response(),
+    };
+
+    // Verify the Privy JWT (ES256, JWKS-backed)
+    let privy_did = match crate::privy::verify_privy_jwt(
+        &req.token, &privy_app_id, &app.jwks_cache,
+    ).await {
+        Ok(did) => did,
+        Err(e)  => {
+            log::warn!("⚠ Privy JWT verification failed: {}", e);
+            return (StatusCode::UNAUTHORIZED, "Invalid or expired Privy token").into_response();
+        }
+    };
+
+    // Register new user or retrieve existing tenant
+    let tenant_id = {
+        let mut tenants = app.tenants.write().await;
+        tenants.register_or_get_by_privy_did(&privy_did, None)
+    };
+
+    // Issue HMAC-signed session cookie (7-day TTL)
+    let set_cookie = crate::privy::set_session_header(&tenant_id, &app.session_secret);
+
+    axum::response::Response::builder()
+        .status(StatusCode::OK)
+        .header("Set-Cookie", set_cookie)
+        .header("Content-Type", "application/json")
+        .body(axum::body::Body::from(format!(
+            r#"{{"ok":true,"tenant_id":"{}"}}"#,
+            tenant_id.as_str()
+        )))
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+/// `GET /auth/logout`
+///
+/// Clears the session cookie and redirects to `/login`.
+async fn auth_logout_handler(
+    State(_app): State<AppState>,
+) -> axum::response::Response {
+    axum::response::Response::builder()
+        .status(302)
+        .header("Location",  "/login")
+        .header("Set-Cookie", crate::privy::clear_session_header())
+        .body(axum::body::Body::empty())
+        .unwrap()
+}
+
+/// `GET /login`
+///
+/// Renders the Privy-powered login page.
+///
+/// - When `PRIVY_APP_ID` is set: embeds the Privy JS SDK and shows a
+///   "Login" button that triggers Privy's authentication modal.
+/// - When Privy is not configured: shows a message directing to `/app`
+///   (single-operator mode — auth not required).
+async fn login_handler(
+    State(app): State<AppState>,
+) -> axum::response::Html<String> {
+    let body = if let Some(ref app_id) = app.privy_app_id {
+        format!(r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RedRobot · Sign In</title>
+<style>
+  *{{box-sizing:border-box;margin:0;padding:0}}
+  body{{background:#0d1117;color:#c9d1d9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+        min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}}
+  .card{{background:#161b22;border:1px solid #30363d;border-radius:16px;
+         padding:40px 36px;max-width:400px;width:100%;text-align:center}}
+  .logo{{font-weight:800;font-size:1.4rem;color:#e6edf3;letter-spacing:.04em;margin-bottom:8px}}
+  .logo span{{color:#3fb950}}
+  .sub{{font-size:.88rem;color:#8b949e;margin-bottom:32px}}
+  .btn{{display:block;width:100%;padding:13px;border-radius:8px;font-size:.95rem;
+        font-weight:600;cursor:pointer;border:none;margin-bottom:12px;transition:.15s}}
+  .btn-primary{{background:#3fb950;color:#0d1117}}
+  .btn-primary:hover{{background:#52c965}}
+  .btn-primary:disabled{{background:#3fb95060;cursor:not-allowed}}
+  .err{{color:#f85149;font-size:.82rem;margin-top:12px;min-height:20px}}
+  .note{{font-size:.75rem;color:#484f58;margin-top:20px;line-height:1.5}}
+  a{{color:#58a6ff}}
+  #status{{color:#8b949e;font-size:.82rem;margin-top:8px;min-height:18px}}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">Red<span>Robot</span></div>
+  <div class="sub">Algorithmic trading · Sign in to your account</div>
+
+  <button id="login-btn" class="btn btn-primary">Sign in with Privy</button>
+  <div id="status"></div>
+  <div id="err" class="err"></div>
+
+  <div class="note">
+    By signing in you agree to our terms of service.<br>
+    Your funds stay in your own Hyperliquid wallet at all times.
+  </div>
+</div>
+
+<script type="module">
+// RedRobot — Privy login integration
+// Uses @privy-io/js-sdk-core (framework-agnostic SDK) via esm.sh CDN.
+const PRIVY_APP_ID = '{app_id}';
+
+function status(msg) {{
+  document.getElementById('status').textContent = msg;
+}}
+function err(msg) {{
+  document.getElementById('err').textContent = msg;
+}}
+function setLoading(yes) {{
+  const btn = document.getElementById('login-btn');
+  btn.disabled = yes;
+  btn.textContent = yes ? 'Signing in…' : 'Sign in with Privy';
+}}
+
+async function exchangeToken(privyToken) {{
+  const res = await fetch('/auth/session', {{
+    method:  'POST',
+    headers: {{ 'Content-Type': 'application/json' }},
+    body:    JSON.stringify({{ token: privyToken }}),
+  }});
+  if (!res.ok) throw new Error('Session exchange failed: ' + res.status);
+  return res.json();
+}}
+
+// Dynamically load Privy SDK from CDN
+import('https://esm.sh/@privy-io/js-sdk-core@latest')
+  .then(({{ PrivyClient }}) => {{
+    const privy = new PrivyClient(PRIVY_APP_ID, {{
+      storage: window.localStorage,
+    }});
+
+    // If already authenticated, skip the login step
+    privy.getAccessToken().then(async (token) => {{
+      if (token) {{
+        status('Already signed in — loading your account…');
+        setLoading(true);
+        try {{
+          await exchangeToken(token);
+          window.location.href = '/app';
+        }} catch(e) {{
+          status(''); setLoading(false);
+          err('Session setup failed. Please try signing in again.');
+        }}
+      }}
+    }}).catch(() => {{}});
+
+    document.getElementById('login-btn').addEventListener('click', async () => {{
+      err(''); setLoading(true); status('Opening Privy…');
+      try {{
+        await privy.login();
+        status('Authenticated — setting up your account…');
+        const token = await privy.getAccessToken();
+        await exchangeToken(token);
+        window.location.href = '/app';
+      }} catch(e) {{
+        setLoading(false); status('');
+        err(e.message || 'Login failed. Please try again.');
+      }}
+    }});
+  }})
+  .catch((e) => {{
+    err('Could not load authentication SDK: ' + e.message);
+    setLoading(false);
+  }});
+</script>
+</body></html>"#, app_id = app_id)
+    } else {
+        // Single-operator mode — Privy not configured
+        r#"<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RedRobot · Login</title>
+<style>
+  body{background:#0d1117;color:#c9d1d9;font-family:-apple-system,sans-serif;
+       min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+  .card{background:#161b22;border:1px solid #30363d;border-radius:12px;
+        padding:32px 28px;max-width:380px;text-align:center}
+  h2{font-size:1.2rem;color:#e6edf3;margin-bottom:12px}
+  p{color:#8b949e;font-size:.88rem;line-height:1.6;margin-bottom:20px}
+  a{display:inline-block;padding:10px 24px;background:#3fb95018;border:1px solid #3fb95050;
+    border-radius:8px;color:#3fb950;font-weight:600;text-decoration:none}
+</style>
+</head>
+<body>
+<div class="card">
+  <h2>Authentication not configured</h2>
+  <p>Privy App ID is not set on this server.<br>
+     This deployment is running in single-operator mode.</p>
+  <a href="/app">Open dashboard →</a>
+</div>
+</body></html>"#.to_string()
+    };
+    axum::response::Html(body)
 }
 
 pub async fn serve(app_state: AppState, port: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -1549,6 +1856,10 @@ pub async fn serve(app_state: AppState, port: u16) -> Result<(), Box<dyn std::er
         .route("/billing/success",      get(crate::stripe::success_handler))
         .route("/billing/trial",        get(crate::stripe::trial_handler))
         .route("/webhooks/stripe",      post(crate::stripe::webhook_handler))
+        // ── Privy authentication ────────────────────────────────────────────
+        .route("/login",                get(login_handler))
+        .route("/auth/session",         post(auth_session_handler))
+        .route("/auth/logout",          get(auth_logout_handler))
         .with_state(app_state);
     let addr = format!("0.0.0.0:{}", port);
     log::info!("🌐 Dashboard at http://{}", addr);

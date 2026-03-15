@@ -73,6 +73,10 @@ pub struct TenantConfig {
     pub display_name:    String,
     /// Contact email — used for P&L digests and Stripe customer lookup.
     pub email:           Option<String>,
+    /// Privy Decentralised Identifier — set on first Privy login.
+    /// Format: `"did:privy:clxxxxxxxxxxxxxxxxx"`.
+    /// Used to look up an existing tenant across browser sessions.
+    pub privy_did:       Option<String>,
     /// Stripe customer ID — set when the tenant completes checkout.
     pub stripe_customer: Option<String>,
     /// Stripe subscription ID — used to cancel on churn.
@@ -97,6 +101,7 @@ impl TenantConfig {
         TenantConfig {
             display_name:    name.to_string(),
             email:           None,
+            privy_did:       None,
             stripe_customer: None,
             stripe_sub_id:   None,
             initial_capital: capital,
@@ -112,6 +117,7 @@ impl TenantConfig {
         TenantConfig {
             display_name:    name.to_string(),
             email:           None,
+            privy_did:       None,
             stripe_customer: None,
             stripe_sub_id:   None,
             initial_capital: capital,
@@ -279,6 +285,44 @@ impl TenantManager {
         self.tenants.values()
             .find(|h| h.config.stripe_customer.as_deref() == Some(customer_id))
     }
+
+    // ── Privy identity ────────────────────────────────────────────────────────
+
+    /// Look up a tenant by Privy DID.
+    ///
+    /// Returns `None` if no tenant with the given DID is registered.
+    pub fn find_by_privy_did(&self, did: &str) -> Option<&TenantHandle> {
+        self.tenants.values()
+            .find(|h| h.config.privy_did.as_deref() == Some(did))
+    }
+
+    /// Find an existing tenant by Privy DID, or register a new Free tenant if
+    /// this DID has never been seen before.
+    ///
+    /// Called on every successful Privy login.  New users are created with
+    /// zero capital and no HL wallet; the operator links those separately.
+    /// Returns the `TenantId` (existing or newly created).
+    pub fn register_or_get_by_privy_did(
+        &mut self,
+        did:   &str,
+        email: Option<String>,
+    ) -> TenantId {
+        // Return existing tenant if we already know this Privy DID
+        if let Some(handle) = self.find_by_privy_did(did) {
+            return handle.id.clone();
+        }
+
+        // New user — register as Free, paper-trading only, zero capital until
+        // the operator links their HL wallet and deposits funds.
+        let mut cfg         = TenantConfig::paper(did, 0.0);
+        cfg.privy_did       = Some(did.to_string());
+        cfg.email           = email;
+        cfg.display_name    = did.to_string(); // DID shown until name is set
+
+        let id = self.register(cfg);
+        log::info!("👤 New Privy user registered: tenant_id={} did={}", id, did);
+        id
+    }
 }
 
 /// Shared `TenantManager` alias — passed around as Axum `State`.
@@ -351,5 +395,37 @@ mod tests {
         let state = mgr.get(&id).unwrap().state.read().await;
         assert_eq!(state.capital, 7500.0);
         assert_eq!(state.initial_capital, 7500.0);
+    }
+
+    // ── Privy identity tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn register_or_get_creates_new_tenant_for_unknown_did() {
+        let mut mgr = TenantManager::new();
+        let did     = "did:privy:cltest0000000001";
+        let id      = mgr.register_or_get_by_privy_did(did, Some("alice@test.com".into()));
+        assert!(mgr.get(&id).is_some());
+        assert_eq!(mgr.get(&id).unwrap().config.privy_did.as_deref(), Some(did));
+        assert_eq!(mgr.get(&id).unwrap().config.email.as_deref(), Some("alice@test.com"));
+        assert_eq!(mgr.count(), 1);
+    }
+
+    #[test]
+    fn register_or_get_returns_same_id_for_known_did() {
+        let mut mgr = TenantManager::new();
+        let did     = "did:privy:cltest0000000002";
+        let id1     = mgr.register_or_get_by_privy_did(did, None);
+        let id2     = mgr.register_or_get_by_privy_did(did, None);
+        // Second call must return the SAME tenant, not create a duplicate
+        assert_eq!(id1, id2,    "same DID must map to same tenant_id");
+        assert_eq!(mgr.count(), 1, "must not create a second tenant");
+    }
+
+    #[test]
+    fn find_by_privy_did_returns_none_for_unknown_did() {
+        let mut mgr = TenantManager::new();
+        mgr.register_or_get_by_privy_did("did:privy:cltest0000000003", None);
+        let result = mgr.find_by_privy_did("did:privy:nobody");
+        assert!(result.is_none());
     }
 }
