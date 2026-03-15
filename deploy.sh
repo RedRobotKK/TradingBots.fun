@@ -208,10 +208,14 @@ if $DO_PROVISION || $DO_DEPLOY; then
     # ── Write DATABASE_URL to /etc/environment ────────────────────────────────
     # /etc/environment is sourced by systemd EnvironmentFile= directive in the
     # tradingbots.service unit.  We only write if not already present.
+    CORRECT_DB_URL="postgresql://tradingbots:${DB_PASSWORD}@127.0.0.1/tradingbots"
     if ! grep -q "^DATABASE_URL=" /etc/environment 2>/dev/null; then
-      echo "DATABASE_URL=postgresql://tradingbots:${DB_PASSWORD}@127.0.0.1/tradingbots" \
-        >> /etc/environment
+      echo "DATABASE_URL=${CORRECT_DB_URL}" >> /etc/environment
       ok "DATABASE_URL written to /etc/environment"
+    elif grep -q "DATABASE_URL=.*redrobot" /etc/environment 2>/dev/null; then
+      # Overwrite stale redrobot URL with the new tradingbots URL
+      sed -i "s|^DATABASE_URL=.*|DATABASE_URL=${CORRECT_DB_URL}|" /etc/environment
+      ok "DATABASE_URL updated (redrobot → tradingbots) in /etc/environment"
     else
       ok "DATABASE_URL already in /etc/environment"
     fi
@@ -456,6 +460,13 @@ if $DO_PUSH; then
     echo ""
   fi
 
+  # Update local remote if GitHub renamed the repo
+  LOCAL_REMOTE=$(git remote get-url origin 2>/dev/null || true)
+  if echo "${LOCAL_REMOTE}" | grep -q "RedRobot-HedgeBot"; then
+    NEW_LOCAL_REMOTE=$(echo "${LOCAL_REMOTE}" | sed 's/RedRobot-HedgeBot/TradingBots.fun/g')
+    git remote set-url origin "${NEW_LOCAL_REMOTE}"
+    ok "Updated local git remote → ${NEW_LOCAL_REMOTE}"
+  fi
   info "Pushing branch '${BRANCH}' to origin…"
   git push origin "$BRANCH" 2>&1 | sed 's/^/  /'
   success "GitHub up to date  ($(git rev-parse --short HEAD))"
@@ -485,6 +496,22 @@ if $DO_DEPLOY; then
     elif [ -d "/RedRobot-HedgeBot" ] && [ ! -L "/RedRobot-HedgeBot" ]; then
       ln -sf /tradingbots-fun /RedRobot-HedgeBot
       echo "✓ Symlinked /RedRobot-HedgeBot → /tradingbots-fun"
+    fi
+    # Fix git safe.directory after mv (mv preserves files but git checks ownership)
+    git config --global --add safe.directory /tradingbots-fun 2>/dev/null || true
+    # Update git remote if still pointing at old repo name
+    OLD_REMOTE=\$(git -C /tradingbots-fun remote get-url origin 2>/dev/null || true)
+    if echo "\${OLD_REMOTE}" | grep -q "RedRobot-HedgeBot"; then
+      NEW_REMOTE=\$(echo "\${OLD_REMOTE}" | sed 's/RedRobot-HedgeBot/TradingBots.fun/g')
+      git -C /tradingbots-fun remote set-url origin "\${NEW_REMOTE}"
+      echo "✓ Updated git remote → \${NEW_REMOTE}"
+    fi
+    # Update DATABASE_URL in /etc/environment to new tradingbots DB if still pointing at old redrobot DB
+    if grep -q "DATABASE_URL=.*redrobot" /etc/environment 2>/dev/null; then
+      source /etc/environment 2>/dev/null || true
+      NEW_DB_URL="\$(echo \"\${DATABASE_URL}\" | sed 's|/redrobot\b|/tradingbots|g; s|redrobot:|tradingbots:|g')"
+      sed -i "s|DATABASE_URL=.*|DATABASE_URL=\${NEW_DB_URL}|" /etc/environment
+      echo "✓ Updated DATABASE_URL in /etc/environment → tradingbots"
     fi
     cd ${VPS_DIR}
     export PATH="\$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin:\$PATH"
