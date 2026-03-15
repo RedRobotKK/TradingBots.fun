@@ -181,6 +181,37 @@ impl TenantConfig {
             .map(|exp| (exp - Utc::now()).num_days().max(0))
             .unwrap_or(0)
     }
+
+    /// Maximum simultaneous open positions allowed for this tenant.
+    ///
+    /// | Tier / state                         | Cap      |
+    /// |--------------------------------------|----------|
+    /// | Pro or Internal                      | no limit |
+    /// | Free **with an active 14-day trial** | no limit |
+    /// | Free **after trial expires / no trial** | 2     |
+    ///
+    /// Returns `usize::MAX` for "no limit" so callers can write
+    /// `positions.len() >= tenant.max_positions()` uniformly.
+    pub fn max_positions(&self) -> usize {
+        match self.tier {
+            TenantTier::Pro | TenantTier::Internal => usize::MAX,
+            TenantTier::Free => {
+                let trial_active = self.trial_ends_at
+                    .map(|exp| Utc::now() < exp)
+                    .unwrap_or(false);
+                if trial_active { usize::MAX } else { 2 }
+            }
+        }
+    }
+
+    /// `true` when this is a Free account whose 14-day trial has elapsed.
+    /// Used by the UI to show upgrade prompts and position-cap warnings.
+    pub fn is_trial_expired_free(&self) -> bool {
+        self.tier == TenantTier::Free
+            && self.trial_ends_at
+                .map(|exp| Utc::now() >= exp)
+                .unwrap_or(true) // no trial at all → treat as expired
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -344,15 +375,21 @@ impl TenantManager {
             return handle.id.clone();
         }
 
-        // New user — register as Free, paper-trading only, zero capital until
-        // the operator links their HL wallet and deposits funds.
+        // New user — register as Free with a 14-day full-access trial.
+        // After the trial expires they can still trade but are capped at
+        // max_positions() = 2 until they upgrade to Pro.
         let mut cfg         = TenantConfig::paper(did, 0.0);
         cfg.privy_did       = Some(did.to_string());
         cfg.email           = email;
         cfg.display_name    = did.to_string(); // DID shown until name is set
+        cfg.trial_ends_at   = Some(Utc::now() + Duration::days(14));
+        cfg.live_trading    = true; // live allowed during trial
 
         let id = self.register(cfg);
-        log::info!("👤 New Privy user registered: tenant_id={} did={}", id, did);
+        log::info!(
+            "👤 New Privy user registered: tenant_id={} did={} (14-day trial started)",
+            id, did
+        );
         id
     }
 
@@ -610,5 +647,49 @@ mod tests {
         mgr.update_hl_balance(&id, 1000.0).unwrap();
         let prev2 = mgr.update_hl_balance(&id, 1500.0).unwrap();
         assert!((prev2 - 1000.0).abs() < 0.001, "second update should return the first set value");
+    }
+
+    // ── Position cap / trial tests ────────────────────────────────────────────
+
+    #[test]
+    fn pro_tenant_has_unlimited_positions() {
+        let cfg = TenantConfig::live("Pro User", 1000.0, "0xABCdef1234567890", "secret");
+        assert_eq!(cfg.max_positions(), usize::MAX);
+        assert!(!cfg.is_trial_expired_free());
+    }
+
+    #[test]
+    fn free_tenant_with_active_trial_has_unlimited_positions() {
+        let mut cfg = TenantConfig::paper("Trial User", 0.0);
+        cfg.trial_ends_at = Some(Utc::now() + Duration::days(10));
+        assert_eq!(cfg.max_positions(), usize::MAX);
+        assert!(!cfg.is_trial_expired_free());
+    }
+
+    #[test]
+    fn free_tenant_with_expired_trial_capped_at_2() {
+        let mut cfg = TenantConfig::paper("Expired User", 0.0);
+        cfg.trial_ends_at = Some(Utc::now() - Duration::days(1)); // expired yesterday
+        assert_eq!(cfg.max_positions(), 2);
+        assert!(cfg.is_trial_expired_free());
+    }
+
+    #[test]
+    fn free_tenant_with_no_trial_set_capped_at_2() {
+        let cfg = TenantConfig::paper("No Trial User", 0.0); // trial_ends_at = None
+        assert_eq!(cfg.max_positions(), 2);
+        assert!(cfg.is_trial_expired_free());
+    }
+
+    #[test]
+    fn new_privy_signup_gets_14_day_trial() {
+        let mut mgr = TenantManager::new();
+        let id = mgr.register_or_get_by_privy_did("did:privy:newtrial001", None);
+        let cfg = &mgr.get(&id).unwrap().config;
+        assert!(cfg.trial_ends_at.is_some(), "trial_ends_at must be set on signup");
+        let days = cfg.trial_days_remaining();
+        assert!(days >= 13 && days <= 14, "trial must be ~14 days, got {}", days);
+        assert_eq!(cfg.max_positions(), usize::MAX, "in-trial user must have unlimited positions");
+        assert!(cfg.live_trading, "live trading must be enabled during trial");
     }
 }

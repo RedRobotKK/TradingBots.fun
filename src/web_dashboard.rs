@@ -2193,7 +2193,7 @@ async fn consumer_settings_handler(
     };
 
     let (display_name, email, wallet, tier, trial_days, terms_ts, wallet_ts, hl_balance,
-         net_dep, total_dep, total_with) = {
+         net_dep, total_dep, total_with, max_pos, trial_expired) = {
         let tenants = app.tenants.read().await;
         let h = match tenants.get(&tid) {
             Some(h) => h,
@@ -2214,6 +2214,8 @@ async fn consumer_settings_handler(
             fund_sum.net_deposits,
             fund_sum.total_deposited,
             fund_sum.total_withdrawn,
+            h.config.max_positions(),
+            h.config.is_trial_expired_free(),
         )
     };
 
@@ -2257,6 +2259,27 @@ async fn consumer_settings_handler(
         )
     } else { String::new() };
 
+    // Position cap row — shown in account card
+    let pos_cap_row = {
+        let cap_str = if max_pos == usize::MAX {
+            "Unlimited".to_string()
+        } else {
+            format!("{} max", max_pos)
+        };
+        let cap_colour = if trial_expired { "#f85149" } else { "#3fb950" };
+        let cap_hint = if trial_expired {
+            r#" &nbsp;<span style="font-size:.75rem;color:#8b949e">(upgrade to Pro for unlimited)</span>"#
+        } else { "" };
+        format!(r#"<div class="metric-row">
+    <span class="ml">Open positions</span>
+    <span class="mv" style="color:{cap_colour}">{cap_str}{cap_hint}</span>
+  </div>"#,
+            cap_colour = cap_colour,
+            cap_str    = cap_str,
+            cap_hint   = cap_hint,
+        )
+    };
+
     let mut html = consumer_shell_open("Settings", "Settings");
     html.push_str(&format!(r#"
 <div class="card">
@@ -2273,6 +2296,7 @@ async fn consumer_settings_handler(
     <span class="ml">Plan</span>
     <span class="mv">{tier_badge}{trial_note}</span>
   </div>
+  {pos_cap_row}
   <div class="metric-row">
     <span class="ml">Terms accepted</span>
     <span class="mv">{terms_ts}</span>
@@ -2327,20 +2351,41 @@ async fn consumer_settings_handler(
         email         = email,
         tier_badge    = tier_badge,
         trial_note    = trial_note,
+        pos_cap_row   = pos_cap_row,
         terms_ts      = terms_ts,
         wallet_section= wallet_section,
         link_label    = if wallet.is_some() { "Update" } else { "Link Wallet" },
         total_dep     = total_dep,
         total_with    = total_with,
         net_dep       = net_dep,
-        upgrade_block = if tier == "Free" { r#"<div class="card">
+        upgrade_block = if tier == "Free" && trial_expired {
+            // Trial has expired — hard upgrade call-to-action
+            r#"<div class="card" style="border-color:#f85149aa;background:#f8514906">
+  <div class="card-label" style="color:#f85149">Trial Ended · Upgrade to Unlock</div>
+  <p style="font-size:.85rem;color:#8b949e;margin-bottom:6px">
+    Your 14-day free trial has ended. You can still trade, but you are now
+    limited to <strong style="color:#e6edf3">2 open positions</strong> at a time.
+  </p>
+  <p style="font-size:.85rem;color:#8b949e;margin-bottom:16px">
+    Upgrade to <strong style="color:#3fb950">Pro</strong> to unlock unlimited
+    positions, full live trading, and priority support —
+    <strong style="color:#e6edf3">$19.99/month</strong>. Cancel any time.
+  </p>
+  <a href="/billing/checkout" class="btn btn-green" style="font-size:.92rem;padding:10px 22px">
+    Upgrade to Pro →
+  </a>
+</div>"#
+        } else if tier == "Free" {
+            // Trial still active — softer upsell
+            r#"<div class="card">
   <div class="card-label">Upgrade to Pro</div>
   <p style="font-size:.85rem;color:#8b949e;margin-bottom:14px">
     Live algorithmic trading on Hyperliquid for <strong style="color:#e6edf3">$19.99/month</strong>.
     Cancel any time.
   </p>
   <a href="/billing/checkout" class="btn btn-green">Upgrade to Pro →</a>
-</div>"# } else { "" },
+</div>"#
+        } else { "" },
     ));
     html.push_str(consumer_shell_close());
     axum::response::Html(html).into_response()
