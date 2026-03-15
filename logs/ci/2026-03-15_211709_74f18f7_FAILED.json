@@ -1,0 +1,84 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-03-15T21:15:39Z",
+    "commit": "74f18f7",
+    "commit_full": "74f18f798dd6f2f81068609295630633adbe47d3",
+    "commit_message": "fix: silence clippy dead-code and map_flatten warnings",
+    "branch": "master",
+    "overall_status": "FAILED",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
+    "cargo": "cargo 1.93.1 (083ac5135 2025-12-15)",
+    "os_kernel": "6.8.0-101-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "PASSED",
+      "exit_code": 0,
+      "duration_seconds": 65,
+      "total_passed": 488,
+      "total_failed": 0,
+      "total_ignored": 2,
+      "failures": []
+    },
+    "clippy": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 18,
+      "error_count": 2,
+      "errors": [
+        {
+          "code": "E",
+          "message": "manual `RangeInclusive::contains` implementation",
+          "file": "src/tenant.rs",
+          "line": 691,
+          "col": 17
+        },
+        {
+          "code": "E",
+          "message": "could not compile `redrobot-hedgebot` (bin \"redrobot-hedgebot\" test) due to 1 previous error"
+        }
+      ]
+    },
+    "audit": {
+      "status": "ADVISORY",
+      "exit_code": 1,
+      "duration_seconds": 7,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2023-0071",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2023-0071",
+          "severity": "5.9 (medium)",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "hedgebot",
+    "status": "active",
+    "active_since": "Sun 2026-03-15 07:24:17 UTC",
+    "recent_logs": [
+      "Mar 15 07:24:17 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: hedgebot.service: Deactivated successfully.",
+      "Mar 15 07:24:17 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Stopped hedgebot.service - RedRobot HedgeBot.",
+      "Mar 15 07:24:17 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: hedgebot.service: Consumed 2.825s CPU time, 10.7M memory peak, 4.7M memory swap peak.",
+      "Mar 15 07:24:17 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Starting hedgebot.service - RedRobot HedgeBot...",
+      "Mar 15 07:24:17 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Started hedgebot.service - RedRobot HedgeBot."
+    ]
+  }
+}
