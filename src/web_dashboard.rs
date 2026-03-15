@@ -628,14 +628,14 @@ async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
         let h       = &s.equity_history;
         let initial = s.initial_capital;
         if h.len() < 2 {
-            // Not enough data yet — show a flat placeholder line at baseline
-            format!(
-                r#"<svg width="240" height="56" viewBox="0 0 240 56"
+            // Not enough data yet — show a flat placeholder line at baseline.
+            // NOTE: raw string uses r##"..."## because the hex colour "#484f58"
+            // contains the sequence `"#` which would otherwise close r#"..."#.
+            r##"<svg width="240" height="56" viewBox="0 0 240 56"
      style="display:block;flex-shrink:0;overflow:hidden;opacity:0.35">
   <line x1="0" y1="28" x2="240" y2="28"
         stroke="#484f58" stroke-width="1.5" stroke-dasharray="4 4"/>
-</svg>"#
-            )
+</svg>"##.to_string()
         } else {
             let w_px:   f64 = 240.0;
             let h_px:   f64 = 56.0;
