@@ -861,6 +861,14 @@ tr:hover td{{background:rgba(255,255,255,.025)}}
 .ct-detail td{{color:var(--text)}}
 /* ── Utility ── */
 .g{{color:var(--green)}}.r{{color:var(--red)}}.b{{color:var(--blue)}}.y{{color:var(--yellow)}}
+/* ── Header right cluster ── */
+.header-right{{display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:flex-end}}
+.btn-cta{{display:inline-flex;align-items:center;gap:6px;padding:7px 15px;border-radius:8px;
+           font-size:.8rem;font-weight:700;cursor:pointer;text-decoration:none!important;
+           white-space:nowrap;border:1px solid rgba(63,185,80,.45);color:#3fb950;
+           background:rgba(63,185,80,.08);transition:background .15s,border-color .15s,box-shadow .15s}}
+.btn-cta:hover{{background:rgba(63,185,80,.18);border-color:rgba(63,185,80,.75);
+                box-shadow:0 0 10px rgba(63,185,80,.15)}}
 </style></head><body>
 
 <div class="header">
@@ -870,7 +878,16 @@ tr:hover td{{background:rgba(255,255,255,.025)}}
          style="vertical-align:middle;margin-right:7px">
     <span class="live-ring"></span> RedRobot HedgeBot
   </h1>
-  <span class="ts">⟳ <span id="cntdn">30s</span> &nbsp;·&nbsp; {last_update}</span>
+  <div class="header-right">
+    <span class="ts">⟳ <span id="cntdn">30s</span> &nbsp;·&nbsp; {last_update}</span>
+    <a href="/login" class="btn-cta">
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+           stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="8" cy="5" r="3"/><path d="M2 14c0-3.3 2.7-6 6-6s6 2.7 6 6"/>
+      </svg>
+      Connect Wallet
+    </a>
+  </div>
 </div>
 
 <div class="equity-hero">
@@ -1204,7 +1221,8 @@ fn consumer_shell_open(title: &str, active: &str) -> String {
   .top-bar{{display:flex;align-items:center;justify-content:space-between;
              padding:14px 24px;border-bottom:1px solid #21262d;margin-bottom:28px}}
   .logo{{font-weight:700;font-size:.95rem;color:#e6edf3;letter-spacing:.04em}}
-  .logo span{{color:#3fb950}}
+  .logo .r{{color:#e6343a}}
+  .logo .b{{color:#3fb950}}
   .nav{{display:flex;gap:4px}}
   .wrap{{max-width:700px;margin:0 auto;padding:0 16px}}
   .card{{background:#161b22;border:1px solid #30363d;border-radius:12px;
@@ -1239,7 +1257,7 @@ fn consumer_shell_open(title: &str, active: &str) -> String {
 </head>
 <body>
 <div class="top-bar">
-  <span class="logo">Red<span>Robot</span></span>
+  <span class="logo"><span class="r">Red</span><span class="b">Robot</span></span>
   <div class="nav">
     {nav_overview}
     {nav_history}
@@ -2014,7 +2032,8 @@ async fn onboarding_handler(
         min-height:100vh;padding:40px 16px}
   .wrap{max-width:680px;margin:0 auto}
   .logo{font-weight:700;font-size:.95rem;color:#e6edf3;letter-spacing:.04em;margin-bottom:32px}
-  .logo span{color:#3fb950}
+  .logo .r{color:#e6343a}
+  .logo .b{color:#3fb950}
   h1{font-size:1.35rem;font-weight:700;color:#e6edf3;margin-bottom:8px}
   .sub{font-size:.85rem;color:#8b949e;margin-bottom:28px}
   .section{background:#161b22;border:1px solid #30363d;border-radius:12px;
@@ -2039,7 +2058,7 @@ async fn onboarding_handler(
 </head>
 <body>
 <div class="wrap">
-<p class="logo">Red<span>Robot</span></p>
+<p class="logo"><span class="r">Red</span><span class="b">Robot</span></p>
 <h1>Terms &amp; Risk Disclosure</h1>
 <p class="sub">Please read and accept these terms before accessing the trading platform.</p>
 
@@ -2436,7 +2455,8 @@ async fn admin_dashboard_handler(
   .wrap{{max-width:900px;margin:0 auto}}
   .top{{display:flex;justify-content:space-between;align-items:center;margin-bottom:28px}}
   .logo{{font-weight:700;font-size:.95rem;color:#e6edf3;letter-spacing:.04em}}
-  .logo span{{color:#3fb950}}
+  .logo .r{{color:#e6343a}}
+  .logo .b{{color:#3fb950}}
   .badge-admin{{font-size:.72rem;color:#e3b341;border:1px solid #e3b34150;
                 background:#e3b34112;border-radius:12px;padding:2px 10px;margin-left:8px}}
   .nav-admin a{{color:#58a6ff;font-size:.85rem;text-decoration:none;margin-left:16px}}
@@ -2451,7 +2471,7 @@ async fn admin_dashboard_handler(
 <body>
 <div class="wrap">
 <div class="top">
-  <span class="logo">Red<span>Robot</span> <span class="badge-admin">Admin</span></span>
+  <span class="logo"><span class="r">Red</span><span class="b">Robot</span> <span class="badge-admin">Admin</span></span>
   <div class="nav-admin">
     <a href="/admin">Dashboard</a>
     <a href="/admin/users">Users</a>
@@ -2551,7 +2571,8 @@ async fn admin_users_handler(
   .wrap{{max-width:960px;margin:0 auto}}
   .top{{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}}
   .logo{{font-weight:700;font-size:.95rem;color:#e6edf3;letter-spacing:.04em}}
-  .logo span{{color:#3fb950}}
+  .logo .r{{color:#e6343a}}
+  .logo .b{{color:#3fb950}}
   .badge-admin{{font-size:.72rem;color:#e3b341;border:1px solid #e3b34150;
                 background:#e3b34112;border-radius:12px;padding:2px 10px;margin-left:8px}}
   .nav-admin a{{color:#58a6ff;font-size:.85rem;text-decoration:none;margin-left:16px}}
@@ -2566,7 +2587,7 @@ async fn admin_users_handler(
 <body>
 <div class="wrap">
 <div class="top">
-  <span class="logo">Red<span>Robot</span> <span class="badge-admin">Admin</span></span>
+  <span class="logo"><span class="r">Red</span><span class="b">Robot</span> <span class="badge-admin">Admin</span></span>
   <div class="nav-admin">
     <a href="/admin">Dashboard</a>
     <a href="/admin/users">Users</a>
