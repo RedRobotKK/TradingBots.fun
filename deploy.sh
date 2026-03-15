@@ -465,7 +465,7 @@ if $DO_PUSH; then
   if echo "${LOCAL_REMOTE}" | grep -q "RedRobot-HedgeBot"; then
     NEW_LOCAL_REMOTE=$(echo "${LOCAL_REMOTE}" | sed 's/RedRobot-HedgeBot/TradingBots.fun/g')
     git remote set-url origin "${NEW_LOCAL_REMOTE}"
-    ok "Updated local git remote → ${NEW_LOCAL_REMOTE}"
+    echo "✓ Updated local git remote → ${NEW_LOCAL_REMOTE}"
   fi
   info "Pushing branch '${BRANCH}' to origin…"
   git push origin "$BRANCH" 2>&1 | sed 's/^/  /'
