@@ -17,6 +17,7 @@ env_logger = "0.11"
 uuid       = { version = "1.6",  features = ["v4", "serde"] }
 rand       = "0.8"
 hex        = "0.4"
+base64     = "0.21"          # HTTP Basic Auth decoding for admin panel
 hmac       = "0.12"
 sha2       = "0.10"
 sha3       = "0.10"          # keccak256 — required for EIP-712 order signing
@@ -25,7 +26,7 @@ rmp-serde  = "1.1"           # msgpack encoding — required for HL action hash
 tracing    = "0.1"
 
 # Web dashboard
-axum         = "0.7"
+axum         = { version = "0.7", features = ["form"] }
 tower        = "0.4"
 tower-http   = { version = "0.5", features = ["cors"] }
 

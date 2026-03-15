@@ -58,6 +58,7 @@ mod tenant;
 mod ledger;
 mod stripe;
 mod privy;
+mod fund_tracker;
 
 use anyhow::Result;
 use log::{error, info, warn};
@@ -227,6 +228,7 @@ async fn main() -> Result<()> {
             session_secret:         config.session_secret.clone(),
             jwks_cache:             privy::new_jwks_cache(),
             apple_pay_domain_assoc: config.apple_pay_domain_assoc.clone(),
+            admin_password:         config.admin_password.clone(),
         };
         tokio::spawn(async move {
             if let Err(e) = web_dashboard::serve(app_state, 3000).await {

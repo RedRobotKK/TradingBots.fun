@@ -94,38 +94,63 @@ pub struct TenantConfig {
     /// Pro trial expiry — `Some(t)` while trial is active, `None` otherwise.
     /// When `Some` AND `tier == Free`, live trading is still allowed until `t`.
     pub trial_ends_at:   Option<DateTime<Utc>>,
+
+    // ── Legal & onboarding ────────────────────────────────────────────────
+
+    /// Timestamp when the tenant accepted the platform Terms & Risk Disclosure.
+    /// `None` means the terms wall has not yet been cleared — the `/app`
+    /// consumer routes will redirect to `/app/onboarding` until this is set.
+    pub terms_accepted_at:  Option<DateTime<Utc>>,
+
+    // ── Wallet & balance tracking ─────────────────────────────────────────
+
+    /// UTC timestamp when the tenant's HL wallet was first confirmed by the
+    /// operator or self-linked in `/app/settings`.  Used for audit purposes.
+    pub wallet_linked_at:   Option<DateTime<Utc>>,
+
+    /// Last known cleared (settled) HL balance in USD.
+    /// Updated by the trading loop on each cycle and used by `fund_tracker`
+    /// to detect deposits / withdrawals between cycles.
+    /// This is the *cleared* balance — NOT the mark-to-market equity.
+    pub hl_balance_usd:     f64,
 }
 
 impl TenantConfig {
     pub fn paper(name: &str, capital: f64) -> Self {
         TenantConfig {
-            display_name:    name.to_string(),
-            email:           None,
-            privy_did:       None,
-            stripe_customer: None,
-            stripe_sub_id:   None,
-            initial_capital: capital,
-            wallet_address:  None,
-            secret_key:      None,
-            tier:            TenantTier::Free,
-            live_trading:    false,
-            trial_ends_at:   None,
+            display_name:       name.to_string(),
+            email:              None,
+            privy_did:          None,
+            stripe_customer:    None,
+            stripe_sub_id:      None,
+            initial_capital:    capital,
+            wallet_address:     None,
+            secret_key:         None,
+            tier:               TenantTier::Free,
+            live_trading:       false,
+            trial_ends_at:      None,
+            terms_accepted_at:  None,
+            wallet_linked_at:   None,
+            hl_balance_usd:     0.0,
         }
     }
 
     pub fn live(name: &str, capital: f64, wallet: &str, secret: &str) -> Self {
         TenantConfig {
-            display_name:    name.to_string(),
-            email:           None,
-            privy_did:       None,
-            stripe_customer: None,
-            stripe_sub_id:   None,
-            initial_capital: capital,
-            wallet_address:  Some(wallet.to_string()),
-            secret_key:      Some(secret.to_string()),
-            tier:            TenantTier::Pro,
-            live_trading:    true,
-            trial_ends_at:   None,
+            display_name:       name.to_string(),
+            email:              None,
+            privy_did:          None,
+            stripe_customer:    None,
+            stripe_sub_id:      None,
+            initial_capital:    capital,
+            wallet_address:     Some(wallet.to_string()),
+            secret_key:         Some(secret.to_string()),
+            tier:               TenantTier::Pro,
+            live_trading:       true,
+            trial_ends_at:      None,
+            terms_accepted_at:  None,
+            wallet_linked_at:   None,
+            hl_balance_usd:     0.0,
         }
     }
 
@@ -323,6 +348,67 @@ impl TenantManager {
         log::info!("👤 New Privy user registered: tenant_id={} did={}", id, did);
         id
     }
+
+    // ── Legal acceptance ──────────────────────────────────────────────────────
+
+    /// Record that the tenant has accepted the platform Terms & Risk Disclosure.
+    ///
+    /// Idempotent — calling twice does not overwrite the original timestamp.
+    pub fn accept_terms(&mut self, id: &TenantId) -> Result<()> {
+        let handle = self.tenants.get_mut(id)
+            .ok_or_else(|| anyhow!("Tenant {} not found", id))?;
+        if handle.config.terms_accepted_at.is_none() {
+            handle.config.terms_accepted_at = Some(Utc::now());
+            log::info!("✅ Tenant {} accepted terms", id);
+        }
+        Ok(())
+    }
+
+    /// Returns `true` when the tenant has accepted the Terms & Risk Disclosure.
+    pub fn has_accepted_terms(&self, id: &TenantId) -> bool {
+        self.tenants.get(id)
+            .and_then(|h| h.config.terms_accepted_at)
+            .is_some()
+    }
+
+    // ── Wallet management ─────────────────────────────────────────────────────
+
+    /// Link a Hyperliquid wallet address to this tenant.
+    ///
+    /// The address must start with `"0x"` and be at least 10 characters long.
+    /// Stamps `wallet_linked_at` on first link; subsequent calls update the
+    /// address (e.g. if a user migrates to a new wallet) but preserve the
+    /// original `wallet_linked_at` timestamp.
+    pub fn link_wallet(&mut self, id: &TenantId, address: &str) -> Result<()> {
+        if !address.starts_with("0x") || address.len() < 10 {
+            return Err(anyhow!(
+                "Invalid wallet address '{}': must start with 0x and be ≥10 chars",
+                address
+            ));
+        }
+        let handle = self.tenants.get_mut(id)
+            .ok_or_else(|| anyhow!("Tenant {} not found", id))?;
+        handle.config.wallet_address = Some(address.to_string());
+        if handle.config.wallet_linked_at.is_none() {
+            handle.config.wallet_linked_at = Some(Utc::now());
+        }
+        log::info!("🔗 Tenant {} linked wallet {}", id, address);
+        Ok(())
+    }
+
+    // ── Balance tracking ──────────────────────────────────────────────────────
+
+    /// Update the stored HL cleared balance for a tenant.
+    ///
+    /// Returns the *previous* balance (needed by `fund_tracker::detect_and_record`
+    /// to compute the delta for deposit/withdrawal detection).
+    pub fn update_hl_balance(&mut self, id: &TenantId, new_balance: f64) -> Result<f64> {
+        let handle = self.tenants.get_mut(id)
+            .ok_or_else(|| anyhow!("Tenant {} not found", id))?;
+        let prev = handle.config.hl_balance_usd;
+        handle.config.hl_balance_usd = new_balance;
+        Ok(prev)
+    }
 }
 
 /// Shared `TenantManager` alias — passed around as Axum `State`.
@@ -427,5 +513,93 @@ mod tests {
         mgr.register_or_get_by_privy_did("did:privy:cltest0000000003", None);
         let result = mgr.find_by_privy_did("did:privy:nobody");
         assert!(result.is_none());
+    }
+
+    // ── Terms acceptance ──────────────────────────────────────────────────────
+
+    #[test]
+    fn new_tenant_has_not_accepted_terms() {
+        let mut mgr = TenantManager::new();
+        let id = mgr.register(TenantConfig::paper("Eve", 0.0));
+        assert!(!mgr.has_accepted_terms(&id));
+        assert!(mgr.get(&id).unwrap().config.terms_accepted_at.is_none());
+    }
+
+    #[test]
+    fn accept_terms_sets_timestamp() {
+        let mut mgr = TenantManager::new();
+        let id = mgr.register(TenantConfig::paper("Frank", 0.0));
+        mgr.accept_terms(&id).unwrap();
+        assert!(mgr.has_accepted_terms(&id));
+        assert!(mgr.get(&id).unwrap().config.terms_accepted_at.is_some());
+    }
+
+    #[test]
+    fn accept_terms_is_idempotent() {
+        let mut mgr = TenantManager::new();
+        let id = mgr.register(TenantConfig::paper("Grace", 0.0));
+        mgr.accept_terms(&id).unwrap();
+        let first_ts = mgr.get(&id).unwrap().config.terms_accepted_at;
+        // Small sleep is not safe in tests — just call again and verify it's the same value
+        mgr.accept_terms(&id).unwrap();
+        let second_ts = mgr.get(&id).unwrap().config.terms_accepted_at;
+        assert_eq!(first_ts, second_ts, "accept_terms must not overwrite the original timestamp");
+    }
+
+    // ── Wallet linking ────────────────────────────────────────────────────────
+
+    #[test]
+    fn link_wallet_stores_address_and_timestamp() {
+        let mut mgr = TenantManager::new();
+        let id = mgr.register(TenantConfig::paper("Heidi", 0.0));
+        mgr.link_wallet(&id, "0xAbCd1234567890ef").unwrap();
+        let cfg = &mgr.get(&id).unwrap().config;
+        assert_eq!(cfg.wallet_address.as_deref(), Some("0xAbCd1234567890ef"));
+        assert!(cfg.wallet_linked_at.is_some());
+    }
+
+    #[test]
+    fn link_wallet_preserves_original_timestamp_on_update() {
+        let mut mgr = TenantManager::new();
+        let id = mgr.register(TenantConfig::paper("Ivan", 0.0));
+        mgr.link_wallet(&id, "0xFirstWallet1234567890").unwrap();
+        let first_ts = mgr.get(&id).unwrap().config.wallet_linked_at;
+        mgr.link_wallet(&id, "0xSecondWallet12345678").unwrap();
+        let second_ts = mgr.get(&id).unwrap().config.wallet_linked_at;
+        assert_eq!(first_ts, second_ts, "wallet_linked_at must not change on re-link");
+    }
+
+    #[test]
+    fn link_wallet_rejects_non_hex_address() {
+        let mut mgr = TenantManager::new();
+        let id = mgr.register(TenantConfig::paper("Judy", 0.0));
+        assert!(mgr.link_wallet(&id, "not-a-wallet").is_err());
+    }
+
+    #[test]
+    fn link_wallet_rejects_short_address() {
+        let mut mgr = TenantManager::new();
+        let id = mgr.register(TenantConfig::paper("Karl", 0.0));
+        assert!(mgr.link_wallet(&id, "0x123").is_err());
+    }
+
+    // ── Balance tracking ──────────────────────────────────────────────────────
+
+    #[test]
+    fn update_hl_balance_returns_previous_value() {
+        let mut mgr = TenantManager::new();
+        let id = mgr.register(TenantConfig::paper("Laura", 0.0));
+        let prev = mgr.update_hl_balance(&id, 500.0).unwrap();
+        assert!((prev - 0.0).abs() < 0.001, "initial balance should be 0");
+        assert!((mgr.get(&id).unwrap().config.hl_balance_usd - 500.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn update_hl_balance_tracks_successive_changes() {
+        let mut mgr = TenantManager::new();
+        let id = mgr.register(TenantConfig::paper("Mike", 0.0));
+        mgr.update_hl_balance(&id, 1000.0).unwrap();
+        let prev2 = mgr.update_hl_balance(&id, 1500.0).unwrap();
+        assert!((prev2 - 1000.0).abs() < 0.001, "second update should return the first set value");
     }
 }

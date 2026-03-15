@@ -40,6 +40,9 @@ pub struct AppState {
     /// When set, served at `/.well-known/apple-developer-merchantid-domain-association`
     /// so Apple can verify the domain before showing the Apple Pay button.
     pub apple_pay_domain_assoc: Option<String>,
+    /// Password protecting the `/admin/*` operator panel.
+    /// Username is always `"admin"`.  Set via `ADMIN_PASSWORD` env var.
+    pub admin_password: Option<String>,
 }
 
 // ─────────────────────────────── Serde defaults ──────────────────────────────
@@ -184,6 +187,7 @@ impl Default for BotState {
             session_prices: HashMap::new(),
             status: String::new(), last_update: String::new(), next_cycle_at: 0,
             equity_history: vec![],
+            referral_code:  None,
         }
     }
 }
@@ -1212,6 +1216,7 @@ fn consumer_shell_open(title: &str, active: &str) -> String {
     {nav_overview}
     {nav_history}
     {nav_tax}
+    {nav_settings}
     <a href="/auth/logout" style="padding:8px 18px;border-radius:6px;font-size:.88rem;
        font-weight:400;color:#8b949e;background:transparent;text-decoration:none"
        title="Sign out">Sign out</a>
@@ -1223,6 +1228,7 @@ fn consumer_shell_open(title: &str, active: &str) -> String {
         nav_overview = nav("Overview", "/app"),
         nav_history  = nav("History",  "/app/history"),
         nav_tax      = nav("Tax",       "/app/tax"),
+        nav_settings = nav("Settings",  "/app/settings"),
     )
 }
 
@@ -1238,8 +1244,9 @@ async fn consumer_app_handler(
     use axum::response::IntoResponse;
 
     let state_arc = match resolve_consumer_state(&headers, &app).await {
-        Some(s) => s,
-        None    => return axum::response::Redirect::to("/login").into_response(),
+        ConsumerStateResult::Ok { state, .. } => state,
+        ConsumerStateResult::NeedsLogin       => return axum::response::Redirect::to("/login").into_response(),
+        ConsumerStateResult::NeedsOnboarding { .. } => return axum::response::Redirect::to("/app/onboarding").into_response(),
     };
     let s = state_arc.read().await;
 
@@ -1363,8 +1370,9 @@ async fn consumer_history_handler(
     use axum::response::IntoResponse;
 
     let state_arc = match resolve_consumer_state(&headers, &app).await {
-        Some(s) => s,
-        None    => return axum::response::Redirect::to("/login").into_response(),
+        ConsumerStateResult::Ok { state, .. } => state,
+        ConsumerStateResult::NeedsLogin       => return axum::response::Redirect::to("/login").into_response(),
+        ConsumerStateResult::NeedsOnboarding { .. } => return axum::response::Redirect::to("/app/onboarding").into_response(),
     };
     let s = state_arc.read().await;
 
@@ -1480,11 +1488,11 @@ async fn consumer_tax_handler(
     headers: HeaderMap,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    // Auth gate — redirect to /login if Privy is configured and session is missing
-    if app.privy_app_id.is_some() && get_session_tenant_id(&headers, &app.session_secret).is_none() {
-        return axum::response::Redirect::to("/login").into_response();
+    match resolve_consumer_state(&headers, &app).await {
+        ConsumerStateResult::Ok { .. }          => consumer_tax_page().into_response(),
+        ConsumerStateResult::NeedsLogin         => axum::response::Redirect::to("/login").into_response(),
+        ConsumerStateResult::NeedsOnboarding{..}=> axum::response::Redirect::to("/app/onboarding").into_response(),
     }
-    consumer_tax_page().into_response()
 }
 
 fn consumer_tax_page() -> axum::response::Html<String> {
@@ -1568,10 +1576,12 @@ fn consumer_tax_page() -> axum::response::Html<String> {
 async fn consumer_tax_csv_handler(
     State(app): State<AppState>,
     headers: HeaderMap,
-) -> impl axum::response::IntoResponse {
+) -> axum::response::Response {
     use axum::response::IntoResponse;
-    if app.privy_app_id.is_some() && get_session_tenant_id(&headers, &app.session_secret).is_none() {
-        return axum::response::Redirect::to("/login").into_response();
+    match resolve_consumer_state(&headers, &app).await {
+        ConsumerStateResult::NeedsLogin          => return axum::response::Redirect::to("/login").into_response(),
+        ConsumerStateResult::NeedsOnboarding{..} => return axum::response::Redirect::to("/app/onboarding").into_response(),
+        ConsumerStateResult::Ok { .. }           => {},
     }
     let (csv, _) = crate::ledger::read_all();
     let filename  = format!("redrobot_trades_{}.csv",
@@ -1604,23 +1614,58 @@ fn get_session_tenant_id(
     crate::privy::verify_session(session_val, secret).ok()
 }
 
+/// Result of resolving the consumer state for an incoming request.
+pub enum ConsumerStateResult {
+    /// Authenticated and has accepted terms — ready to serve trading data.
+    Ok {
+        state:     SharedState,
+        tenant_id: crate::tenant::TenantId,
+    },
+    /// No valid session cookie (or Privy is not configured in single-op mode).
+    NeedsLogin,
+    /// Valid session but tenant has not accepted the Terms & Risk Disclosure.
+    NeedsOnboarding {
+        tenant_id: crate::tenant::TenantId,
+    },
+}
+
 /// Resolve the `SharedState` that should be rendered for this request.
 ///
-/// - If `privy_app_id` is set → require a valid session → return the tenant's
-///   own `SharedState`.  Returns `None` if unauthenticated.
-/// - If `privy_app_id` is `None` (single-operator mode) → return the global
-///   `bot_state` without any authentication check.
+/// - If `privy_app_id` is set → require a valid session → check terms wall
+///   → return `ConsumerStateResult`.
+/// - If `privy_app_id` is `None` (single-operator mode) → bypass auth AND
+///   terms check, return `ConsumerStateResult::Ok` with the global state.
 async fn resolve_consumer_state(
     headers: &axum::http::HeaderMap,
     app:     &AppState,
-) -> Option<SharedState> {
-    if app.privy_app_id.is_some() {
-        let tid     = get_session_tenant_id(headers, &app.session_secret)?;
-        let tenants = app.tenants.read().await;
-        let handle  = tenants.get(&tid)?;
-        Some(handle.state.clone())   // clone the Arc — cheap, no data copy
-    } else {
-        Some(app.bot_state.clone())  // single-operator fallback
+) -> ConsumerStateResult {
+    // Single-operator mode: no auth, no terms wall
+    if app.privy_app_id.is_none() {
+        // Use a synthetic TenantId for the operator in single-op mode
+        let tid = crate::tenant::TenantId::from_str("operator");
+        return ConsumerStateResult::Ok { state: app.bot_state.clone(), tenant_id: tid };
+    }
+
+    // Multi-tenant mode: require valid session cookie
+    let tid = match get_session_tenant_id(headers, &app.session_secret) {
+        Some(t) => t,
+        None    => return ConsumerStateResult::NeedsLogin,
+    };
+
+    // Check terms acceptance
+    let tenants = app.tenants.read().await;
+    let handle  = match tenants.get(&tid) {
+        Some(h) => h,
+        None    => return ConsumerStateResult::NeedsLogin,
+    };
+
+    if handle.config.terms_accepted_at.is_none() {
+        return ConsumerStateResult::NeedsOnboarding { tenant_id: tid };
+    }
+
+    ConsumerStateResult::Ok {
+        state:     handle.state.clone(),
+        tenant_id: tid,
     }
 }
 
@@ -1867,6 +1912,641 @@ import('https://esm.sh/@privy-io/js-sdk-core@latest')
 /// 5. Deploy.  Apple Pay button appears automatically in Stripe Checkout on
 ///    Safari / iOS for your domain.
 ///
+// ─────────────────────────────────────────────────────────────────────────────
+//  Onboarding / Terms wall  (/app/onboarding)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// `GET /app/onboarding` — show the full Terms & Risk Disclosure.
+///
+/// Redirects authenticated users who have already accepted to `/app`.
+/// Redirects unauthenticated users to `/login`.
+async fn onboarding_handler(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    // Check session, but skip the terms check (that's the whole point of this page)
+    if app.privy_app_id.is_some() {
+        let tid = match get_session_tenant_id(&headers, &app.session_secret) {
+            Some(t) => t,
+            None    => return axum::response::Redirect::to("/login").into_response(),
+        };
+        // If already accepted, skip this page
+        let tenants = app.tenants.read().await;
+        if let Some(h) = tenants.get(&tid) {
+            if h.config.terms_accepted_at.is_some() {
+                return axum::response::Redirect::to("/app").into_response();
+            }
+        }
+    } else {
+        // Single-operator mode: no onboarding required
+        return axum::response::Redirect::to("/app").into_response();
+    }
+
+    let html = format!(r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RedRobot · Terms & Risk Disclosure</title>
+<style>
+  *{{box-sizing:border-box;margin:0;padding:0}}
+  body{{background:#0d1117;color:#c9d1d9;
+        font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+        min-height:100vh;padding:40px 16px}}
+  .wrap{{max-width:680px;margin:0 auto}}
+  .logo{{font-weight:700;font-size:.95rem;color:#e6edf3;letter-spacing:.04em;margin-bottom:32px}}
+  .logo span{{color:#3fb950}}
+  h1{{font-size:1.35rem;font-weight:700;color:#e6edf3;margin-bottom:8px}}
+  .sub{{font-size:.85rem;color:#8b949e;margin-bottom:28px}}
+  .section{{background:#161b22;border:1px solid #30363d;border-radius:12px;
+            padding:24px;margin-bottom:16px}}
+  h2{{font-size:.9rem;font-weight:700;color:#e6edf3;text-transform:uppercase;
+      letter-spacing:.06em;margin-bottom:12px}}
+  p{{font-size:.85rem;line-height:1.75;color:#8b949e;margin-bottom:10px}}
+  p:last-child{{margin-bottom:0}}
+  strong{{color:#c9d1d9}}
+  .warning{{border-color:#f8514950;background:#f8514908}}
+  .warning h2{{color:#f85149}}
+  .accept-row{{display:flex;flex-direction:column;gap:12px;margin-top:28px}}
+  .btn-accept{{background:#238636;color:#fff;border:none;border-radius:8px;
+               padding:14px 24px;font-size:1rem;font-weight:700;cursor:pointer;width:100%}}
+  .btn-accept:hover{{background:#2ea043}}
+  .cancel{{font-size:.8rem;color:#8b949e;text-align:center}}
+  .cancel a{{color:#58a6ff}}
+  input[type=checkbox]{{accent-color:#3fb950;width:16px;height:16px;cursor:pointer}}
+  .check-row{{display:flex;align-items:flex-start;gap:10px;font-size:.83rem;
+              color:#8b949e;line-height:1.55}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<p class="logo">Red<span>Robot</span></p>
+<h1>Terms &amp; Risk Disclosure</h1>
+<p class="sub">Please read and accept these terms before accessing the trading platform.</p>
+
+<div class="section warning">
+  <h2>⚠ High-Risk Investment Warning</h2>
+  <p><strong>Leveraged cryptocurrency trading involves substantial risk of loss.</strong>
+     You may lose all of your deposited capital. Past performance of any trading system,
+     signal, or algorithm does not guarantee future results.</p>
+  <p>Leveraged positions can be liquidated quickly during periods of high volatility.
+     You should only trade with funds you can afford to lose entirely.</p>
+</div>
+
+<div class="section">
+  <h2>Not Investment Advice</h2>
+  <p>RedRobot is an <strong>automated trading tool</strong>, not a licensed financial advisor,
+     broker, or investment manager. Nothing displayed on this platform constitutes investment
+     advice, a solicitation to trade, or a recommendation to buy or sell any asset.</p>
+  <p>All trading decisions are made by the algorithmic system. You are solely responsible
+     for evaluating the suitability of this service for your financial situation.</p>
+</div>
+
+<div class="section">
+  <h2>Self-Custody &amp; Fund Safety</h2>
+  <p>Your funds remain in <strong>your Hyperliquid account at all times</strong>.
+     RedRobot never holds, custodies, or has direct access to withdraw your funds.
+     The platform holds an API key with trading permissions only — not withdrawal access.</p>
+  <p>You retain full custody and can withdraw your funds directly from
+     <a href="https://app.hyperliquid.xyz" target="_blank" style="color:#58a6ff">
+     app.hyperliquid.xyz</a> at any time without our involvement.</p>
+</div>
+
+<div class="section">
+  <h2>Fees &amp; Revenue Disclosure</h2>
+  <p>RedRobot earns revenue through the following mechanisms:</p>
+  <p>• <strong>Subscription:</strong> $19.99/month for the Pro plan (live trading).<br>
+     • <strong>Builder fee:</strong> A small fee (approximately 0.01–0.03% per fill) is
+       embedded in every order and credited to the platform's Hyperliquid builder address.
+       This fee is in addition to Hyperliquid's standard taker/maker fees.<br>
+     • <strong>Referral:</strong> If you sign up to Hyperliquid via our referral link,
+       the platform earns a portion of your trading fee rebates.</p>
+  <p>All fees are disclosed above. There are no hidden charges.</p>
+</div>
+
+<div class="section">
+  <h2>Jurisdiction &amp; Eligibility</h2>
+  <p>This platform is <strong>not available</strong> to residents of the United States,
+     Canada, or any jurisdiction where accessing cryptocurrency derivatives trading is
+     prohibited by law. By accepting these terms you confirm that you are not accessing
+     this platform from a restricted jurisdiction.</p>
+  <p>You must be at least 18 years of age (or the age of majority in your jurisdiction,
+     whichever is higher) to use this platform.</p>
+</div>
+
+<div class="section">
+  <h2>Platform Availability &amp; Liability</h2>
+  <p>RedRobot is provided <strong>"as is"</strong> without warranty of any kind. The
+     platform may experience downtime, connectivity issues, or bugs that cause trading
+     to be delayed, skipped, or executed at unfavourable prices. The operator accepts
+     no liability for losses arising from system failures, network outages, exchange
+     API errors, or market conditions.</p>
+</div>
+
+<form method="POST" action="/app/onboarding/accept">
+  <div class="accept-row">
+    <label class="check-row">
+      <input type="checkbox" id="chk1" required>
+      <span>I have read and understand the risk warnings above. I am aware that I may
+            lose all of my deposited funds.</span>
+    </label>
+    <label class="check-row">
+      <input type="checkbox" id="chk2" required>
+      <span>I confirm I am not a resident of a restricted jurisdiction and I am of legal
+            trading age in my country.</span>
+    </label>
+    <label class="check-row">
+      <input type="checkbox" id="chk3" required>
+      <span>I acknowledge the fee structure described above, including the builder fee
+            embedded in every order.</span>
+    </label>
+    <button type="submit" class="btn-accept"
+            onclick="return document.getElementById('chk1').checked &&
+                            document.getElementById('chk2').checked &&
+                            document.getElementById('chk3').checked ||
+                     (alert('Please check all boxes before continuing.'), false)">
+      I Accept — Continue to Platform
+    </button>
+    <p class="cancel"><a href="/auth/logout">Sign out instead</a></p>
+  </div>
+</form>
+
+</div>
+</body>
+</html>"#);
+    axum::response::Html(html).into_response()
+}
+
+/// `POST /app/onboarding/accept` — record terms acceptance and redirect to `/app`.
+async fn onboarding_accept_handler(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let tid = match get_session_tenant_id(&headers, &app.session_secret) {
+        Some(t) => t,
+        None    => return axum::response::Redirect::to("/login").into_response(),
+    };
+
+    {
+        let mut tenants = app.tenants.write().await;
+        let _ = tenants.accept_terms(&tid);
+    }
+
+    axum::response::Redirect::to("/app").into_response()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Consumer settings page  (/app/settings)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// `GET /app/settings` — wallet linking, subscription status, account info.
+async fn consumer_settings_handler(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let tid = match resolve_consumer_state(&headers, &app).await {
+        ConsumerStateResult::Ok { tenant_id, .. } => tenant_id,
+        ConsumerStateResult::NeedsLogin           => return axum::response::Redirect::to("/login").into_response(),
+        ConsumerStateResult::NeedsOnboarding{..}  => return axum::response::Redirect::to("/app/onboarding").into_response(),
+    };
+
+    let (display_name, email, wallet, tier, trial_days, terms_ts, wallet_ts, hl_balance,
+         net_dep, total_dep, total_with) = {
+        let tenants = app.tenants.read().await;
+        let h = match tenants.get(&tid) {
+            Some(h) => h,
+            None    => return axum::response::Redirect::to("/login").into_response(),
+        };
+        let fund_sum  = crate::fund_tracker::summary(&tid);
+        (
+            h.config.display_name.clone(),
+            h.config.email.clone().unwrap_or_else(|| "—".to_string()),
+            h.config.wallet_address.clone(),
+            format!("{:?}", h.config.tier),
+            h.config.trial_days_remaining(),
+            h.config.terms_accepted_at.map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
+                .unwrap_or_else(|| "—".to_string()),
+            h.config.wallet_linked_at.map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
+                .unwrap_or_else(|| "—".to_string()),
+            h.config.hl_balance_usd,
+            fund_sum.net_deposits,
+            fund_sum.total_deposited,
+            fund_sum.total_withdrawn,
+        )
+    };
+
+    let wallet_section = if let Some(ref addr) = wallet {
+        format!(r#"
+<div class="metric-row">
+  <span class="ml">HL Wallet</span>
+  <span class="mv" style="font-family:monospace;font-size:.78rem">{addr}</span>
+</div>
+<div class="metric-row">
+  <span class="ml">Last known balance</span>
+  <span class="mv">${hl_balance:.2}</span>
+</div>
+<div class="metric-row">
+  <span class="ml">Wallet linked</span>
+  <span class="mv">{wallet_ts}</span>
+</div>"#,
+            addr       = addr,
+            hl_balance = hl_balance,
+            wallet_ts  = wallet_ts,
+        )
+    } else {
+        r#"<div class="info-box" style="margin-top:4px">
+  No wallet linked yet. Paste your Hyperliquid wallet address (0x…) below.
+  Your funds never leave your HL account — we only need the address to query
+  your balance and attribute trades to your account.
+</div>"#.to_string()
+    };
+
+    let tier_badge = match tier.as_str() {
+        "Pro"      => r#"<span style="color:#3fb950;font-weight:700">Pro</span>"#,
+        "Internal" => r#"<span style="color:#e3b341;font-weight:700">Internal</span>"#,
+        _          => r#"<span style="color:#8b949e;font-weight:600">Free</span>"#,
+    };
+
+    let trial_note = if trial_days > 0 {
+        format!(r#"<span style="color:#e3b341;font-size:.78rem;margin-left:6px">
+  ({trial_days} trial day{s} remaining)</span>"#,
+            trial_days = trial_days,
+            s          = if trial_days == 1 { "" } else { "s" },
+        )
+    } else { String::new() };
+
+    let mut html = consumer_shell_open("Settings", "Settings");
+    html.push_str(&format!(r#"
+<div class="card">
+  <div class="card-label">Account</div>
+  <div class="metric-row">
+    <span class="ml">Display name</span>
+    <span class="mv">{display_name}</span>
+  </div>
+  <div class="metric-row">
+    <span class="ml">Email</span>
+    <span class="mv">{email}</span>
+  </div>
+  <div class="metric-row">
+    <span class="ml">Plan</span>
+    <span class="mv">{tier_badge}{trial_note}</span>
+  </div>
+  <div class="metric-row">
+    <span class="ml">Terms accepted</span>
+    <span class="mv">{terms_ts}</span>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-label">Hyperliquid Wallet</div>
+  {wallet_section}
+  <form method="POST" action="/app/settings/wallet" style="margin-top:16px;display:flex;gap:8px">
+    <input name="address" type="text" placeholder="0x…wallet address"
+           style="flex:1;background:#0d1117;border:1px solid #30363d;border-radius:6px;
+                  padding:8px 12px;color:#e6edf3;font-size:.85rem;font-family:monospace"
+           pattern="0x[0-9a-fA-F]{{38,}}" required>
+    <button type="submit" class="btn btn-green" style="white-space:nowrap">
+      {link_label}
+    </button>
+  </form>
+  <p class="note">We store your wallet address only to query your HL balance.
+     We never have withdrawal access.</p>
+</div>
+
+<div class="card">
+  <div class="card-label">Fund History</div>
+  <div class="metric-row">
+    <span class="ml">Total deposited</span>
+    <span class="mv green">${total_dep:.2}</span>
+  </div>
+  <div class="metric-row">
+    <span class="ml">Total withdrawn</span>
+    <span class="mv red">−${total_with:.2}</span>
+  </div>
+  <div class="metric-row">
+    <span class="ml">Net deposits</span>
+    <span class="mv">${net_dep:.2}</span>
+  </div>
+  <p class="note" style="margin-top:10px">
+    Deposits and withdrawals are detected automatically by comparing your HL
+    balance between cycles. Small balance changes due to unrealised P&L are
+    filtered out.
+  </p>
+</div>
+
+{upgrade_block}
+
+<p class="note" style="text-align:center;margin-top:12px">
+  Need help? Contact support or
+  <a href="/auth/logout">sign out</a>.
+</p>
+"#,
+        display_name  = display_name,
+        email         = email,
+        tier_badge    = tier_badge,
+        trial_note    = trial_note,
+        terms_ts      = terms_ts,
+        wallet_section= wallet_section,
+        link_label    = if wallet.is_some() { "Update" } else { "Link Wallet" },
+        total_dep     = total_dep,
+        total_with    = total_with,
+        net_dep       = net_dep,
+        upgrade_block = if tier == "Free" { r#"<div class="card">
+  <div class="card-label">Upgrade to Pro</div>
+  <p style="font-size:.85rem;color:#8b949e;margin-bottom:14px">
+    Live algorithmic trading on Hyperliquid for <strong style="color:#e6edf3">$19.99/month</strong>.
+    Cancel any time.
+  </p>
+  <a href="/billing/checkout" class="btn btn-green">Upgrade to Pro →</a>
+</div>"# } else { "" },
+    ));
+    html.push_str(consumer_shell_close());
+    axum::response::Html(html).into_response()
+}
+
+/// `POST /app/settings/wallet` — validate and store HL wallet address.
+async fn consumer_settings_wallet_handler(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+    axum::Form(form): axum::Form<std::collections::HashMap<String, String>>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let tid = match get_session_tenant_id(&headers, &app.session_secret) {
+        Some(t) => t,
+        None    => return axum::response::Redirect::to("/login").into_response(),
+    };
+
+    let address = match form.get("address") {
+        Some(a) => a.trim().to_string(),
+        None    => return axum::response::Redirect::to("/app/settings?error=missing_address").into_response(),
+    };
+
+    {
+        let mut tenants = app.tenants.write().await;
+        match tenants.link_wallet(&tid, &address) {
+            Ok(_)  => log::info!("🔗 Tenant {} updated wallet to {}", tid, address),
+            Err(e) => {
+                log::warn!("⚠ Wallet link failed for tenant {}: {}", tid, e);
+                return axum::response::Redirect::to("/app/settings?error=invalid_address").into_response();
+            }
+        }
+    }
+
+    axum::response::Redirect::to("/app/settings?ok=wallet_linked").into_response()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Admin panel  (/admin, /admin/users)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Verify HTTP Basic Auth for admin routes.
+///
+/// Returns `Some(())` when credentials are valid, `None` when they are missing
+/// or incorrect.  Username is always `"admin"`.
+fn check_admin_auth(headers: &axum::http::HeaderMap, password: &str) -> bool {
+    let auth_header = match headers.get("authorization") {
+        Some(v) => match v.to_str() { Ok(s) => s, Err(_) => return false },
+        None    => return false,
+    };
+    let encoded = match auth_header.strip_prefix("Basic ") {
+        Some(e) => e,
+        None    => return false,
+    };
+    let decoded = match {
+        use base64::Engine as _;
+        base64::engine::general_purpose::STANDARD.decode(encoded)
+    } {
+        Ok(bytes) => match String::from_utf8(bytes) { Ok(s) => s, Err(_) => return false },
+        Err(_)    => return false,
+    };
+    // Expected format: "admin:<password>"
+    decoded == format!("admin:{}", password)
+}
+
+/// Respond with a WWW-Authenticate challenge to trigger the browser's
+/// Basic Auth dialog.
+fn www_authenticate_response() -> axum::response::Response {
+    use axum::response::IntoResponse;
+    axum::response::Response::builder()
+        .status(401)
+        .header("WWW-Authenticate", r#"Basic realm="RedRobot Admin", charset="UTF-8""#)
+        .body(axum::body::Body::from("Unauthorized"))
+        .unwrap_or_else(|_| axum::http::StatusCode::UNAUTHORIZED.into_response())
+}
+
+/// `GET /admin` — operator admin dashboard.
+async fn admin_dashboard_handler(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let password = match &app.admin_password {
+        Some(p) => p.clone(),
+        None    => return (axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                          "Admin panel is not configured. Set ADMIN_PASSWORD.").into_response(),
+    };
+
+    if !check_admin_auth(&headers, &password) {
+        return www_authenticate_response();
+    }
+
+    let (tenant_count, pro_count, free_count, total_balance) = {
+        let tenants = app.tenants.read().await;
+        let count    = tenants.count();
+        let pro      = tenants.all().filter(|h| h.config.tier == crate::tenant::TenantTier::Pro).count();
+        let free     = tenants.all().filter(|h| h.config.tier == crate::tenant::TenantTier::Free).count();
+        let balance: f64 = tenants.all().map(|h| h.config.hl_balance_usd).sum();
+        (count, pro, free, balance)
+    };
+
+    let html = format!(r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RedRobot · Admin</title>
+<style>
+  *{{box-sizing:border-box;margin:0;padding:0}}
+  body{{background:#0d1117;color:#c9d1d9;
+        font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+        min-height:100vh;padding:32px 16px}}
+  .wrap{{max-width:900px;margin:0 auto}}
+  .top{{display:flex;justify-content:space-between;align-items:center;margin-bottom:28px}}
+  .logo{{font-weight:700;font-size:.95rem;color:#e6edf3;letter-spacing:.04em}}
+  .logo span{{color:#3fb950}}
+  .badge-admin{{font-size:.72rem;color:#e3b341;border:1px solid #e3b34150;
+                background:#e3b34112;border-radius:12px;padding:2px 10px;margin-left:8px}}
+  .nav-admin a{{color:#58a6ff;font-size:.85rem;text-decoration:none;margin-left:16px}}
+  .cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:24px}}
+  .card{{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:20px}}
+  .cl{{font-size:.72rem;color:#8b949e;text-transform:uppercase;letter-spacing:.07em;margin-bottom:6px}}
+  .cv{{font-size:1.8rem;font-weight:700;color:#e6edf3}}
+  .cv-sm{{font-size:1.1rem;font-weight:600;color:#e6edf3}}
+  a{{color:#58a6ff;text-decoration:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="top">
+  <span class="logo">Red<span>Robot</span> <span class="badge-admin">Admin</span></span>
+  <div class="nav-admin">
+    <a href="/admin">Dashboard</a>
+    <a href="/admin/users">Users</a>
+    <a href="/">Operator view</a>
+  </div>
+</div>
+
+<div class="cards">
+  <div class="card"><div class="cl">Total Users</div><div class="cv">{tenant_count}</div></div>
+  <div class="card"><div class="cl">Pro</div><div class="cv" style="color:#3fb950">{pro_count}</div></div>
+  <div class="card"><div class="cl">Free</div><div class="cv" style="color:#8b949e">{free_count}</div></div>
+  <div class="card"><div class="cl">Total HL Balance</div><div class="cv-sm">${total_balance:.2}</div></div>
+</div>
+
+<p style="font-size:.85rem;color:#8b949e">
+  <a href="/admin/users">View all users →</a>
+</p>
+</div>
+</body>
+</html>"#,
+        tenant_count  = tenant_count,
+        pro_count     = pro_count,
+        free_count    = free_count,
+        total_balance = total_balance,
+    );
+
+    axum::response::Html(html).into_response()
+}
+
+/// `GET /admin/users` — table of all tenants with key stats.
+async fn admin_users_handler(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let password = match &app.admin_password {
+        Some(p) => p.clone(),
+        None    => return (axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                          "Admin panel not configured").into_response(),
+    };
+
+    if !check_admin_auth(&headers, &password) {
+        return www_authenticate_response();
+    }
+
+    let rows: String = {
+        let tenants = app.tenants.read().await;
+        tenants.all().map(|h| {
+            let tier_col = match h.config.tier {
+                crate::tenant::TenantTier::Pro      => "#3fb950",
+                crate::tenant::TenantTier::Internal => "#e3b341",
+                crate::tenant::TenantTier::Free     => "#8b949e",
+            };
+            let wallet_short = h.config.wallet_address.as_deref()
+                .map(|w| format!("{}…{}", &w[..6], &w[w.len().saturating_sub(4)..]))
+                .unwrap_or_else(|| "—".to_string());
+            let terms_ok = if h.config.terms_accepted_at.is_some() {
+                r#"<span style="color:#3fb950">✓</span>"#
+            } else {
+                r#"<span style="color:#f85149">✗</span>"#
+            };
+            let fund_sum = crate::fund_tracker::summary(&h.id);
+            format!(
+                "<tr>\
+                   <td style='font-family:monospace;font-size:.72rem'>{id_short}</td>\
+                   <td>{name}</td>\
+                   <td style='color:{tier_col}'>{tier:?}</td>\
+                   <td>{wallet}</td>\
+                   <td style='font-size:.8rem'>${bal:.2}</td>\
+                   <td style='font-size:.8rem'>${dep:.2}</td>\
+                   <td>{terms}</td>\
+                 </tr>",
+                id_short  = &h.id.as_str()[..8.min(h.id.as_str().len())],
+                name      = h.config.display_name,
+                tier_col  = tier_col,
+                tier      = h.config.tier,
+                wallet    = wallet_short,
+                bal       = h.config.hl_balance_usd,
+                dep       = fund_sum.net_deposits,
+                terms     = terms_ok,
+            )
+        }).collect()
+    };
+
+    let html = format!(r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RedRobot · Admin Users</title>
+<style>
+  *{{box-sizing:border-box;margin:0;padding:0}}
+  body{{background:#0d1117;color:#c9d1d9;
+        font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+        padding:32px 16px}}
+  .wrap{{max-width:960px;margin:0 auto}}
+  .top{{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}}
+  .logo{{font-weight:700;font-size:.95rem;color:#e6edf3;letter-spacing:.04em}}
+  .logo span{{color:#3fb950}}
+  .badge-admin{{font-size:.72rem;color:#e3b341;border:1px solid #e3b34150;
+                background:#e3b34112;border-radius:12px;padding:2px 10px;margin-left:8px}}
+  .nav-admin a{{color:#58a6ff;font-size:.85rem;text-decoration:none;margin-left:16px}}
+  .card{{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:24px}}
+  table{{width:100%;border-collapse:collapse;font-size:.82rem}}
+  th{{color:#8b949e;font-weight:500;padding:8px;border-bottom:1px solid #30363d;text-align:left}}
+  td{{padding:8px;border-bottom:1px solid #21262d;color:#c9d1d9}}
+  tr:last-child td{{border-bottom:none}}
+  a{{color:#58a6ff;text-decoration:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="top">
+  <span class="logo">Red<span>Robot</span> <span class="badge-admin">Admin</span></span>
+  <div class="nav-admin">
+    <a href="/admin">Dashboard</a>
+    <a href="/admin/users">Users</a>
+    <a href="/">Operator view</a>
+  </div>
+</div>
+<div class="card">
+  <table>
+    <thead>
+      <tr>
+        <th>ID (prefix)</th>
+        <th>Name</th>
+        <th>Tier</th>
+        <th>Wallet</th>
+        <th>HL Balance</th>
+        <th>Net Deposits</th>
+        <th>Terms</th>
+      </tr>
+    </thead>
+    <tbody>
+      {rows}
+    </tbody>
+  </table>
+</div>
+</div>
+</body>
+</html>"#,
+        rows = if rows.is_empty() {
+            "<tr><td colspan='7' style='color:#8b949e;text-align:center;padding:20px'>No users registered yet.</td></tr>".to_string()
+        } else { rows },
+    );
+
+    axum::response::Html(html).into_response()
+}
+
 /// Google Pay requires no domain verification — it is automatically enabled
 /// in Stripe Checkout when the user's device supports it.
 async fn apple_pay_domain_handler(
@@ -1904,6 +2584,15 @@ pub async fn serve(app_state: AppState, port: u16) -> Result<(), Box<dyn std::er
         .route("/login",                get(login_handler))
         .route("/auth/session",         post(auth_session_handler))
         .route("/auth/logout",          get(auth_logout_handler))
+        // ── Onboarding / Terms wall ─────────────────────────────────────────
+        .route("/app/onboarding",       get(onboarding_handler))
+        .route("/app/onboarding/accept",post(onboarding_accept_handler))
+        // ── Consumer settings ───────────────────────────────────────────────
+        .route("/app/settings",         get(consumer_settings_handler))
+        .route("/app/settings/wallet",  post(consumer_settings_wallet_handler))
+        // ── Admin panel (HTTP Basic Auth) ───────────────────────────────────
+        .route("/admin",                get(admin_dashboard_handler))
+        .route("/admin/users",          get(admin_users_handler))
         // ── Apple Pay domain verification ───────────────────────────────────
         .route("/.well-known/apple-developer-merchantid-domain-association",
                                         get(apple_pay_domain_handler))
