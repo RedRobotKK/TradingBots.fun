@@ -840,17 +840,17 @@ tr:hover td{{background:rgba(255,255,255,.025)}}
   </div>
   <div class="tbl-wrap scan-wrap">
     <div class="scan-beam"></div>
-    <table><tr><th>Symbol</th><th>Action</th><th>Conf</th><th>Rationale</th><th>Time</th></tr>
-    {dec_rows}</table>
+    <table><thead><tr><th>Symbol</th><th>Action</th><th>Conf</th><th>Rationale</th><th>Time</th></tr></thead><tbody id="sig-tbody">
+    {dec_rows}</tbody></table>
   </div>
 </div>
 
 <div class="section section-candidates">
   <div class="section-title">
-    <span>Candidates <span class="badge">{cand_n} scanned · ● = open</span></span>
+    <span>Candidates <span class="badge" id="cand-badge">{cand_n} scanned · ● = open</span></span>
   </div>
   <div class="tbl-wrap">
-    <table><tr><th>Symbol</th><th>Price</th><th>Session Δ</th><th title="RSI(14): &lt;30 oversold · &gt;70 overbought">RSI</th><th title="Signal confidence from last scan">Conf</th></tr>{cand_rows}</table>
+    <table><thead><tr><th>Symbol</th><th>Price</th><th>Session Δ</th><th title="RSI(14): &lt;30 oversold · &gt;70 overbought">RSI</th><th title="Signal confidence from last scan">Conf</th></tr></thead><tbody id="cand-tbody">{cand_rows}</tbody></table>
   </div>
   {wh}
 </div>
@@ -963,6 +963,52 @@ function toggleDetail(id){{
     /* Status bar text */
     var stEl=document.querySelector('.st-text');
     if(stEl&&s.status)stEl.textContent=s.status;
+
+    /* ── Candidates table live refresh ────────────────────────────────── */
+    var candTbody=document.getElementById('cand-tbody');
+    if(candTbody&&s.candidates&&s.candidates.length>0){{
+      var crows=(s.candidates||[]).map(function(c){{
+        var sym=c.symbol;
+        var logo='<img src="https://s3-symbol-logo.tradingview.com/crypto/XTVC'+sym+'--big.svg" '
+          +'onerror="this.onerror=null;this.src=\'https://assets.coincap.io/assets/icons/'+sym.toLowerCase()+'@2x.png\'" '
+          +'width="16" height="16" style="border-radius:50%;vertical-align:middle;margin-right:5px" alt="'+sym+'">';
+        var chgTd=c.change_pct!=null
+          ?'<td style="color:'+(c.change_pct>=0?'#3fb950':'#f85149')+'">'+(c.change_pct>=0?'+':'')+c.change_pct.toFixed(3)+'%</td>'
+          :'<td style="color:var(--muted)">—</td>';
+        var rsiTd=c.rsi!=null
+          ?'<td style="color:'+(c.rsi<30?'#3fb950':c.rsi>70?'#f85149':'#8b949e')+'">'+c.rsi.toFixed(0)+(c.rsi<30?' <span style="font-size:.72em">OS</span>':c.rsi>70?' <span style="font-size:.72em">OB</span>':'')+'</td>'
+          :'<td style="color:var(--muted)">—</td>';
+        var confTd=c.confidence!=null
+          ?'<td style="color:'+(c.confidence>=0.7?'#3fb950':c.confidence>=0.55?'#e3b341':'#8b949e')+'">'+(c.confidence*100).toFixed(0)+'%</td>'
+          :'<td style="color:var(--muted)">—</td>';
+        return '<tr><td>'+logo+sym+'</td><td>$'+c.price.toFixed(4)+'</td>'+chgTd+rsiTd+confTd+'</tr>';
+      }});
+      candTbody.innerHTML=crows.join('');
+    }}
+    var cb=document.getElementById('cand-badge');
+    if(cb&&s.candidates)cb.textContent=(s.candidates.length)+' scanned \u00b7 \u25cf = open';
+
+    /* ── Signal feed live refresh ──────────────────────────────────────── */
+    var sigTbody=document.getElementById('sig-tbody');
+    if(sigTbody&&s.recent_decisions&&s.recent_decisions.length>0){{
+      var decs=[].concat(s.recent_decisions).reverse().slice(0,20);
+      var srows=decs.map(function(d){{
+        var skip=d.action==='SKIP';
+        var ac=d.action==='BUY'?'\u25b2 BUY':d.action==='SELL'?'\u25bc SELL':'\u2014 SKIP';
+        var dc=d.action==='BUY'?'#3fb950':d.action==='SELL'?'#f85149':'#8b949e';
+        var rs=skip?'opacity:0.45;font-size:.88em':'font-weight:500';
+        var logo='<img src="https://s3-symbol-logo.tradingview.com/crypto/XTVC'+d.symbol+'--big.svg" '
+          +'onerror="this.onerror=null;this.src=\'https://assets.coincap.io/assets/icons/'+d.symbol.toLowerCase()+'@2x.png\'" '
+          +'width="15" height="15" style="border-radius:50%;vertical-align:middle;margin-right:5px" alt="'+d.symbol+'">';
+        var rat=d.rationale.length>90?d.rationale.substring(0,90)+'…':d.rationale;
+        return '<tr style="'+rs+'"><td>'+logo+'<b>'+d.symbol+'</b></td>'
+          +'<td style="color:'+dc+';font-weight:600">'+ac+'</td>'
+          +'<td>'+(d.confidence*100).toFixed(0)+'%</td>'
+          +'<td class="ts" style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+rat+'</td>'
+          +'<td class="ts">'+d.timestamp+'</td></tr>';
+      }});
+      sigTbody.innerHTML=srows.join('');
+    }}
   }}
 
   function poll(){{
@@ -1039,9 +1085,163 @@ async fn api_state_handler(State(state): State<SharedState>) -> Json<BotState> {
     Json(state.read().await.clone())
 }
 
+// ─────────────────────────── Consumer webapp /app ────────────────────────────
+
+/// Simplified consumer-facing webapp.
+///
+/// Users see:
+///   • Total equity & unrealised P&L
+///   • Number of open positions
+///   • Session return %
+///   • How to deposit/withdraw (instructions only — funds stay in their own HL account)
+///   • Live 5-second refresh (same `/api/state` polling as operator dashboard)
+///
+/// No technical indicators, no signal feed, no raw data.
+async fn consumer_app_handler(State(state): State<SharedState>) -> axum::response::Html<String> {
+    let s = state.read().await;
+
+    let committed: f64 = s.positions.iter().map(|p| p.size_usd).sum();
+    let unrealised: f64 = s.positions.iter().map(|p| p.unrealised_pnl).sum();
+    let equity = s.capital + committed + unrealised;
+    let total_pnl = s.pnl + unrealised;
+    let pnl_pct = if s.initial_capital > 0.0 { total_pnl / s.initial_capital * 100.0 } else { 0.0 };
+    let pnl_colour = if total_pnl >= 0.0 { "#3fb950" } else { "#f85149" };
+    let pnl_sign   = if total_pnl >= 0.0 { "+" } else { "-" };
+
+    axum::response::Html(format!(r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RedRobot · My Account</title>
+<style>
+  *{{box-sizing:border-box;margin:0;padding:0}}
+  body{{background:#0d1117;color:#c9d1d9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+        min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:24px 16px}}
+  h1{{font-size:1.1rem;color:#8b949e;font-weight:400;margin-bottom:28px;letter-spacing:.04em}}
+  .card{{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:28px 32px;
+         width:100%;max-width:440px;margin-bottom:16px}}
+  .card-label{{font-size:.75rem;color:#8b949e;text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px}}
+  .card-val{{font-size:2.4rem;font-weight:700;letter-spacing:-.01em;color:#e6edf3}}
+  .badge{{display:inline-block;font-size:1rem;font-weight:600;padding:4px 14px;
+           border-radius:20px;border:1px solid;margin-top:10px}}
+  .metric-row{{display:flex;justify-content:space-between;padding:10px 0;
+               border-bottom:1px solid #21262d}}
+  .metric-row:last-child{{border-bottom:none}}
+  .metric-label{{color:#8b949e;font-size:.88rem}}
+  .metric-val{{font-size:.92rem;font-weight:600;color:#e6edf3}}
+  .info-box{{background:#0d1117;border:1px solid #30363d;border-radius:8px;
+              padding:16px;font-size:.82rem;color:#8b949e;line-height:1.6}}
+  .info-box b{{color:#c9d1d9}}
+  .refresh-hint{{font-size:.72rem;color:#484f58;margin-top:20px}}
+  a{{color:#58a6ff;text-decoration:none}}
+  a:hover{{text-decoration:underline}}
+</style>
+</head>
+<body>
+<h1>RedRobot · My Account</h1>
+
+<div class="card">
+  <div class="card-label">Total Equity</div>
+  <div id="app-equity" class="card-val">${equity:.2}</div>
+  <div id="app-pnl-badge" class="badge" style="color:{pc};border-color:{pc}40;background:{pc}12">
+    {ps}${pnl:.2} &nbsp; {ps}{pp:.2}%
+  </div>
+</div>
+
+<div class="card">
+  <div class="metric-row">
+    <span class="metric-label">Free capital</span>
+    <span id="app-capital" class="metric-val">${capital:.2}</span>
+  </div>
+  <div class="metric-row">
+    <span class="metric-label">Open positions</span>
+    <span id="app-positions" class="metric-val">{open_n}</span>
+  </div>
+  <div class="metric-row">
+    <span class="metric-label">Closed trades</span>
+    <span id="app-closed" class="metric-val">{closed_n}</span>
+  </div>
+  <div class="metric-row">
+    <span class="metric-label">Initial deposit</span>
+    <span class="metric-val">${init:.2}</span>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-label">Deposit / Withdraw</div>
+  <div class="info-box">
+    Your funds remain in <b>your Hyperliquid account</b> at all times.<br><br>
+    • To <b>deposit</b>, transfer USDC to your HL wallet and the bot will
+      automatically start trading with the new balance on the next cycle.<br><br>
+    • To <b>withdraw</b>, log in to <a href="https://app.hyperliquid.xyz" target="_blank">app.hyperliquid.xyz</a>
+      and withdraw directly — no approval from us needed.<br><br>
+    You are always in full control of your funds.
+  </div>
+</div>
+
+<p class="refresh-hint">Auto-refreshes every 5 s · Last update: {ts}</p>
+
+<script>
+(function(){{
+  function $id(id){{return document.getElementById(id);}}
+  function fmt2(n){{return Math.abs(n).toFixed(2);}}
+  function sign(n){{return n>=0?'+':'-';}}
+  function col(n){{return n>=0?'#3fb950':'#f85149';}}
+
+  function applyPoll(s){{
+    var committed=0,unrealised=0;
+    (s.positions||[]).forEach(function(p){{unrealised+=p.unrealised_pnl;committed+=p.size_usd;}});
+    var equity=s.capital+committed+unrealised;
+    var total_pnl=s.pnl+unrealised;
+    var pnl_pct=s.initial_capital>0?(total_pnl/s.initial_capital*100):0;
+    var c=col(total_pnl);
+
+    var ev=$id('app-equity');
+    if(ev)ev.textContent='$'+equity.toFixed(2);
+
+    var pnlb=$id('app-pnl-badge');
+    if(pnlb){{
+      var sg=sign(total_pnl);
+      pnlb.textContent=sg+'$'+fmt2(total_pnl)+' \u00a0 '+sg+Math.abs(pnl_pct).toFixed(2)+'%';
+      pnlb.style.color=c;pnlb.style.borderColor=c+'40';pnlb.style.background=c+'12';
+    }}
+
+    var cap=$id('app-capital');
+    if(cap)cap.textContent='$'+s.capital.toFixed(2);
+
+    var posEl=$id('app-positions');
+    if(posEl)posEl.textContent=(s.positions||[]).length;
+
+    var clEl=$id('app-closed');
+    if(clEl)clEl.textContent=(s.closed_trades||[]).length;
+  }}
+
+  function poll(){{
+    fetch('/api/state').then(function(r){{return r.json();}}).then(applyPoll).catch(function(){{}});
+  }}
+  setTimeout(poll,2000);
+  setInterval(poll,5000);
+}})();
+</script>
+</body></html>"#,
+        equity    = equity,
+        pc        = pnl_colour,
+        ps        = pnl_sign,
+        pnl       = total_pnl.abs(),
+        pp        = pnl_pct.abs(),
+        capital   = s.capital,
+        open_n    = s.positions.len(),
+        closed_n  = s.closed_trades.len(),
+        init      = s.initial_capital,
+        ts        = s.last_update,
+    ))
+}
+
 pub async fn serve(state: SharedState, port: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let app = Router::new()
         .route("/", get(dashboard_handler))
+        .route("/app", get(consumer_app_handler))
         .route("/api/state", get(api_state_handler))
         .with_state(state);
     let addr = format!("0.0.0.0:{}", port);

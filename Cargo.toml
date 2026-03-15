@@ -20,7 +20,8 @@ hex        = "0.4"
 hmac       = "0.12"
 sha2       = "0.10"
 sha3       = "0.10"          # keccak256 — required for EIP-712 order signing
-k256       = { version = "0.13", features = ["ecdsa"] }  # secp256k1 — HL order signing
+k256       = { version = "0.13", features = ["ecdsa", "arithmetic"] }  # secp256k1 — HL order signing
+rmp-serde  = "1.1"           # msgpack encoding — required for HL action hash
 tracing    = "0.1"
 
 # Web dashboard

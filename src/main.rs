@@ -54,6 +54,7 @@ mod coins;
 mod funding;
 mod trade_log;
 mod daily_analyst;
+mod tenant;
 
 use anyhow::Result;
 use log::{error, info, warn};
@@ -964,7 +965,8 @@ async fn analyse_symbol(
     } else if !config.paper_trading && dec.action != "SKIP" {
         let account = hl.get_account().await?;
         if risk::should_trade(&dec, &account)? {
-            match hl.place_order(&dec).await {
+            let capital = bot_state.read().await.capital;
+            match hl.place_order(symbol, &dec, capital).await {
                 Ok(id) => { info!("✅ {} {} @ ${:.4} [{}]", dec.action, symbol, dec.entry_price, id); db.log_trade(&dec, &id).await.ok(); }
                 Err(e) => error!("❌ Order failed {}: {}", symbol, e),
             }
