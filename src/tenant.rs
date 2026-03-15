@@ -184,11 +184,11 @@ impl TenantConfig {
 
     /// Maximum simultaneous open positions allowed for this tenant.
     ///
-    /// | Tier / state                         | Cap      |
-    /// |--------------------------------------|----------|
-    /// | Pro or Internal                      | no limit |
-    /// | Free **with an active 14-day trial** | no limit |
-    /// | Free **after trial expires / no trial** | 2     |
+    /// | Tier / state                            | Cap      |
+    /// |-----------------------------------------|----------|
+    /// | Pro or Internal                         | no limit |
+    /// | Free **with an active 14-day trial**    | 6        |
+    /// | Free **after trial expires / no trial** | 2        |
     ///
     /// Returns `usize::MAX` for "no limit" so callers can write
     /// `positions.len() >= tenant.max_positions()` uniformly.
@@ -199,7 +199,7 @@ impl TenantConfig {
                 let trial_active = self.trial_ends_at
                     .map(|exp| Utc::now() < exp)
                     .unwrap_or(false);
-                if trial_active { usize::MAX } else { 2 }
+                if trial_active { 6 } else { 2 }
             }
         }
     }
@@ -659,10 +659,10 @@ mod tests {
     }
 
     #[test]
-    fn free_tenant_with_active_trial_has_unlimited_positions() {
+    fn free_tenant_with_active_trial_gets_6_positions() {
         let mut cfg = TenantConfig::paper("Trial User", 0.0);
         cfg.trial_ends_at = Some(Utc::now() + Duration::days(10));
-        assert_eq!(cfg.max_positions(), usize::MAX);
+        assert_eq!(cfg.max_positions(), 6);
         assert!(!cfg.is_trial_expired_free());
     }
 
@@ -689,7 +689,7 @@ mod tests {
         assert!(cfg.trial_ends_at.is_some(), "trial_ends_at must be set on signup");
         let days = cfg.trial_days_remaining();
         assert!(days >= 13 && days <= 14, "trial must be ~14 days, got {}", days);
-        assert_eq!(cfg.max_positions(), usize::MAX, "in-trial user must have unlimited positions");
+        assert_eq!(cfg.max_positions(), 6, "in-trial user must have 6-position cap");
         assert!(cfg.live_trading, "live trading must be enabled during trial");
     }
 }

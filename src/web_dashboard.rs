@@ -880,7 +880,7 @@ tr:hover td{{background:rgba(255,255,255,.025)}}
   </h1>
   <div class="header-right">
     <span class="ts">⟳ <span id="cntdn">30s</span> &nbsp;·&nbsp; {last_update}</span>
-    <a href="/login" class="btn-cta">
+    <a href="/login" class="btn-cta" data-funnel="login_click">
       <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor"
            stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="8" cy="5" r="3"/><path d="M2 14c0-3.3 2.7-6 6-6s6 2.7 6 6"/>
@@ -1126,6 +1126,7 @@ function toggleDetail(id){{
   setInterval(poll,5000);
 }})();
 </script>
+{tracking_js}
 </body></html>"#,
         last_update  = s.last_update,
         equity       = equity,
@@ -1164,6 +1165,7 @@ function toggleDetail(id){{
         dec_rows          = dec_rows,
         next_cycle_at_ms  = s.next_cycle_at,
         sparkline_svg     = sparkline_svg,
+        tracking_js       = crate::funnel::client_tracking_script(),
     ))
 }
 
@@ -2371,7 +2373,8 @@ async fn consumer_settings_handler(
     positions, full live trading, and priority support —
     <strong style="color:#e6edf3">$19.99/month</strong>. Cancel any time.
   </p>
-  <a href="/billing/checkout" class="btn btn-green" style="font-size:.92rem;padding:10px 22px">
+  <a href="/billing/checkout" class="btn btn-green" data-funnel="upgrade_click"
+     style="font-size:.92rem;padding:10px 22px">
     Upgrade to Pro →
   </a>
 </div>"#
@@ -2383,7 +2386,7 @@ async fn consumer_settings_handler(
     Live algorithmic trading on Hyperliquid for <strong style="color:#e6edf3">$19.99/month</strong>.
     Cancel any time.
   </p>
-  <a href="/billing/checkout" class="btn btn-green">Upgrade to Pro →</a>
+  <a href="/billing/checkout" class="btn btn-green" data-funnel="upgrade_click">Upgrade to Pro →</a>
 </div>"#
         } else { "" },
     ));
@@ -2853,6 +2856,57 @@ async fn public_tvl_svg_handler(
     (StatusCode::OK, headers, svg)
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  POST /api/funnel  — client-side event ingestion
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Accepts `navigator.sendBeacon` payloads from the client tracking script.
+///
+/// Validates the `event_type` against the known set, attaches the server-side
+/// tenant context if the session cookie is present, then writes to `funnel_events`.
+async fn funnel_event_handler(
+    State(app):    State<AppState>,
+    headers:       HeaderMap,
+    body:          axum::extract::Json<crate::funnel::FunnelEventPayload>,
+) -> StatusCode {
+    use crate::funnel::{FunnelEvent, record};
+
+    let payload = body.0;
+
+    // Map the string event_type → enum (rejects unknown values)
+    let event = match payload.event_type.as_str() {
+        "PAGE_VIEW"         => FunnelEvent::PageView,
+        "LOGIN_CLICK"       => FunnelEvent::LoginClick,
+        "AUTH_SUCCESS"      => FunnelEvent::AuthSuccess,
+        "TRIAL_START"       => FunnelEvent::TrialStart,
+        "TERMS_ACCEPTED"    => FunnelEvent::TermsAccepted,
+        "WALLET_LINKED"     => FunnelEvent::WalletLinked,
+        "FIRST_POSITION"    => FunnelEvent::FirstPosition,
+        "UPGRADE_CLICK"     => FunnelEvent::UpgradeClick,
+        "CHECKOUT_STARTED"  => FunnelEvent::CheckoutStarted,
+        "UPGRADED"          => FunnelEvent::Upgraded,
+        "TRIAL_EXPIRED"     => FunnelEvent::TrialExpired,
+        "CHURNED"           => FunnelEvent::Churned,
+        "AD_IMPRESSION"     => FunnelEvent::AdImpression,
+        "AD_CLICK"          => FunnelEvent::AdClick,
+        _                   => return StatusCode::BAD_REQUEST,
+    };
+
+    // Resolve tenant from session cookie if present (pre-auth events have None)
+    let tid = get_session_tenant_id(&headers, &app.session_secret)
+        .map(crate::tenant::TenantId::from_str);
+
+    record(
+        &app.db,
+        event,
+        &payload.anon_id,
+        tid.as_ref(),
+        Some(payload.extra),
+    ).await;
+
+    StatusCode::NO_CONTENT
+}
+
 pub async fn serve(app_state: AppState, port: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let app = Router::new()
         .route("/", get(dashboard_handler))
@@ -2886,6 +2940,8 @@ pub async fn serve(app_state: AppState, port: u16) -> Result<(), Box<dyn std::er
         // Used by the landing page TVL hero graph and external integrations.
         .route("/api/public/tvl",       get(public_tvl_handler))
         .route("/api/public/tvl/svg",   get(public_tvl_svg_handler))
+        // ── Funnel / analytics (first-party, no third-party scripts) ───────
+        .route("/api/funnel",           post(funnel_event_handler))
         .with_state(app_state);
     let addr = format!("0.0.0.0:{}", port);
     log::info!("🌐 Dashboard at http://{}", addr);

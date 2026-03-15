@@ -59,6 +59,7 @@ mod ledger;
 mod stripe;
 mod privy;
 mod fund_tracker;
+mod funnel;
 
 use anyhow::Result;
 use log::{error, info, warn};
