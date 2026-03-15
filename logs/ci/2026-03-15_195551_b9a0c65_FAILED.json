@@ -1,0 +1,133 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-03-15T19:55:12Z",
+    "commit": "b9a0c65",
+    "commit_full": "b9a0c654db18dce3d94d4902e378efa2bafe13c4",
+    "commit_message": "feat: integrate Coinzilla ad slot for Free-tier users in consumer dashboard",
+    "branch": "master",
+    "overall_status": "FAILED",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
+    "cargo": "cargo 1.93.1 (083ac5135 2025-12-15)",
+    "os_kernel": "6.8.0-101-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 14,
+      "total_passed": 0,
+      "total_failed": 0,
+      "total_ignored": 0,
+      "failures": []
+    },
+    "clippy": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 21,
+      "error_count": 9,
+      "errors": [
+        {
+          "code": "E",
+          "message": "error returned from database: relation \"funnel_events\" does not exist",
+          "file": "src/funnel.rs",
+          "line": 115,
+          "col": 18
+        },
+        {
+          "code": "E0433",
+          "message": "failed to resolve: could not find `migrate` in `sqlx`",
+          "file": "src/db.rs",
+          "line": 133,
+          "col": 15
+        },
+        {
+          "code": "E0425",
+          "message": "cannot find type `StatusCode` in this scope",
+          "file": "src/web_dashboard.rs",
+          "line": 2940,
+          "col": 6
+        },
+        {
+          "code": "E0433",
+          "message": "failed to resolve: use of undeclared type `StatusCode`",
+          "file": "src/web_dashboard.rs",
+          "line": 2961,
+          "col": 39
+        },
+        {
+          "code": "E0433",
+          "message": "failed to resolve: use of undeclared type `StatusCode`",
+          "file": "src/web_dashboard.rs",
+          "line": 2976,
+          "col": 5
+        },
+        {
+          "code": "E0282",
+          "message": "type annotations needed",
+          "file": "src/db.rs",
+          "line": 133,
+          "col": 9
+        },
+        {
+          "code": "E0631",
+          "message": "type mismatch in function arguments",
+          "file": "src/web_dashboard.rs",
+          "line": 2966,
+          "col": 14
+        },
+        {
+          "code": "E0277",
+          "message": "the trait bound `fn(State<...>, ..., ...) -> ... {funnel_event_handler}: Handler<_, _>` is not satisfied",
+          "file": "src/web_dashboard.rs",
+          "line": 3013,
+          "col": 46
+        },
+        {
+          "code": "E",
+          "message": "could not compile `redrobot-hedgebot` (bin \"redrobot-hedgebot\") due to 8 previous errors"
+        }
+      ]
+    },
+    "audit": {
+      "status": "ADVISORY",
+      "exit_code": 1,
+      "duration_seconds": 3,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2023-0071",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2023-0071",
+          "severity": "5.9 (medium)",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "hedgebot",
+    "status": "active",
+    "active_since": "Sun 2026-03-15 07:24:17 UTC",
+    "recent_logs": [
+      "Mar 15 07:24:17 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: hedgebot.service: Deactivated successfully.",
+      "Mar 15 07:24:17 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Stopped hedgebot.service - RedRobot HedgeBot.",
+      "Mar 15 07:24:17 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: hedgebot.service: Consumed 2.825s CPU time, 10.7M memory peak, 4.7M memory swap peak.",
+      "Mar 15 07:24:17 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Starting hedgebot.service - RedRobot HedgeBot...",
+      "Mar 15 07:24:17 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Started hedgebot.service - RedRobot HedgeBot."
+    ]
+  }
+}
