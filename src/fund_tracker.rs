@@ -284,9 +284,8 @@ pub fn summary(tenant_id: &TenantId) -> FundSummary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
 
-    // Override the data path for tests by writing to a temp dir via a helper
+    // Logic is tested in-memory; csv_path is hard-coded to "data/funds" so
     // that patches the directory.  Since csv_path is hard-coded to "data/funds",
     // we test the logic independently via in-memory equivalents.
 

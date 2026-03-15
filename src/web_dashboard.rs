@@ -1918,7 +1918,6 @@ import('https://esm.sh/@privy-io/js-sdk-core@latest')
 /// 4. Set `APPLE_PAY_DOMAIN_ASSOC=<file contents>` in your `.env`.
 /// 5. Deploy.  Apple Pay button appears automatically in Stripe Checkout on
 ///    Safari / iOS for your domain.
-///
 // ─────────────────────────────────────────────────────────────────────────────
 //  Onboarding / Terms wall  (/app/onboarding)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2558,8 +2557,9 @@ async fn admin_users_handler(
 /// in Stripe Checkout when the user's device supports it.
 async fn apple_pay_domain_handler(
     State(app): State<AppState>,
-) -> impl axum::response::IntoResponse {
+) -> axum::response::Response {
     use axum::http::StatusCode;
+    use axum::response::IntoResponse;
     match &app.apple_pay_domain_assoc {
         Some(content) => (
             StatusCode::OK,

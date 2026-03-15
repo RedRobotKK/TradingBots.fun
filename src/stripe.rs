@@ -30,7 +30,7 @@ use axum::{
     response::{Html, IntoResponse, Redirect, Response},
 };
 use hmac::{Hmac, Mac};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use sha2::Sha256;
 use std::collections::HashMap;
 
