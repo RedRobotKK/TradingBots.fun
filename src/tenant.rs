@@ -688,7 +688,7 @@ mod tests {
         let cfg = &mgr.get(&id).unwrap().config;
         assert!(cfg.trial_ends_at.is_some(), "trial_ends_at must be set on signup");
         let days = cfg.trial_days_remaining();
-        assert!(days >= 13 && days <= 14, "trial must be ~14 days, got {}", days);
+        assert!((13..=14).contains(&days), "trial must be ~14 days, got {}", days);
         assert_eq!(cfg.max_positions(), 6, "in-trial user must have 6-position cap");
         assert!(cfg.live_trading, "live trading must be enabled during trial");
     }
