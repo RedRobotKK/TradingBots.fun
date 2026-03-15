@@ -108,9 +108,9 @@ pub async fn record(
         None    => return, // no DB — silently skip
     };
 
-    let tid = tenant_id.map(|t| {
+    let tid = tenant_id.and_then(|t| {
         uuid::Uuid::parse_str(t.as_str()).ok()
-    }).flatten();
+    });
 
     // Use query() (not query!()) to avoid compile-time DB schema checks —
     // the table is created at runtime via migrations, not at compile time.
@@ -135,6 +135,7 @@ pub async fn record(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Record a landing-page view with optional UTM/referrer context.
+#[allow(dead_code)] // called from landing-page handler once traffic tracking ships
 pub async fn page_view(
     db:      &Option<SharedDb>,
     anon_id: &str,
@@ -153,6 +154,7 @@ pub async fn page_view(
 }
 
 /// Record a successful Privy login + optional TRIAL_START for new users.
+#[allow(dead_code)] // called from auth_session_handler once server-side tracking ships
 pub async fn auth_success(
     db:        &Option<SharedDb>,
     anon_id:   &str,
@@ -172,6 +174,7 @@ pub async fn auth_success(
 /// `network`  – e.g. `"coinzilla"`, `"bitmedia"`, `"adsterra"`
 /// `ad_unit`  – e.g. `"banner_300x250"`, `"sticky_footer"`
 /// `cpm_usd`  – agreed/estimated CPM for this placement (used in ad_revenue_daily view)
+#[allow(dead_code)] // server-side fallback; client fires via sendBeacon to /api/funnel
 pub async fn ad_impression(
     db:        &Option<SharedDb>,
     anon_id:   &str,

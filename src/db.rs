@@ -107,6 +107,7 @@ pub struct Database {
 /// `Arc`-wrapped `Database` — the canonical way to share it across tasks.
 pub type SharedDb = Arc<Database>;
 
+#[allow(dead_code)] // public API — call sites added as features ship
 impl Database {
     // ── Lifecycle ──────────────────────────────────────────────────────────────
 
@@ -482,6 +483,7 @@ impl Database {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// AI provider selection — read from `AI_PROVIDER` env var.
+#[allow(dead_code)] // wired to query_ai which is unused until AI features ship
 #[derive(Debug, Clone, PartialEq)]
 pub enum AiProvider {
     Claude,
@@ -491,6 +493,7 @@ pub enum AiProvider {
     Ollama,
 }
 
+#[allow(dead_code)]
 impl AiProvider {
     pub fn from_env() -> Self {
         match std::env::var("AI_PROVIDER")
@@ -521,6 +524,7 @@ impl AiProvider {
 /// - **openrouter**: OpenAI-compatible; set `AI_MODEL` to any OpenRouter model string
 /// - **ollama**: local/remote Ollama instance; `OLLAMA_BASE_URL` must point to a
 ///   **separate dedicated droplet** — never the trading-bot VPS (memory contention)
+#[allow(dead_code)] // used when AI_PROVIDER is set; call sites ship with AI integration
 pub async fn query_ai(prompt: &str) -> Result<String> {
     let provider  = AiProvider::from_env();
     let api_key   = std::env::var("AI_API_KEY").unwrap_or_default();
@@ -619,6 +623,7 @@ pub async fn query_ai(prompt: &str) -> Result<String> {
 
 /// Backwards-compat shim — prefer `query_ai()` for new call sites.
 /// Kept so any external integrations using the old name still compile.
+#[allow(dead_code)]
 #[deprecated(note = "Use query_ai() — it respects the AI_PROVIDER env var")]
 pub async fn query_ollama(base_url: &str, model: &str, prompt: &str) -> Result<String> {
     // Temporarily override env so query_ai routes to Ollama with the given params
