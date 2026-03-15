@@ -475,9 +475,9 @@ async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
                 Some(pct) => {
                     let cc = if pct >= 0.0 { "#3fb950" } else { "#f85149" };
                     let cs = if pct >= 0.0 { "+" } else { "" };
-                    format!("<td style='color:{}'>{}{:.3}%</td>", cc, cs, pct)
+                    format!("<td class='tbl-r' style='color:{}'>{}{:.3}%</td>", cc, cs, pct)
                 }
-                None => "<td style='color:var(--muted)'>—</td>".to_string(),
+                None => "<td class='tbl-r' style='color:var(--muted)'>—</td>".to_string(),
             };
 
             // Find open position for this symbol (if any)
@@ -522,12 +522,12 @@ async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
                                       else if r > 70.0 { ("#f85149", "OB") }
                                       else { ("#8b949e", "") };
                     if label.is_empty() {
-                        format!("<td style='color:{rc}'>{r:.0}</td>")
+                        format!("<td class='tbl-c' style='color:{rc}'>{r:.0}</td>")
                     } else {
-                        format!("<td style='color:{rc}'>{r:.0} <span style='font-size:.72em'>{label}</span></td>")
+                        format!("<td class='tbl-c' style='color:{rc}'>{r:.0} <span style='font-size:.72em'>{label}</span></td>")
                     }
                 }
-                None => "<td style='color:var(--muted)'>—</td>".to_string(),
+                None => "<td class='tbl-c' style='color:var(--muted)'>—</td>".to_string(),
             };
 
             // Confidence cell: colour-graded white→yellow→green
@@ -535,14 +535,14 @@ async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
                 Some(cf) => {
                     let pct = cf * 100.0;
                     let cc  = if pct >= 70.0 { "#3fb950" } else if pct >= 55.0 { "#e3b341" } else { "#8b949e" };
-                    format!("<td style='color:{cc}'>{pct:.0}%</td>")
+                    format!("<td class='tbl-c' style='color:{cc}'>{pct:.0}%</td>")
                 }
-                None => "<td style='color:var(--muted)'>—</td>".to_string(),
+                None => "<td class='tbl-c' style='color:var(--muted)'>—</td>".to_string(),
             };
 
-            format!("<tr>\
+            format!("<tr data-sym='{sym}'>\
                        <td style='{ss}'>{logo}{sym}{dot}{pnl}{rbadge}</td>\
-                       <td>${price:.4}</td>\
+                       <td class='tbl-r'>${price:.4}</td>\
                        {chg_td}\
                        {rsi_td}\
                        {conf_td}\
@@ -867,14 +867,24 @@ body{{background:var(--bg);color:var(--text);
 .sig-row{{animation:fadeSlide .3s ease both}}
 /* ── Tables ── */
 .tbl-wrap{{overflow-x:auto;-webkit-overflow-scrolling:touch}}
-table{{width:100%;border-collapse:collapse;font-size:.74em;min-width:340px}}
+table{{width:100%;border-collapse:collapse;font-size:.74em;table-layout:fixed}}
 th{{color:var(--muted);text-align:left;padding:6px 8px;border-bottom:1px solid var(--border);
-    white-space:nowrap;font-weight:500;font-size:.9em;letter-spacing:.4px;text-transform:uppercase}}
-td{{padding:6px 8px;border-bottom:1px solid rgba(48,54,61,.5);vertical-align:middle}}
+    white-space:nowrap;font-weight:500;font-size:.9em;letter-spacing:.4px;text-transform:uppercase;
+    overflow:hidden;text-overflow:ellipsis}}
+td{{padding:6px 8px;border-bottom:1px solid rgba(48,54,61,.5);vertical-align:middle;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    font-variant-numeric:tabular-nums;
+    transition:color .28s ease,opacity .18s ease}}
 tr:last-child td{{border-bottom:none}}
 tr:hover td{{background:rgba(255,255,255,.025)}}
-.empty-td{{color:var(--muted);text-align:center;padding:16px}}
+.empty-td{{color:var(--muted);text-align:center;padding:16px;white-space:normal}}
 .ts{{color:var(--muted);font-size:.85em;white-space:nowrap}}
+/* Numeric column alignment helpers */
+.tbl-r{{text-align:right}}
+.tbl-c{{text-align:center}}
+/* Subtle cell-pop flash when a value updates in-place */
+@keyframes cellPop{{0%{{opacity:.25}}45%{{opacity:1}}100%{{opacity:1}}}}
+.cell-pop{{animation:cellPop .38s ease}}
 /* Reason badges */
 .reason-stop{{color:#f85149}}.reason-take{{color:#3fb950}}
 .reason-time{{color:#e3b341}}.reason-partial{{color:#58a6ff}}
@@ -978,7 +988,11 @@ tr:hover td{{background:rgba(255,255,255,.025)}}
   </div>
   <div class="tbl-wrap scan-wrap">
     <div class="scan-beam"></div>
-    <table><thead><tr><th>Symbol</th><th>Action</th><th>Conf</th><th>Rationale</th><th>Time</th></tr></thead><tbody id="sig-tbody">
+    <table id="sig-tbl"><colgroup>
+      <col style="width:108px"><col style="width:88px"><col style="width:56px"><col><col style="width:108px">
+    </colgroup><thead><tr>
+      <th>Symbol</th><th class="tbl-c">Action</th><th class="tbl-c">Conf</th><th>Rationale</th><th class="tbl-r">Time</th>
+    </tr></thead><tbody id="sig-tbody">
     {dec_rows}</tbody></table>
   </div>
 </div>
@@ -988,7 +1002,13 @@ tr:hover td{{background:rgba(255,255,255,.025)}}
     <span>Candidates <span class="badge" id="cand-badge">{cand_n} scanned · ● = open</span></span>
   </div>
   <div class="tbl-wrap">
-    <table><thead><tr><th>Symbol</th><th>Price</th><th>Session Δ</th><th title="RSI(14): &lt;30 oversold · &gt;70 overbought">RSI</th><th title="Signal confidence from last scan">Conf</th></tr></thead><tbody id="cand-tbody">{cand_rows}</tbody></table>
+    <table id="cand-tbl"><colgroup>
+      <col style="width:155px"><col style="width:108px"><col style="width:90px"><col style="width:60px"><col style="width:60px">
+    </colgroup><thead><tr>
+      <th>Symbol</th><th class="tbl-r">Price</th><th class="tbl-r">Session Δ</th>
+      <th class="tbl-c" title="RSI(14): &lt;30 oversold · &gt;70 overbought">RSI</th>
+      <th class="tbl-c" title="Signal confidence from last scan">Conf</th>
+    </tr></thead><tbody id="cand-tbody">{cand_rows}</tbody></table>
   </div>
   {wh}
 </div>
@@ -1102,50 +1122,123 @@ function toggleDetail(id){{
     var stEl=document.querySelector('.st-text');
     if(stEl&&s.status)stEl.textContent=s.status;
 
-    /* ── Candidates table live refresh ────────────────────────────────── */
+    /* ── Shared helpers ─────────────────────────────────────────────────── */
+    /* Brief opacity flash on a cell whose value just changed */
+    function popCell(el){{
+      el.classList.remove('cell-pop');
+      void el.offsetWidth; /* force reflow to restart animation */
+      el.classList.add('cell-pop');
+    }}
+
+    /* Build a fresh <tr> for the candidates table */
+    function buildCandRow(c){{
+      var sym=c.symbol;
+      var logo='<img src="https://s3-symbol-logo.tradingview.com/crypto/XTVC'+sym+'--big.svg" '
+        +'onerror="this.onerror=null;this.src=\'https://assets.coincap.io/assets/icons/'+sym.toLowerCase()+'@2x.png\'" '
+        +'width="16" height="16" style="border-radius:50%;vertical-align:middle;margin-right:5px" alt="'+sym+'">';
+      var chgV=c.change_pct!=null?(c.change_pct>=0?'+':'')+c.change_pct.toFixed(3)+'%':'—';
+      var chgC=c.change_pct!=null?(c.change_pct>=0?'#3fb950':'#f85149'):'var(--muted)';
+      var rsiV=c.rsi!=null?c.rsi.toFixed(0)+(c.rsi<30?' <small>OS</small>':c.rsi>70?' <small>OB</small>':''):'—';
+      var rsiC=c.rsi!=null?(c.rsi<30?'#3fb950':c.rsi>70?'#f85149':'#8b949e'):'var(--muted)';
+      var confV=c.confidence!=null?(c.confidence*100).toFixed(0)+'%':'—';
+      var confC=c.confidence!=null?(c.confidence>=0.7?'#3fb950':c.confidence>=0.55?'#e3b341':'#8b949e'):'var(--muted)';
+      return '<tr data-sym="'+sym+'">'
+        +'<td>'+logo+sym+'</td>'
+        +'<td class="tbl-r">$'+c.price.toFixed(4)+'</td>'
+        +'<td class="tbl-r" style="color:'+chgC+'">'+chgV+'</td>'
+        +'<td class="tbl-c" style="color:'+rsiC+'">'+rsiV+'</td>'
+        +'<td class="tbl-c" style="color:'+confC+'">'+confV+'</td></tr>';
+    }}
+
+    /* Build a fresh <tr> for the signal feed table */
+    function buildSigRow(d){{
+      var skip=d.action==='SKIP';
+      var ac=d.action==='BUY'?'\u25b2 BUY':d.action==='SELL'?'\u25bc SELL':'\u2014 SKIP';
+      var dc=d.action==='BUY'?'#3fb950':d.action==='SELL'?'#f85149':'#8b949e';
+      var rs=skip?'opacity:0.45':'font-weight:500';
+      var logo='<img src="https://s3-symbol-logo.tradingview.com/crypto/XTVC'+d.symbol+'--big.svg" '
+        +'onerror="this.onerror=null;this.src=\'https://assets.coincap.io/assets/icons/'+d.symbol.toLowerCase()+'@2x.png\'" '
+        +'width="15" height="15" style="border-radius:50%;vertical-align:middle;margin-right:5px" alt="'+d.symbol+'">';
+      var rat=d.rationale.length>90?d.rationale.substring(0,90)+'\u2026':d.rationale;
+      return '<tr style="'+rs+'">'
+        +'<td>'+logo+'<b>'+d.symbol+'</b></td>'
+        +'<td class="tbl-c" style="color:'+dc+';font-weight:600">'+ac+'</td>'
+        +'<td class="tbl-c">'+(d.confidence*100).toFixed(0)+'%</td>'
+        +'<td class="ts">'+rat+'</td>'
+        +'<td class="ts tbl-r">'+d.timestamp+'</td></tr>';
+    }}
+
+    /* ── Candidates table — smart in-place update ───────────────────────── */
     var candTbody=document.getElementById('cand-tbody');
     if(candTbody&&s.candidates&&s.candidates.length>0){{
-      var crows=(s.candidates||[]).map(function(c){{
-        var sym=c.symbol;
-        var logo='<img src="https://s3-symbol-logo.tradingview.com/crypto/XTVC'+sym+'--big.svg" '
-          +'onerror="this.onerror=null;this.src=\'https://assets.coincap.io/assets/icons/'+sym.toLowerCase()+'@2x.png\'" '
-          +'width="16" height="16" style="border-radius:50%;vertical-align:middle;margin-right:5px" alt="'+sym+'">';
-        var chgTd=c.change_pct!=null
-          ?'<td style="color:'+(c.change_pct>=0?'#3fb950':'#f85149')+'">'+(c.change_pct>=0?'+':'')+c.change_pct.toFixed(3)+'%</td>'
-          :'<td style="color:var(--muted)">—</td>';
-        var rsiTd=c.rsi!=null
-          ?'<td style="color:'+(c.rsi<30?'#3fb950':c.rsi>70?'#f85149':'#8b949e')+'">'+c.rsi.toFixed(0)+(c.rsi<30?' <span style="font-size:.72em">OS</span>':c.rsi>70?' <span style="font-size:.72em">OB</span>':'')+'</td>'
-          :'<td style="color:var(--muted)">—</td>';
-        var confTd=c.confidence!=null
-          ?'<td style="color:'+(c.confidence>=0.7?'#3fb950':c.confidence>=0.55?'#e3b341':'#8b949e')+'">'+(c.confidence*100).toFixed(0)+'%</td>'
-          :'<td style="color:var(--muted)">—</td>';
-        return '<tr><td>'+logo+sym+'</td><td>$'+c.price.toFixed(4)+'</td>'+chgTd+rsiTd+confTd+'</tr>';
+      /* Build an index of existing rows keyed by symbol */
+      var rowMap={{}};
+      [].forEach.call(candTbody.rows,function(tr){{
+        if(tr.dataset.sym) rowMap[tr.dataset.sym]=tr;
       }});
-      candTbody.innerHTML=crows.join('');
+
+      /* Full rebuild if symbol set or count changed */
+      var needRebuild=s.candidates.length!==candTbody.rows.length
+        ||s.candidates.some(function(c){{ return !rowMap[c.symbol]; }});
+
+      if(needRebuild){{
+        candTbody.innerHTML=s.candidates.map(buildCandRow).join('');
+      }} else {{
+        /* In-place: update only changed cells, reorder rows if ranking shifted */
+        s.candidates.forEach(function(c,i){{
+          var tr=rowMap[c.symbol]; if(!tr) return;
+          var cells=tr.cells;
+
+          /* Price (cell 1) */
+          var pv='$'+c.price.toFixed(4);
+          if(cells[1].textContent!==pv){{ cells[1].textContent=pv; popCell(cells[1]); }}
+
+          /* Change % (cell 2) */
+          if(c.change_pct!=null){{
+            var cv=(c.change_pct>=0?'+':'')+c.change_pct.toFixed(3)+'%';
+            var cc=c.change_pct>=0?'#3fb950':'#f85149';
+            if(cells[2].textContent!==cv){{ cells[2].textContent=cv; cells[2].style.color=cc; popCell(cells[2]); }}
+          }}
+
+          /* RSI (cell 3) — compare stored raw value to avoid innerHTML flicker */
+          if(c.rsi!=null){{
+            var rv=c.rsi.toFixed(0);
+            if(cells[3].dataset.v!==rv){{
+              cells[3].dataset.v=rv;
+              cells[3].innerHTML=rv+(c.rsi<30?' <small>OS</small>':c.rsi>70?' <small>OB</small>':'');
+              cells[3].style.color=c.rsi<30?'#3fb950':c.rsi>70?'#f85149':'#8b949e';
+              popCell(cells[3]);
+            }}
+          }}
+
+          /* Confidence (cell 4) */
+          if(c.confidence!=null){{
+            var fv=(c.confidence*100).toFixed(0)+'%';
+            if(cells[4].textContent!==fv){{
+              cells[4].textContent=fv;
+              cells[4].style.color=c.confidence>=0.7?'#3fb950':c.confidence>=0.55?'#e3b341':'#8b949e';
+              popCell(cells[4]);
+            }}
+          }}
+
+          /* Reorder row if ranking changed */
+          if(candTbody.rows[i]!==tr) candTbody.insertBefore(tr,candTbody.rows[i]||null);
+        }});
+      }}
     }}
     var cb=document.getElementById('cand-badge');
-    if(cb&&s.candidates)cb.textContent=(s.candidates.length)+' scanned \u00b7 \u25cf = open';
+    if(cb&&s.candidates) cb.textContent=s.candidates.length+' scanned \u00b7 \u25cf = open';
 
-    /* ── Signal feed live refresh ──────────────────────────────────────── */
+    /* ── Signal feed — only rebuild when a new decision arrives ─────────── */
     var sigTbody=document.getElementById('sig-tbody');
     if(sigTbody&&s.recent_decisions&&s.recent_decisions.length>0){{
       var decs=[].concat(s.recent_decisions).reverse().slice(0,20);
-      var srows=decs.map(function(d){{
-        var skip=d.action==='SKIP';
-        var ac=d.action==='BUY'?'\u25b2 BUY':d.action==='SELL'?'\u25bc SELL':'\u2014 SKIP';
-        var dc=d.action==='BUY'?'#3fb950':d.action==='SELL'?'#f85149':'#8b949e';
-        var rs=skip?'opacity:0.45;font-size:.88em':'font-weight:500';
-        var logo='<img src="https://s3-symbol-logo.tradingview.com/crypto/XTVC'+d.symbol+'--big.svg" '
-          +'onerror="this.onerror=null;this.src=\'https://assets.coincap.io/assets/icons/'+d.symbol.toLowerCase()+'@2x.png\'" '
-          +'width="15" height="15" style="border-radius:50%;vertical-align:middle;margin-right:5px" alt="'+d.symbol+'">';
-        var rat=d.rationale.length>90?d.rationale.substring(0,90)+'…':d.rationale;
-        return '<tr style="'+rs+'"><td>'+logo+'<b>'+d.symbol+'</b></td>'
-          +'<td style="color:'+dc+';font-weight:600">'+ac+'</td>'
-          +'<td>'+(d.confidence*100).toFixed(0)+'%</td>'
-          +'<td class="ts" style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+rat+'</td>'
-          +'<td class="ts">'+d.timestamp+'</td></tr>';
-      }});
-      sigTbody.innerHTML=srows.join('');
+      /* Key on the newest decision's symbol+timestamp; skip rebuild if unchanged */
+      var topKey=(decs[0].symbol||'')+':'+(decs[0].timestamp||'');
+      if(sigTbody.dataset.topKey!==topKey){{
+        sigTbody.dataset.topKey=topKey;
+        sigTbody.innerHTML=decs.map(buildSigRow).join('');
+      }}
     }}
   }}
 
