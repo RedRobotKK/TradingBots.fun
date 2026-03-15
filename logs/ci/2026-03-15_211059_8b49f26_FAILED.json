@@ -1,0 +1,140 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-03-15T21:08:21Z",
+    "commit": "8b49f26",
+    "commit_full": "8b49f2690971b020525ff4e9617f82e7fb3d708e",
+    "commit_message": "fix: funnel Executor trait + cargo audit suppress unfixable rsa advisory",
+    "branch": "master",
+    "overall_status": "FAILED",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
+    "cargo": "cargo 1.93.1 (083ac5135 2025-12-15)",
+    "os_kernel": "6.8.0-101-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "PASSED",
+      "exit_code": 0,
+      "duration_seconds": 139,
+      "total_passed": 488,
+      "total_failed": 0,
+      "total_ignored": 2,
+      "failures": []
+    },
+    "clippy": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 15,
+      "error_count": 10,
+      "errors": [
+        {
+          "code": "E",
+          "message": "methods `ping`, `get_equity_history`, `insert_closed_trade`, `upsert_tenant`, `upsert_signal_weights`, and `load_signal_",
+          "file": "src/db.rs",
+          "line": 142,
+          "col": 18
+        },
+        {
+          "code": "E",
+          "message": "enum `AiProvider` is never used",
+          "file": "src/db.rs",
+          "line": 486,
+          "col": 10
+        },
+        {
+          "code": "E",
+          "message": "associated function `from_env` is never used",
+          "file": "src/db.rs",
+          "line": 495,
+          "col": 12
+        },
+        {
+          "code": "E",
+          "message": "function `query_ai` is never used",
+          "file": "src/db.rs",
+          "line": 524,
+          "col": 14
+        },
+        {
+          "code": "E",
+          "message": "function `query_ollama` is never used",
+          "file": "src/db.rs",
+          "line": 623,
+          "col": 14
+        },
+        {
+          "code": "E",
+          "message": "function `page_view` is never used",
+          "file": "src/funnel.rs",
+          "line": 138,
+          "col": 14
+        },
+        {
+          "code": "E",
+          "message": "function `auth_success` is never used",
+          "file": "src/funnel.rs",
+          "line": 156,
+          "col": 14
+        },
+        {
+          "code": "E",
+          "message": "function `ad_impression` is never used",
+          "file": "src/funnel.rs",
+          "line": 175,
+          "col": 14
+        },
+        {
+          "code": "E",
+          "message": "called `map(..).flatten()` on `Option`",
+          "file": "src/funnel.rs",
+          "line": 111,
+          "col": 25
+        },
+        {
+          "code": "E",
+          "message": "could not compile `redrobot-hedgebot` (bin \"redrobot-hedgebot\") due to 9 previous errors"
+        }
+      ]
+    },
+    "audit": {
+      "status": "ADVISORY",
+      "exit_code": 1,
+      "duration_seconds": 4,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2023-0071",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2023-0071",
+          "severity": "5.9 (medium)",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "hedgebot",
+    "status": "active",
+    "active_since": "Sun 2026-03-15 07:24:17 UTC",
+    "recent_logs": [
+      "Mar 15 07:24:17 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: hedgebot.service: Deactivated successfully.",
+      "Mar 15 07:24:17 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Stopped hedgebot.service - RedRobot HedgeBot.",
+      "Mar 15 07:24:17 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: hedgebot.service: Consumed 2.825s CPU time, 10.7M memory peak, 4.7M memory swap peak.",
+      "Mar 15 07:24:17 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Starting hedgebot.service - RedRobot HedgeBot...",
+      "Mar 15 07:24:17 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Started hedgebot.service - RedRobot HedgeBot."
+    ]
+  }
+}
