@@ -28,12 +28,22 @@
 //! ```
 //! Claude translates this to SQL and executes it directly against the live DB.
 //!
-//! ## Ollama integration
+//! ## AI provider integration
 //!
-//! When `OLLAMA_BASE_URL` is set (default: `http://localhost:11434`), the
-//! `query_ollama()` function sends prompts to a local LLM (e.g. `llama3.2`)
-//! for on-device analysis without Anthropic API costs.  Future: daily trade
-//! summaries → Ollama → stored in `ai_analyses` table.
+//! `query_ai()` is a provider-agnostic function that routes prompts to
+//! whichever AI backend the operator has configured via `AI_PROVIDER`:
+//!
+//! | AI_PROVIDER   | Endpoint                                    | Auth header          |
+//! |---------------|---------------------------------------------|----------------------|
+//! | `claude`      | api.anthropic.com/v1/messages               | x-api-key            |
+//! | `openai`      | api.openai.com/v1/chat/completions          | Authorization Bearer |
+//! | `xai`         | api.x.ai/v1/chat/completions               | Authorization Bearer |
+//! | `openrouter`  | openrouter.ai/api/v1/chat/completions      | Authorization Bearer |
+//! | `ollama`      | {OLLAMA_BASE_URL}/api/generate (local/VPS) | none                 |
+//!
+//! Ollama MUST run on a **separate** droplet — not the trading-bot VPS — to
+//! avoid memory contention that would slow trade execution.
+//! Set `OLLAMA_BASE_URL=http://<ollama-droplet-ip>:11434`.
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -449,42 +459,170 @@ impl Database {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  Ollama — local LLM inference
+//  AI provider — provider-agnostic inference layer
 //
-//  Ollama runs on the VPS at http://localhost:11434 (or OLLAMA_BASE_URL).
-//  Use case: send daily trade summaries to llama3.2 / mistral for natural-
-//  language analysis without Anthropic API costs.  Works offline.
+//  Configured entirely through environment variables so operators can switch
+//  providers without recompiling.  All providers use the same `query_ai()`
+//  call site; routing is done inside the function.
+//
+//  Environment variables:
+//    AI_PROVIDER   = claude | openai | xai | openrouter | ollama
+//    AI_API_KEY    = <api key>  (not needed for ollama)
+//    AI_MODEL      = <model id> (e.g. claude-sonnet-4-5-20250929, gpt-4o, grok-2, llama3.2)
+//    OLLAMA_BASE_URL = http://<ollama-droplet-ip>:11434  (ollama only)
 //
 //  Future roadmap:
 //    1. Query closed_trades from DB → build context string
-//    2. POST to Ollama /api/generate
+//    2. Call query_ai() with the trade summary prompt
 //    3. Store result in ai_analyses table
 //    4. Surface in admin "AI Insights" panel
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Send a prompt to a local Ollama instance and return the response text.
-/// Returns an error (non-fatal) if Ollama is not running.
-pub async fn query_ollama(
-    base_url: &str,
-    model:    &str,
-    prompt:   &str,
-) -> Result<String> {
-    let client = reqwest::Client::builder()
+/// AI provider selection — read from `AI_PROVIDER` env var.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AiProvider {
+    Claude,
+    OpenAi,
+    Xai,
+    OpenRouter,
+    Ollama,
+}
+
+impl AiProvider {
+    pub fn from_env() -> Self {
+        match std::env::var("AI_PROVIDER")
+            .unwrap_or_default()
+            .to_lowercase()
+            .as_str()
+        {
+            "openai"      => AiProvider::OpenAi,
+            "xai"         => AiProvider::Xai,
+            "openrouter"  => AiProvider::OpenRouter,
+            "ollama"      => AiProvider::Ollama,
+            _             => AiProvider::Claude, // default: Anthropic Claude
+        }
+    }
+}
+
+/// Send a prompt to the configured AI provider and return the response text.
+///
+/// Provider is determined by the `AI_PROVIDER` env var (default: `claude`).
+/// Returns an error (logged but non-fatal at call sites) if the provider is
+/// unreachable or returns a non-200 status.
+///
+/// # Provider notes
+/// - **claude**: uses Messages API; `AI_MODEL` defaults to `claude-haiku-4-5-20251001`
+///   (fast and cheap for trade analysis; swap to `claude-sonnet-4-6` for richer answers)
+/// - **openai**: standard Chat Completions; `AI_MODEL` defaults to `gpt-4o-mini`
+/// - **xai**: OpenAI-compatible endpoint at `api.x.ai`; `AI_MODEL` defaults to `grok-2`
+/// - **openrouter**: OpenAI-compatible; set `AI_MODEL` to any OpenRouter model string
+/// - **ollama**: local/remote Ollama instance; `OLLAMA_BASE_URL` must point to a
+///   **separate dedicated droplet** — never the trading-bot VPS (memory contention)
+pub async fn query_ai(prompt: &str) -> Result<String> {
+    let provider  = AiProvider::from_env();
+    let api_key   = std::env::var("AI_API_KEY").unwrap_or_default();
+    let client    = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(120))
         .build()
-        .context("Failed to build reqwest client for Ollama")?;
+        .context("Failed to build HTTP client for AI provider")?;
 
-    let resp = client
-        .post(format!("{base_url}/api/generate"))
-        .json(&serde_json::json!({
-            "model":  model,
-            "prompt": prompt,
-            "stream": false,
-        }))
-        .send()
-        .await
-        .context("Ollama POST failed — is `ollama serve` running?")?;
+    match provider {
+        // ── Claude (Anthropic Messages API) ──────────────────────────────────
+        AiProvider::Claude => {
+            let model = std::env::var("AI_MODEL")
+                .unwrap_or_else(|_| "claude-haiku-4-5-20251001".into());
+            let resp = client
+                .post("https://api.anthropic.com/v1/messages")
+                .header("x-api-key", &api_key)
+                .header("anthropic-version", "2023-06-01")
+                .header("content-type", "application/json")
+                .json(&serde_json::json!({
+                    "model": model,
+                    "max_tokens": 1024,
+                    "messages": [{ "role": "user", "content": prompt }]
+                }))
+                .send()
+                .await
+                .context("Claude API request failed")?;
+            let json: serde_json::Value = resp.json().await
+                .context("Claude API response parse failed")?;
+            Ok(json["content"][0]["text"].as_str().unwrap_or("").to_string())
+        }
 
-    let json: serde_json::Value = resp.json().await.context("Ollama response parse failed")?;
-    Ok(json["response"].as_str().unwrap_or("").to_string())
+        // ── OpenAI (or OpenAI-compatible: xAI, OpenRouter) ────────────────
+        AiProvider::OpenAi | AiProvider::Xai | AiProvider::OpenRouter => {
+            let (endpoint, default_model) = match provider {
+                AiProvider::OpenAi      => ("https://api.openai.com/v1/chat/completions",      "gpt-4o-mini"),
+                AiProvider::Xai         => ("https://api.x.ai/v1/chat/completions",             "grok-2"),
+                AiProvider::OpenRouter  => ("https://openrouter.ai/api/v1/chat/completions",    "openai/gpt-4o-mini"),
+                _                       => unreachable!(),
+            };
+            let model = std::env::var("AI_MODEL")
+                .unwrap_or_else(|_| default_model.into());
+            let resp = client
+                .post(endpoint)
+                .header("Authorization", format!("Bearer {api_key}"))
+                .header("content-type", "application/json")
+                .json(&serde_json::json!({
+                    "model": model,
+                    "messages": [{ "role": "user", "content": prompt }],
+                    "max_tokens": 1024
+                }))
+                .send()
+                .await
+                .context("OpenAI-compatible API request failed")?;
+            let json: serde_json::Value = resp.json().await
+                .context("OpenAI-compatible API response parse failed")?;
+            Ok(json["choices"][0]["message"]["content"]
+                .as_str()
+                .unwrap_or("")
+                .to_string())
+        }
+
+        // ── Ollama (self-hosted on separate droplet) ───────────────────────
+        // IMPORTANT: OLLAMA_BASE_URL must point to a dedicated droplet IP,
+        // NOT localhost. Running Ollama on the trading-bot VPS starves the
+        // bot of memory and causes missed trade execution.
+        AiProvider::Ollama => {
+            let base_url = std::env::var("OLLAMA_BASE_URL")
+                .unwrap_or_else(|_| "http://localhost:11434".into());
+            let model = std::env::var("AI_MODEL")
+                .unwrap_or_else(|_| "llama3.2".into());
+
+            if base_url.contains("localhost") || base_url.contains("127.0.0.1") {
+                tracing::warn!(
+                    "OLLAMA_BASE_URL points to localhost — Ollama should run on a \
+                     separate droplet, not the trading-bot VPS. \
+                     Set OLLAMA_BASE_URL=http://<ollama-droplet-ip>:11434"
+                );
+            }
+
+            let resp = client
+                .post(format!("{base_url}/api/generate"))
+                .json(&serde_json::json!({
+                    "model":  model,
+                    "prompt": prompt,
+                    "stream": false,
+                }))
+                .send()
+                .await
+                .context("Ollama POST failed — is the Ollama droplet running?")?;
+            let json: serde_json::Value = resp.json().await
+                .context("Ollama response parse failed")?;
+            Ok(json["response"].as_str().unwrap_or("").to_string())
+        }
+    }
+}
+
+/// Backwards-compat shim — prefer `query_ai()` for new call sites.
+/// Kept so any external integrations using the old name still compile.
+#[deprecated(note = "Use query_ai() — it respects the AI_PROVIDER env var")]
+pub async fn query_ollama(base_url: &str, model: &str, prompt: &str) -> Result<String> {
+    // Temporarily override env so query_ai routes to Ollama with the given params
+    let _prev_provider = std::env::var("AI_PROVIDER").unwrap_or_default();
+    std::env::set_var("AI_PROVIDER", "ollama");
+    std::env::set_var("OLLAMA_BASE_URL", base_url);
+    std::env::set_var("AI_MODEL", model);
+    let result = query_ai(prompt).await;
+    result
 }

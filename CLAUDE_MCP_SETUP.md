@@ -162,22 +162,56 @@ GROUP BY symbol ORDER BY total_pnl DESC LIMIT 10;
 
 ---
 
-## Ollama — On-Device Analysis (No API Costs)
+## AI Provider — Multi-Provider Trade Analysis
 
-Ollama runs on the VPS and can analyse trade data locally using `llama3.2`.
-The bot's `db::query_ollama()` function is wired to `OLLAMA_BASE_URL=http://localhost:11434`.
+The bot's `db::query_ai()` function routes prompts to whichever AI backend
+you configure.  Switch providers with two env vars — no recompile needed.
 
-To test Ollama directly:
+### Supported providers
+
+| `AI_PROVIDER` | Who it talks to | Auth |
+|---|---|---|
+| `claude` *(default)* | Anthropic Messages API | `AI_API_KEY` |
+| `openai` | OpenAI Chat Completions | `AI_API_KEY` |
+| `xai` | xAI Grok (OpenAI-compatible) | `AI_API_KEY` |
+| `openrouter` | 200+ models via openrouter.ai | `AI_API_KEY` |
+| `ollama` | Self-hosted Ollama (see below) | none |
+
+### Switching providers on the VPS
+
 ```bash
 ssh root@165.232.160.43
+nano /etc/environment   # set AI_PROVIDER, AI_API_KEY, AI_MODEL
+systemctl restart hedgebot
+```
+
+### Ollama — SEPARATE droplet only
+
+**⚠ Ollama must NOT run on the trading-bot VPS.**
+
+`llama3.2` uses 4-6 GB RAM at inference time. Running it alongside the Rust
+bot and PostgreSQL on the same VPS will starve trading execution. Provision a
+dedicated 8 GB droplet:
+
+```bash
+# From your local Mac:
+export OLLAMA_IP=<new-droplet-ip>
+./deploy.sh --provision-ollama
+# Installs Ollama, pulls llama3.2, locks port 11434 to the bot VPS IP,
+# and writes OLLAMA_BASE_URL into /etc/environment on the trading-bot VPS.
+```
+
+To test Ollama directly on the Ollama droplet:
+```bash
+ssh root@<ollama-droplet-ip>
 curl http://localhost:11434/api/generate \
-  -d '{"model":"llama3.2","prompt":"What is the average win rate for a crypto trading bot?","stream":false}' \
+  -d '{"model":"llama3.2","prompt":"Summarise the trading signals: RSI=72 (overbought), MACD bullish cross, volume +40% above average.","stream":false}' \
   | jq .response
 ```
 
-Future: the `daily_analyst` module will query closed trades from PostgreSQL,
-build a natural-language context string, and send it to Ollama for on-device
-analysis — results stored in the `ai_analyses` table and surfaced in the admin UI.
+Future: the `daily_analyst` module will pull closed_trades from PostgreSQL,
+build a context string, call `query_ai()`, and store the result in the
+`ai_analyses` table — surfaced in the admin "AI Insights" panel.
 
 ---
 

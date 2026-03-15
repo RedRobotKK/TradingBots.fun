@@ -2,14 +2,15 @@
 # deploy.sh – provision infrastructure, push to GitHub, build & restart on VPS
 #
 # Usage:
-#   ./deploy.sh              – full deploy (CI gate + push to GitHub + build + restart)
-#   ./deploy.sh --vps-only   – skip git push, just pull/build/restart on VPS
-#   ./deploy.sh --push-only  – push to GitHub only, don't touch VPS
-#   ./deploy.sh --restart    – restart service on VPS without rebuilding
-#   ./deploy.sh --test-only  – run CI quality gate on VPS without deploying
-#   ./deploy.sh --no-test    – skip CI gate (emergency deploys only)
-#   ./deploy.sh --no-log-push – skip uploading CI log to GitHub
-#   ./deploy.sh --provision  – (re)run full server provisioning only
+#   ./deploy.sh                        – full deploy (CI gate + push to GitHub + build + restart)
+#   ./deploy.sh --vps-only             – skip git push, just pull/build/restart on VPS
+#   ./deploy.sh --push-only            – push to GitHub only, don't touch VPS
+#   ./deploy.sh --restart              – restart service on VPS without rebuilding
+#   ./deploy.sh --test-only            – run CI quality gate on VPS without deploying
+#   ./deploy.sh --no-test              – skip CI gate (emergency deploys only)
+#   ./deploy.sh --no-log-push          – skip uploading CI log to GitHub
+#   ./deploy.sh --provision            – (re)run trading-bot server provisioning only
+#   ./deploy.sh --provision-ollama     – provision a SEPARATE Ollama droplet
 #
 # CI Quality Gate (runs before every build):
 #   1. cargo test --all         – all unit + integration tests must pass
@@ -20,8 +21,15 @@
 # Infrastructure provisioned by --provision (idempotent, safe to re-run):
 #   PostgreSQL 16  – installed, redrobot DB + user created, pg_hba patched
 #   sqlx-cli       – schema migrations run automatically on every deploy
-#   Ollama         – installed, llama3.2 pulled, systemd service enabled
 #   MCP server     – @modelcontextprotocol/server-postgres for Claude DB access
+#   NOTE: Ollama is NOT installed here. It runs on a dedicated droplet to avoid
+#         memory contention with the trading bot. Use --provision-ollama instead.
+#
+# Infrastructure provisioned by --provision-ollama (separate droplet):
+#   Target: OLLAMA_IP env var (e.g. export OLLAMA_IP=167.71.x.x)
+#   Ollama – installed as systemd service, llama3.2 model pulled
+#   Firewall – port 11434 open only to the trading bot VPS (not the internet)
+#   OLLAMA_BASE_URL is written into /etc/environment on the *trading bot* VPS
 #
 # Logs:
 #   /var/log/hedgebot-ci.log      (CI gate output, persistent)
@@ -56,28 +64,41 @@ DO_PUSH=true
 DO_DEPLOY=true
 DO_BUILD=true
 DO_TEST=true
-DO_LOG_PUSH=true     # upload CI log to GitHub after each run
-DO_PROVISION=false   # --provision: run full infrastructure setup
+DO_LOG_PUSH=true          # upload CI log to GitHub after each run
+DO_PROVISION=false        # --provision: trading-bot VPS setup (no Ollama)
+DO_PROVISION_OLLAMA=false # --provision-ollama: separate Ollama droplet setup
+
+# IP of the dedicated Ollama droplet — set before calling --provision-ollama:
+#   export OLLAMA_IP=167.71.x.x && ./deploy.sh --provision-ollama
+OLLAMA_IP="${OLLAMA_IP:-}"
+OLLAMA_USER="${OLLAMA_USER:-root}"
 
 for arg in "$@"; do
   case $arg in
-    --vps-only)    DO_PUSH=false ;;
-    --push-only)   DO_DEPLOY=false ;;
-    --restart)     DO_BUILD=false; DO_TEST=false ;;
-    --test-only)   DO_PUSH=false; DO_BUILD=false ;;
-    --no-test)     DO_TEST=false; warn "--no-test: skipping CI gate (emergency mode)" ;;
-    --no-log-push) DO_LOG_PUSH=false ;;
-    --provision)   DO_PROVISION=true; DO_PUSH=false; DO_BUILD=false; DO_TEST=false ;;
+    --vps-only)         DO_PUSH=false ;;
+    --push-only)        DO_DEPLOY=false ;;
+    --restart)          DO_BUILD=false; DO_TEST=false ;;
+    --test-only)        DO_PUSH=false; DO_BUILD=false ;;
+    --no-test)          DO_TEST=false; warn "--no-test: skipping CI gate (emergency mode)" ;;
+    --no-log-push)      DO_LOG_PUSH=false ;;
+    --provision)        DO_PROVISION=true; DO_PUSH=false; DO_BUILD=false; DO_TEST=false ;;
+    --provision-ollama) DO_PROVISION_OLLAMA=true; DO_PUSH=false; DO_BUILD=false; DO_TEST=false; DO_DEPLOY=false ;;
     --help|-h)
-      echo "Usage: $0 [--vps-only | --push-only | --restart | --test-only | --no-test | --no-log-push | --provision]"
-      echo "  (no flags)     full deploy: CI gate + push to GitHub + build + restart VPS"
-      echo "  --vps-only     skip GitHub push, just CI gate + build & restart on VPS"
-      echo "  --push-only    push to GitHub only, don't touch VPS"
-      echo "  --restart      SSH restart the service without rebuilding or testing"
-      echo "  --test-only    run CI quality gate on VPS only (no build/restart)"
-      echo "  --no-test      skip CI gate (emergency deploys only)"
-      echo "  --no-log-push  skip uploading CI log to GitHub"
-      echo "  --provision    run full server setup (PostgreSQL + Ollama + MCP) — idempotent"
+      echo "Usage: $0 [options]"
+      echo "  (no flags)          full deploy: CI gate + push to GitHub + build & restart VPS"
+      echo "  --vps-only          skip GitHub push, just CI gate + build & restart on VPS"
+      echo "  --push-only         push to GitHub only, don't touch VPS"
+      echo "  --restart           SSH restart the service without rebuilding or testing"
+      echo "  --test-only         run CI quality gate on VPS only (no build/restart)"
+      echo "  --no-test           skip CI gate (emergency deploys only)"
+      echo "  --no-log-push       skip uploading CI log to GitHub"
+      echo "  --provision         set up trading-bot VPS: PostgreSQL 16 + MCP (NO Ollama)"
+      echo "  --provision-ollama  provision a SEPARATE dedicated Ollama droplet"
+      echo "                      Requires: export OLLAMA_IP=<droplet-ip> first"
+      echo ""
+      echo "  Ollama runs on its own droplet — never on the trading-bot VPS —"
+      echo "  so LLM memory usage cannot starve the bot's trade execution."
+      echo "  Recommended Ollama droplet: 8 GB RAM, any region close to VPS."
       exit 0 ;;
     *) error "Unknown argument: $arg"; exit 1 ;;
   esac
@@ -242,57 +263,41 @@ if $DO_PROVISION || $DO_DEPLOY; then
       ok "PostgreSQL MCP server already installed"
     fi
 
-    # ── Ollama — local LLM inference ──────────────────────────────────────────
-    # Ollama enables on-device LLM analysis of trade data without Anthropic API
-    # costs. The bot's db::query_ollama() function calls http://localhost:11434.
-    if ! command -v ollama &>/dev/null; then
-      inf "Installing Ollama..."
-      curl -fsSL https://ollama.com/install.sh | sh
-      ok "Ollama installed"
+    # ── Ollama: NOT installed on this VPS ─────────────────────────────────────
+    # Ollama (llama3.2 = ~4-6 GB RAM) must NOT run on the trading-bot VPS.
+    # LLM memory pressure would starve the bot and cause missed trades / slow
+    # execution.  Provision a separate dedicated droplet instead:
+    #
+    #   export OLLAMA_IP=<new-droplet-ip>
+    #   ./deploy.sh --provision-ollama
+    #
+    # Then set OLLAMA_BASE_URL in /etc/environment on THIS VPS:
+    #   echo "OLLAMA_BASE_URL=http://<ollama-droplet-ip>:11434" >> /etc/environment
+    if grep -q "^OLLAMA_BASE_URL=" /etc/environment 2>/dev/null; then
+      ok "OLLAMA_BASE_URL already configured: $(grep OLLAMA_BASE_URL /etc/environment)"
     else
-      ok "Ollama: $(ollama --version 2>/dev/null || echo 'installed')"
-    fi
-
-    # Enable Ollama as a systemd service so it survives reboots
-    systemctl enable ollama --quiet 2>/dev/null || true
-    systemctl start  ollama 2>/dev/null || true
-    sleep 3
-
-    # Write Ollama URL to /etc/environment
-    if ! grep -q "^OLLAMA_BASE_URL=" /etc/environment 2>/dev/null; then
-      echo "OLLAMA_BASE_URL=http://localhost:11434" >> /etc/environment
-      ok "OLLAMA_BASE_URL written to /etc/environment"
-    fi
-
-    # Pull the default model if not already present.
-    # llama3.2 (3B params) is a good balance: fast on CPU VPS, quality reasoning.
-    # For a GPU VPS, consider mistral-7b or llama3.1-8b.
-    if ollama list 2>/dev/null | grep -q "llama3.2"; then
-      ok "Ollama model llama3.2 already pulled"
-    else
-      inf "Pulling Ollama model llama3.2 (~2 GB download, first run only)..."
-      ollama pull llama3.2 2>&1 | tail -5 \
-        && ok "llama3.2 model ready" \
-        || echo "⚠ Model pull failed — run: ollama pull llama3.2"
+      echo -e "\033[1;33m⚠ OLLAMA_BASE_URL not set — run --provision-ollama on a separate droplet\033[0m"
+      echo "  After provisioning the Ollama droplet, add to /etc/environment:"
+      echo "  OLLAMA_BASE_URL=http://<ollama-droplet-ip>:11434"
     fi
 
     # ── Summary ────────────────────────────────────────────────────────────────
     echo ""
     echo "════════════════════════════════════════════════════════════════"
-    echo "Provisioning complete"
+    echo "Trading-bot provisioning complete"
     echo "────────────────────────────────────────────────────────────────"
     echo "  PostgreSQL : $(psql --version | head -1)"
     echo "  Database   : redrobot @ 127.0.0.1"
-    echo "  Ollama     : $(ollama --version 2>/dev/null || echo 'installed')"
     echo "  MCP server : $(npm list -g @modelcontextprotocol/server-postgres 2>/dev/null | grep server-postgres || echo 'ok')"
     echo "────────────────────────────────────────────────────────────────"
     source /etc/environment 2>/dev/null || true
-    echo "  DATABASE_URL   = ${DATABASE_URL:-NOT SET}"
-    echo "  OLLAMA_BASE_URL= ${OLLAMA_BASE_URL:-NOT SET}"
+    echo "  DATABASE_URL    = ${DATABASE_URL:-NOT SET}"
+    echo "  OLLAMA_BASE_URL = ${OLLAMA_BASE_URL:-⚠ not set — run --provision-ollama}"
     echo "════════════════════════════════════════════════════════════════"
     echo ""
-    echo "Next step: configure Claude MCP on your local machine."
-    echo "Run: cat /RedRobot-HedgeBot/CLAUDE_MCP_SETUP.md"
+    echo "Next steps:"
+    echo "  1. Provision Ollama droplet:  export OLLAMA_IP=<ip> && ./deploy.sh --provision-ollama"
+    echo "  2. Configure Claude MCP:      cat /RedRobot-HedgeBot/CLAUDE_MCP_SETUP.md"
 PROVISION
 
   if $DO_PROVISION; then
@@ -302,6 +307,127 @@ PROVISION
       exit 0
     fi
   fi
+fi
+
+# ── 0b. Ollama droplet provisioning (--provision-ollama) ─────────────────────
+# Runs on a SEPARATE droplet — never on the trading-bot VPS.
+# Memory budget for llama3.2: ~4-6 GB.  Recommended: 8 GB RAM droplet.
+# The model is served over HTTP on port 11434, restricted to the bot VPS IP only.
+if $DO_PROVISION_OLLAMA; then
+  if [[ -z "${OLLAMA_IP}" ]]; then
+    error "OLLAMA_IP is not set. Export it first:"
+    error "  export OLLAMA_IP=<your-ollama-droplet-ip>"
+    error "  ./deploy.sh --provision-ollama"
+    exit 1
+  fi
+
+  header "Ollama Droplet Provisioning  (${OLLAMA_USER}@${OLLAMA_IP})"
+  OLLAMA_SSH="ssh -o ConnectTimeout=10 -o BatchMode=yes ${OLLAMA_USER}@${OLLAMA_IP}"
+  BOT_IP="${VPS_IP}"  # trading-bot IP — Ollama will only accept connections from here
+
+  info "Checking SSH connectivity to Ollama droplet..."
+  if ! $OLLAMA_SSH "echo ok" &>/dev/null; then
+    error "Cannot reach ${OLLAMA_USER}@${OLLAMA_IP}. Check SSH keys or IP."
+    exit 1
+  fi
+
+  $OLLAMA_SSH bash <<OLLAMA_PROVISION
+    set -euo pipefail
+    export DEBIAN_FRONTEND=noninteractive
+    GREEN='\033[0;32m'; CYAN='\033[0;36m'; YELLOW='\033[1;33m'; RESET='\033[0m'
+    ok()  { echo -e "\${GREEN}✓ \$*\${RESET}"; }
+    inf() { echo -e "\${CYAN}▸ \$*\${RESET}"; }
+    warn(){ echo -e "\${YELLOW}⚠ \$*\${RESET}"; }
+
+    # ── Install Ollama ────────────────────────────────────────────────────────
+    if ! command -v ollama &>/dev/null; then
+      inf "Installing Ollama..."
+      curl -fsSL https://ollama.com/install.sh | sh
+      ok "Ollama installed"
+    else
+      ok "Ollama: \$(ollama --version 2>/dev/null || echo 'installed')"
+    fi
+
+    # ── Bind Ollama to all interfaces so the bot VPS can reach it ─────────────
+    # Default is localhost-only. We override via systemd drop-in so it listens
+    # on 0.0.0.0:11434, but the firewall (ufw) restricts access to bot IP only.
+    mkdir -p /etc/systemd/system/ollama.service.d
+    cat > /etc/systemd/system/ollama.service.d/listen.conf <<'EOF'
+[Service]
+Environment="OLLAMA_HOST=0.0.0.0:11434"
+EOF
+    systemctl daemon-reload
+    systemctl enable ollama --quiet
+    systemctl restart ollama
+    sleep 3
+    ok "Ollama service configured to listen on 0.0.0.0:11434"
+
+    # ── Firewall: restrict port 11434 to bot VPS IP only ─────────────────────
+    # This is the critical security step — Ollama has no built-in auth.
+    # We allow only the trading-bot VPS to call the inference endpoint.
+    if command -v ufw &>/dev/null; then
+      ufw --force enable 2>/dev/null || true
+      ufw default deny incoming  2>/dev/null || true
+      ufw allow ssh              2>/dev/null || true   # keep SSH open
+      ufw allow from ${BOT_IP} to any port 11434 proto tcp 2>/dev/null || true
+      ufw deny 11434             2>/dev/null || true   # block all others
+      ok "ufw: port 11434 open to bot VPS (${BOT_IP}) only"
+    else
+      warn "ufw not available — manually restrict port 11434 in your cloud firewall"
+      warn "Allow: ${BOT_IP} → 11434/tcp"
+      warn "Deny:  all others → 11434/tcp"
+    fi
+
+    # ── Pull default model ────────────────────────────────────────────────────
+    # llama3.2 (3B params, ~2 GB on disk, ~4 GB RAM): good CPU inference speed.
+    # For a GPU droplet, consider: mistral-7b, llama3.1-8b, or deepseek-r1:7b.
+    if ollama list 2>/dev/null | grep -q "llama3.2"; then
+      ok "Model llama3.2 already present"
+    else
+      inf "Pulling llama3.2 (~2 GB download, first run only)..."
+      ollama pull llama3.2 2>&1 | tail -5 && ok "llama3.2 ready" \
+        || warn "Pull failed — run manually: ollama pull llama3.2"
+    fi
+
+    # ── Verify inference endpoint ─────────────────────────────────────────────
+    sleep 2
+    if curl -sf http://localhost:11434/api/tags &>/dev/null; then
+      ok "Ollama API responding at localhost:11434"
+    else
+      warn "Ollama API not yet responding — check: systemctl status ollama"
+    fi
+
+    echo ""
+    echo "════════════════════════════════════════════════════════════════"
+    echo "Ollama droplet provisioning complete"
+    echo "────────────────────────────────────────────────────────────────"
+    echo "  Ollama    : \$(ollama --version 2>/dev/null || echo 'ok')"
+    echo "  Listening : 0.0.0.0:11434"
+    echo "  Firewall  : 11434/tcp open to ${BOT_IP} only"
+    echo "  Model     : llama3.2"
+    echo "════════════════════════════════════════════════════════════════"
+    echo ""
+    echo "Add this to /etc/environment on the TRADING-BOT VPS:"
+    echo "  OLLAMA_BASE_URL=http://${OLLAMA_IP}:11434"
+OLLAMA_PROVISION
+
+  # Write OLLAMA_BASE_URL into the trading-bot VPS /etc/environment
+  BOT_SSH="ssh -o ConnectTimeout=10 -o BatchMode=yes ${VPS_USER}@${VPS_IP}"
+  info "Writing OLLAMA_BASE_URL to trading-bot VPS /etc/environment..."
+  $BOT_SSH bash <<BOTENV
+    if grep -q "^OLLAMA_BASE_URL=" /etc/environment 2>/dev/null; then
+      sed -i "s|^OLLAMA_BASE_URL=.*|OLLAMA_BASE_URL=http://${OLLAMA_IP}:11434|" /etc/environment
+      echo "✓ Updated OLLAMA_BASE_URL in /etc/environment"
+    else
+      echo "OLLAMA_BASE_URL=http://${OLLAMA_IP}:11434" >> /etc/environment
+      echo "✓ Wrote OLLAMA_BASE_URL to /etc/environment"
+    fi
+    systemctl restart hedgebot 2>/dev/null || true
+    echo "✓ hedgebot restarted to pick up OLLAMA_BASE_URL"
+BOTENV
+
+  success "Ollama droplet ready — trading bot will use http://${OLLAMA_IP}:11434"
+  exit 0
 fi
 
 # ── 1. Git push ───────────────────────────────────────────────────────────────

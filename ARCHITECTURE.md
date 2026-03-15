@@ -389,16 +389,85 @@ let wallet_display = config.wallet_address.as_deref()
 
 ---
 
-## 9. Summary of Immediate Next Steps (Priority Order)
+## 9. AI Provider — Multi-Provider Architecture
 
-1. **SQLite** — replace `db.rs` stub with `rusqlite`. Start with `equity_snapshots` and `aum_snapshots` only (two new tables, no schema migration of existing state). Bot restarts won't lose the AUM graph history.
+The bot routes trade-analysis prompts through a single `query_ai()` function.
+The backend is selected entirely via environment variables — no recompile needed.
 
-2. **AUM snapshot write** — add one `INSERT INTO aum_snapshots` at the end of each trading cycle. This unlocks the TVL hero graph with zero other changes.
+### Provider routing table
 
-3. **Public TVL endpoint** — `GET /api/public/tvl` returning the last 90 days of `aum_snapshots`. No auth. This is the landing page dependency.
+| `AI_PROVIDER` | API endpoint | Default model | Best for |
+|---|---|---|---|
+| `claude` *(default)* | `api.anthropic.com/v1/messages` | `claude-haiku-4-5-20251001` | Quality reasoning, MCP integration |
+| `openai` | `api.openai.com/v1/chat/completions` | `gpt-4o-mini` | Familiar tooling, function calling |
+| `xai` | `api.x.ai/v1/chat/completions` | `grok-2` | Real-time market sentiment (tweets) |
+| `openrouter` | `openrouter.ai/api/v1/chat/completions` | `openai/gpt-4o-mini` | Cost arbitrage across 200+ models |
+| `ollama` | `{OLLAMA_BASE_URL}/api/generate` | `llama3.2` | Air-gapped / zero API cost |
 
-4. **Set `PRIVY_APP_ID`** — one env var activates the entire existing auth flow. Test with your own account first.
+### Environment variables
 
-5. **Wallet display in header** — show `0x…` in the dashboard header. One line of template code.
+```
+AI_PROVIDER=claude          # which backend (see table above)
+AI_API_KEY=sk-ant-...       # API key for cloud providers (not needed for ollama)
+AI_MODEL=claude-haiku-4-5-20251001  # model string for chosen provider
+OLLAMA_BASE_URL=http://OLLAMA_DROPLET_IP:11434  # ollama only
+```
 
-6. **Landing page** — new route `/` (or separate static page) with the TVL graph SVG and CTA. This is the marketing and user acquisition engine.
+### The Ollama two-droplet rule
+
+**Ollama MUST NOT run on the trading-bot VPS.**
+
+`llama3.2` (the smallest usable model) occupies ~4-6 GB of RAM at inference
+time. A DigitalOcean droplet running the Rust bot, PostgreSQL, and Ollama
+simultaneously will OOM-kill one of the three processes — almost certainly
+Ollama, which then takes the bot's AI analysis loop down with it.
+
+The correct topology:
+
+```
+┌─────────────────────────────┐      ┌─────────────────────────────┐
+│  Trading-bot VPS             │      │  Ollama droplet (separate)   │
+│  4 GB RAM recommended       │      │  8 GB RAM recommended        │
+│  • hedgebot (Rust)          │      │  • ollama serve              │
+│  • PostgreSQL 16            │─────▶│  • llama3.2 / mistral / etc  │
+│  • Claude MCP server (Node) │      │  • port 11434 (firewall:     │
+│                             │      │    open to bot VPS IP only)  │
+└─────────────────────────────┘      └─────────────────────────────┘
+```
+
+Provision the Ollama droplet:
+```bash
+export OLLAMA_IP=<new-droplet-ip>
+./deploy.sh --provision-ollama
+# Automatically: installs Ollama, pulls llama3.2, restricts port 11434
+# to the trading-bot VPS IP via ufw, writes OLLAMA_BASE_URL into
+# /etc/environment on the trading-bot VPS, restarts hedgebot.
+```
+
+### Switching providers
+
+Change one env var on the trading-bot VPS and restart:
+```bash
+# Switch from Claude to OpenRouter (cheapest per-token for high volume)
+grep -v "^AI_" /etc/environment > /tmp/env && mv /tmp/env /etc/environment
+echo "AI_PROVIDER=openrouter"               >> /etc/environment
+echo "AI_API_KEY=sk-or-v1-..."             >> /etc/environment
+echo "AI_MODEL=openai/gpt-4o-mini"         >> /etc/environment
+systemctl restart hedgebot
+```
+
+---
+
+## 10. Summary of Immediate Next Steps (Priority Order)
+
+1. **Push commit** — run `git push origin master` from your local Mac terminal. The VM has no internet access so push must come from your machine.
+
+2. **Provision trading-bot VPS** — `./deploy.sh --provision` installs PostgreSQL 16, the MCP server, and sets up the database. Does NOT install Ollama.
+
+3. **Set `PRIVY_APP_ID`** — one env var activates the entire existing multi-tenant auth flow. Test with your own account first.
+
+4. **Wallet display in header** — show `0x…` in the dashboard header. One line of template code.
+
+5. **Landing page** — new route `/` (or separate static page) with the TVL graph SVG and CTA. This is the marketing and user acquisition engine.
+
+6. *(Optional)* **Provision Ollama droplet** — only if you want local/private LLM inference. `export OLLAMA_IP=<ip> && ./deploy.sh --provision-ollama`. Otherwise keep `AI_PROVIDER=claude` and use the API.
