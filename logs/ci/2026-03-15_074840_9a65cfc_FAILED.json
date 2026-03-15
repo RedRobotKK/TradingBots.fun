@@ -1,0 +1,91 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-03-15T07:45:59Z",
+    "commit": "9a65cfc",
+    "commit_full": "9a65cfcdf4561a60437fceb24884bcb6ae317aaf",
+    "commit_message": "feat(ui): Connect Wallet CTA in top-right + consistent RedRobot logo colours",
+    "branch": "master",
+    "overall_status": "FAILED",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
+    "cargo": "cargo 1.93.1 (083ac5135 2025-12-15)",
+    "os_kernel": "6.8.0-101-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 85,
+      "total_passed": 0,
+      "total_failed": 0,
+      "total_ignored": 0,
+      "failures": []
+    },
+    "clippy": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 71,
+      "error_count": 3,
+      "errors": [
+        {
+          "code": "E0433",
+          "message": "failed to resolve: could not find `migrate` in `sqlx`",
+          "file": "src/db.rs",
+          "line": 133,
+          "col": 15
+        },
+        {
+          "code": "E0282",
+          "message": "type annotations needed",
+          "file": "src/db.rs",
+          "line": 133,
+          "col": 9
+        },
+        {
+          "code": "E",
+          "message": "could not compile `redrobot-hedgebot` (bin \"redrobot-hedgebot\" test) due to 2 previous errors"
+        }
+      ]
+    },
+    "audit": {
+      "status": "ADVISORY",
+      "exit_code": 1,
+      "duration_seconds": 4,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2023-0071",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2023-0071",
+          "severity": "5.9 (medium)",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "hedgebot",
+    "status": "active",
+    "active_since": "Sun 2026-03-15 07:24:17 UTC",
+    "recent_logs": [
+      "Mar 15 07:24:17 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: hedgebot.service: Deactivated successfully.",
+      "Mar 15 07:24:17 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Stopped hedgebot.service - RedRobot HedgeBot.",
+      "Mar 15 07:24:17 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: hedgebot.service: Consumed 2.825s CPU time, 10.7M memory peak, 4.7M memory swap peak.",
+      "Mar 15 07:24:17 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Starting hedgebot.service - RedRobot HedgeBot...",
+      "Mar 15 07:24:17 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Started hedgebot.service - RedRobot HedgeBot."
+    ]
+  }
+}
