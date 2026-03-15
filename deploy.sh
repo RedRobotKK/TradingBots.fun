@@ -242,6 +242,16 @@ if $DO_PROVISION || $DO_DEPLOY; then
       ok "sqlx-cli: $(${SQLX_BIN} --version 2>/dev/null || echo 'installed')"
     fi
 
+    # ── One-time directory migration: /RedRobot-HedgeBot → /tradingbots-fun ───
+    if [ -d "/RedRobot-HedgeBot" ] && [ ! -e "/tradingbots-fun" ]; then
+      mv /RedRobot-HedgeBot /tradingbots-fun
+      ok "Migrated /RedRobot-HedgeBot → /tradingbots-fun"
+    elif [ -d "/RedRobot-HedgeBot" ] && [ ! -L "/RedRobot-HedgeBot" ]; then
+      # Both exist — create backwards-compat symlink so old paths still work
+      ln -sf /tradingbots-fun /RedRobot-HedgeBot
+      ok "Created symlink /RedRobot-HedgeBot → /tradingbots-fun"
+    fi
+
     cd /tradingbots-fun
     source /etc/environment
     "${SQLX_BIN}" migrate run --database-url "${DATABASE_URL}" 2>&1 \
@@ -468,6 +478,14 @@ if $DO_DEPLOY; then
   header "Git pull on VPS"
   $SSH bash <<ENDSSH
     set -euo pipefail
+    # One-time directory rename migration
+    if [ -d "/RedRobot-HedgeBot" ] && [ ! -e "/tradingbots-fun" ]; then
+      mv /RedRobot-HedgeBot /tradingbots-fun
+      echo "✓ Migrated /RedRobot-HedgeBot → /tradingbots-fun"
+    elif [ -d "/RedRobot-HedgeBot" ] && [ ! -L "/RedRobot-HedgeBot" ]; then
+      ln -sf /tradingbots-fun /RedRobot-HedgeBot
+      echo "✓ Symlinked /RedRobot-HedgeBot → /tradingbots-fun"
+    fi
     cd ${VPS_DIR}
     export PATH="\$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin:\$PATH"
     source "\$HOME/.cargo/env" 2>/dev/null || true
@@ -791,6 +809,23 @@ ENDSSH
         exit 1
       fi
     else
+      # Stop old hedgebot service if still running under the old name
+      if systemctl is-active hedgebot &>/dev/null; then
+        systemctl stop hedgebot 2>/dev/null || true
+        systemctl disable hedgebot 2>/dev/null || true
+        echo "✓ Stopped old hedgebot service" | tee -a ${DEPLOY_LOG}
+      fi
+      # Try to install + enable new tradingbots service from repo
+      if [ -f "${VPS_DIR}/tradingbots.service" ]; then
+        cp "${VPS_DIR}/tradingbots.service" /etc/systemd/system/tradingbots.service
+        systemctl daemon-reload
+        systemctl enable tradingbots
+        systemctl start tradingbots
+        sleep 3
+        STATUS=\$(systemctl is-active tradingbots)
+        echo "✓ tradingbots service installed and started: \${STATUS}" | tee -a ${DEPLOY_LOG}
+        exit 0
+      fi
       echo "systemd service '${SERVICE}' not found — falling back to pkill+nohup" | tee -a ${DEPLOY_LOG}
       pkill -f tradingbots-fun 2>/dev/null || true
       sleep 2
