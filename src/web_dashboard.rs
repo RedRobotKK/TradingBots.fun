@@ -49,7 +49,18 @@ pub struct AppState {
     /// Coinzilla zone ID for the ad slot shown to Free/Trial users.
     /// Set via `COINZILLA_ZONE_ID` env var (e.g. `"12345"`).
     /// When `None`, no ads are rendered — Pro users never see ads regardless.
+    ///
+    /// Advertisement policy:
+    ///   • Free tier (trial ACTIVE)   → ads shown  — trial is monetised via CPM
+    ///   • Free tier (trial EXPIRED)  → ads shown  — upsell pressure before conversion
+    ///   • Pro / Internal             → NO ads, ever
     pub coinzilla_zone_id: Option<String>,
+    /// Resend-powered transactional mailer.  `None` when `RESEND_API_KEY` is unset.
+    /// Used by the trial-expiry batch job to send the $9.95 promo email.
+    pub mailer: Option<std::sync::Arc<crate::mailer::Mailer>>,
+    /// Stripe Price ID for the $9.95 first-month intro offer sent to expired-trial users.
+    /// When set, `/billing/checkout?promo=1` substitutes this for the standard price.
+    pub stripe_promo_price_id: Option<String>,
 }
 
 // ─────────────────────────────── Serde defaults ──────────────────────────────

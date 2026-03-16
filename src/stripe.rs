@@ -159,6 +159,9 @@ pub async fn create_checkout_session(
 #[derive(Deserialize)]
 pub struct CheckoutParams {
     pub tenant_id: Option<String>,
+    /// When `promo=1`, use `stripe_promo_price_id` ($9.95 intro offer) instead
+    /// of the standard price.  Sent by the trial-expiry email CTA link.
+    pub promo: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -179,8 +182,21 @@ pub async fn checkout_handler(
         Some(k) => k.clone(),
         None    => return Redirect::to("/app?msg=stripe_not_configured").into_response(),
     };
-    let price_id = match &app.stripe_price_id {
-        Some(p) => p.clone(),
+
+    // Use the introductory $9.95 price when ?promo=1 and a promo price is configured;
+    // otherwise fall back to the standard $19.99 price.
+    let is_promo  = params.promo.as_deref() == Some("1");
+    let price_id  = if is_promo {
+        app.stripe_promo_price_id
+            .as_deref()
+            .or(app.stripe_price_id.as_deref())
+    } else {
+        app.stripe_price_id.as_deref()
+    }
+    .map(|p| p.to_owned());
+
+    let price_id = match price_id {
+        Some(p) => p,
         None    => return Redirect::to("/app?msg=stripe_not_configured").into_response(),
     };
 

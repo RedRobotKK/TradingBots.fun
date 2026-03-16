@@ -62,6 +62,7 @@ mod fund_tracker;
 mod funnel;
 mod invite;
 mod leaderboard;
+mod mailer;
 
 use anyhow::Result;
 use log::{error, info, warn};
@@ -257,6 +258,11 @@ async fn main() -> Result<()> {
     // leaderboard snapshot task — keep one instance so registrations are
     // visible in both places.
     let tenant_manager = tenant::new_tenant_manager();
+    // Transactional mailer — None when RESEND_API_KEY is not set.
+    let mailer = mailer::Mailer::new(
+        config.email_api_key.as_deref(),
+        config.email_from.as_deref(),
+    ).map(std::sync::Arc::new);
     {
         let app_state = web_dashboard::AppState {
             bot_state:             bot_state.clone(),
@@ -271,12 +277,64 @@ async fn main() -> Result<()> {
             apple_pay_domain_assoc: config.apple_pay_domain_assoc.clone(),
             admin_password:         config.admin_password.clone(),
             coinzilla_zone_id:      config.coinzilla_zone_id.clone(),
+            mailer:                 mailer.clone(),
+            stripe_promo_price_id:  config.stripe_promo_price_id.clone(),
         };
         tokio::spawn(async move {
             if let Err(e) = web_dashboard::serve(app_state, 3000).await {
                 error!("Dashboard: {}", e);
             }
         });
+    }
+
+    // ── Trial-expiry promo email task (hourly) ────────────────────────────────
+    // Scans for Free tenants whose 14-day trial has just elapsed and who
+    // haven't received the $9.95 intro-offer email yet, then sends one.
+    // Runs every hour; each tenant is emailed exactly once (DB idempotency).
+    if let (Some(ref db), Some(ref ml)) = (&shared_db, &mailer) {
+        let db_promo   = db.clone();
+        let ml_promo   = ml.clone();
+        let promo_pid  = config.stripe_promo_price_id.clone();
+        let site_url   = std::env::var("SITE_URL")
+            .unwrap_or_else(|_| "https://tradingbots.fun".to_string());
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(
+                std::time::Duration::from_secs(3600)
+            );
+            interval.tick().await; // skip the first immediate tick (just started)
+            loop {
+                interval.tick().await;
+                match db_promo.fetch_expired_trial_tenants().await {
+                    Ok(tenants) => {
+                        for (tenant_id, email, name) in tenants {
+                            // Build the checkout URL — use the promo price when
+                            // configured, otherwise fall back to the standard price.
+                            let promo_flag = if promo_pid.is_some() { "&promo=1" } else { "" };
+                            let checkout_url = format!(
+                                "{}/billing/checkout?tenant_id={}{}",
+                                site_url, tenant_id, promo_flag
+                            );
+                            let html = mailer::Mailer::trial_expiry_html(&name, &checkout_url);
+                            let subject = "Your trial ended — try Pro for $9.95 this month";
+                            match ml_promo.send(&email, subject, &html).await {
+                                Ok(_) => {
+                                    info!("📧 Promo email sent → {}", email);
+                                    if let Err(e) = db_promo.mark_promo_sent(&tenant_id).await {
+                                        log::warn!("mark_promo_sent failed for {tenant_id}: {e}");
+                                    }
+                                }
+                                Err(e) => {
+                                    log::warn!("Promo email failed for {email}: {e}");
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => log::warn!("fetch_expired_trial_tenants: {e}"),
+                }
+            }
+        });
+    } else if mailer.is_none() {
+        info!("ℹ️  RESEND_API_KEY not set — trial promo emails disabled");
     }
 
     // Ctrl-C handler — saves state before exiting

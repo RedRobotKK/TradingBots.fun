@@ -44,6 +44,7 @@ pub mod price_action_backtest;
 pub mod price_action_scoring;
 pub mod invite;
 pub mod leaderboard;
+pub mod mailer;
 
 pub use models::{AccountPurpose, HealthMetrics, LiquidationRisk, Protocol, TradingAccount};
 pub use modules::{AccountManager, AccountSummary};

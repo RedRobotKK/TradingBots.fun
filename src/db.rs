@@ -441,6 +441,88 @@ impl Database {
         Ok(row.map(|r| r.weights))
     }
 
+    // ── Trial promo email ────────────────────────────────────────────────────────
+
+    /// Returns all Free-tier tenants whose 14-day trial has expired and who
+    /// have not yet received the $9.95 promo email.
+    ///
+    /// Returns `(id_str, email, display_name)` triples.  Rows with no email
+    /// address are excluded — we cannot email someone with no address.
+    pub async fn fetch_expired_trial_tenants(
+        &self,
+    ) -> Result<Vec<(String, String, String)>> {
+        let rows = sqlx::query!(
+            r#"
+            SELECT
+                id::text       AS "id!",
+                email          AS "email!",
+                COALESCE(display_name, '') AS "display_name!"
+            FROM tenants
+            WHERE tier                = 'Free'
+              AND trial_ends_at       IS NOT NULL
+              AND trial_ends_at       < now()
+              AND promo_email_sent_at IS NULL
+              AND email               IS NOT NULL
+              AND email               <> ''
+            "#
+        )
+        .fetch_all(&self.pool)
+        .await
+        .context("fetch_expired_trial_tenants")?;
+
+        Ok(rows.into_iter()
+            .map(|r| (r.id, r.email, r.display_name))
+            .collect())
+    }
+
+    /// Stamp `promo_email_sent_at = now()` and insert `TRIAL_EXPIRED` +
+    /// `PROMO_SENT` funnel events for the given tenant.
+    ///
+    /// Call this immediately after a successful email send so idempotency is
+    /// guaranteed: even if the process crashes mid-loop, previously-sent tenants
+    /// are skipped on the next run.
+    pub async fn mark_promo_sent(&self, tenant_id: &str) -> Result<()> {
+        let tid = uuid::Uuid::parse_str(tenant_id)
+            .with_context(|| format!("mark_promo_sent: bad UUID {tenant_id}"))?;
+
+        // Stamp the sent timestamp
+        sqlx::query!(
+            "UPDATE tenants SET promo_email_sent_at = now() WHERE id = $1",
+            tid
+        )
+        .execute(&self.pool)
+        .await
+        .with_context(|| format!("mark_promo_sent UPDATE: {tenant_id}"))?;
+
+        // Fire TRIAL_EXPIRED funnel event (idempotent — insert one per tenant)
+        sqlx::query!(
+            r#"
+            INSERT INTO funnel_events (tenant_id, event_type)
+            VALUES ($1, 'TRIAL_EXPIRED')
+            ON CONFLICT DO NOTHING
+            "#,
+            tid
+        )
+        .execute(&self.pool)
+        .await
+        .with_context(|| format!("funnel TRIAL_EXPIRED: {tenant_id}"))?;
+
+        // Fire PROMO_SENT funnel event
+        sqlx::query!(
+            r#"
+            INSERT INTO funnel_events (tenant_id, event_type)
+            VALUES ($1, 'PROMO_SENT')
+            ON CONFLICT DO NOTHING
+            "#,
+            tid
+        )
+        .execute(&self.pool)
+        .await
+        .with_context(|| format!("funnel PROMO_SENT: {tenant_id}"))?;
+
+        Ok(())
+    }
+
     // ── Maintenance ─────────────────────────────────────────────────────────────
 
     /// Prune old equity snapshots and update query-planner statistics.

@@ -98,6 +98,22 @@ pub struct Config {
 
     // Paper-trading flag
     pub paper_trading: bool,
+
+    // Transactional email — Resend API (https://resend.com)
+    /// Resend API key (`re_…`).  When unset, all email sending is silently skipped.
+    /// Get one free at resend.com — 100 emails/day on the free plan.
+    pub email_api_key: Option<String>,
+    /// Sender address shown to users (RFC 5322 name+addr format).
+    /// Defaults to "TradingBots.fun <hello@tradingbots.fun>".
+    /// Set via `EMAIL_FROM` env var.
+    pub email_from: Option<String>,
+
+    // Stripe — introductory promo price for trial-expired users
+    /// Stripe Price ID for the $9.95 first-month introductory offer.
+    /// When set, `/billing/checkout?promo=1` uses this price instead of
+    /// the standard `stripe_price_id` ($19.99/month).
+    /// Set via `STRIPE_PROMO_PRICE_ID` env var.
+    pub stripe_promo_price_id: Option<String>,
 }
 
 impl Config {
@@ -157,6 +173,9 @@ impl Config {
             apple_pay_domain_assoc:     env::var("APPLE_PAY_DOMAIN_ASSOC").ok(),
             admin_password:             env::var("ADMIN_PASSWORD").ok(),
             coinzilla_zone_id:          env::var("COINZILLA_ZONE_ID").ok(),
+            email_api_key:              env::var("RESEND_API_KEY").ok(),
+            email_from:                 env::var("EMAIL_FROM").ok(),
+            stripe_promo_price_id:      env::var("STRIPE_PROMO_PRICE_ID").ok(),
             lunarcrush_api_key:         env::var("LUNARCRUSH_API_KEY")
                 .unwrap_or_else(|_| "77c4fcm050bnxe49qo1h2n252umls0rrtkevh5uni".to_string()),
             anthropic_api_key:          env::var("ANTHROPIC_API_KEY").ok(),
