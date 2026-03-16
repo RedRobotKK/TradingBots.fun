@@ -72,7 +72,7 @@ pub async fn claim_invite_code(
     .map_err(|e| anyhow!("claim_invite_code DB error: {}", e))?;
 
     Ok(row.map(|r| ClaimedInvite {
-        invite_id:   r.invite_id,
+        invite_id:   r.invite_id.unwrap_or_default(),
         campaign_id: r.campaign_id,
         created_by:  r.created_by,
     }))
@@ -100,8 +100,7 @@ pub async fn generate_referral_code(
     )
     .fetch_optional(db.pool())
     .await
-    .map_err(|e| anyhow!("campaign lookup: {}", e))?
-    .flatten();
+    .map_err(|e| anyhow!("campaign lookup: {}", e))?;
 
     let tenant_uuid = Uuid::parse_str(tenant_id.as_str())
         .map_err(|e| anyhow!("invalid tenant UUID: {}", e))?;
@@ -171,8 +170,7 @@ pub async fn get_referral_code_for_tenant(
     )
     .fetch_optional(db.pool())
     .await
-    .map_err(|e| anyhow!("get_referral_code: {}", e))?
-    .flatten();
+    .map_err(|e| anyhow!("get_referral_code: {}", e))?;
 
     Ok(code)
 }

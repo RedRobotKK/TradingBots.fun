@@ -3521,6 +3521,7 @@ async fn get_invite_handler(
 async fn api_leaderboard_handler(
     State(app): State<AppState>,
 ) -> impl axum::response::IntoResponse {
+    use axum::response::IntoResponse;
     let db = match &app.db {
         Some(db) => db,
         None => return axum::Json(serde_json::json!({"entries":[],"campaign":null})).into_response(),
