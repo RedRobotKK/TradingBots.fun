@@ -11,6 +11,11 @@
 #   ./deploy.sh --no-log-push          – skip uploading CI log to GitHub
 #   ./deploy.sh --provision            – (re)run trading-bot server provisioning only
 #   ./deploy.sh --provision-ollama     – provision a SEPARATE Ollama droplet
+#   ./deploy.sh --provision-prod       – create DO production droplet + Managed Postgres
+#                                         Requires: doctl installed + authenticated
+#   ./deploy.sh --prod                 – deploy to production (reads ~/.tradingbots-prod.env)
+#   ./deploy.sh --setup-https=DOMAIN   – install nginx + Let's Encrypt on current target
+#                                         e.g. ./deploy.sh --setup-https=tradingbots.fun
 #
 # CI Quality Gate (runs before every build):
 #   1. cargo test --all         – all unit + integration tests must pass
@@ -73,6 +78,15 @@ DO_PROVISION_OLLAMA=false # --provision-ollama: separate Ollama droplet setup
 OLLAMA_IP="${OLLAMA_IP:-}"
 OLLAMA_USER="${OLLAMA_USER:-root}"
 
+# ── Production target ─────────────────────────────────────────────────────────
+# ~/.tradingbots-prod.env is written by --provision-prod and read by --prod.
+# It holds PROD_DROPLET_IP, PROD_DATABASE_URL, etc. Never commit this file.
+PROD_ENV_FILE="$HOME/.tradingbots-prod.env"
+DO_PROVISION_PROD=false
+DO_SETUP_HTTPS=false
+HTTPS_DOMAIN=""
+TARGET="staging"   # "staging" | "prod"
+
 for arg in "$@"; do
   case $arg in
     --vps-only)         DO_PUSH=false ;;
@@ -83,6 +97,9 @@ for arg in "$@"; do
     --no-log-push)      DO_LOG_PUSH=false ;;
     --provision)        DO_PROVISION=true; DO_PUSH=false; DO_BUILD=false; DO_TEST=false ;;
     --provision-ollama) DO_PROVISION_OLLAMA=true; DO_PUSH=false; DO_BUILD=false; DO_TEST=false; DO_DEPLOY=false ;;
+    --provision-prod)   DO_PROVISION_PROD=true; DO_PUSH=false; DO_BUILD=false; DO_TEST=false; DO_DEPLOY=false ;;
+    --prod)             TARGET="prod" ;;
+    --setup-https=*)    DO_SETUP_HTTPS=true; HTTPS_DOMAIN="${arg#*=}"; DO_PUSH=false; DO_BUILD=false; DO_TEST=false; DO_DEPLOY=false ;;
     --help|-h)
       echo "Usage: $0 [options]"
       echo "  (no flags)          full deploy: CI gate + push to GitHub + build & restart VPS"
@@ -95,6 +112,12 @@ for arg in "$@"; do
       echo "  --provision         set up trading-bot VPS: PostgreSQL 16 + MCP (NO Ollama)"
       echo "  --provision-ollama  provision a SEPARATE dedicated Ollama droplet"
       echo "                      Requires: export OLLAMA_IP=<droplet-ip> first"
+      echo "  --provision-prod    create DO production droplet (s-2vcpu-4gb) + Managed Postgres"
+      echo "                      Requires: doctl installed and authenticated (doctl auth init)"
+      echo "  --prod              deploy to production instead of staging"
+      echo "                      Reads config from ~/.tradingbots-prod.env (created by --provision-prod)"
+      echo "  --setup-https=DOMAIN  install nginx + Let's Encrypt on current target"
+      echo "                      e.g. ./deploy.sh --setup-https=tradingbots.fun --prod"
       echo ""
       echo "  Ollama runs on its own droplet — never on the trading-bot VPS —"
       echo "  so LLM memory usage cannot starve the bot's trade execution."
@@ -103,6 +126,26 @@ for arg in "$@"; do
     *) error "Unknown argument: $arg"; exit 1 ;;
   esac
 done
+
+# ── Production target: override VPS_IP when --prod ───────────────────────────
+if [[ "$TARGET" == "prod" ]]; then
+  if [[ ! -f "$PROD_ENV_FILE" ]]; then
+    error "Production not yet provisioned. Run first:"
+    error "  ./deploy.sh --provision-prod"
+    exit 1
+  fi
+  # shellcheck source=/dev/null
+  source "$PROD_ENV_FILE"
+  VPS_IP="${PROD_DROPLET_IP}"
+  echo ""
+  echo -e "${RED}${BOLD}  ╔══════════════════════════════════════════════╗${RESET}"
+  echo -e "${RED}${BOLD}  ║  ⚠  DEPLOYING TO PRODUCTION (${VPS_IP})  ⚠  ║${RESET}"
+  echo -e "${RED}${BOLD}  ║      tradingbots.fun — real users / money    ║${RESET}"
+  echo -e "${RED}${BOLD}  ╚══════════════════════════════════════════════╝${RESET}"
+  echo ""
+  read -r -t 8 -p "  Press Ctrl-C to abort, or wait 8s to continue... " || true
+  echo ""
+fi
 
 # ── 0. Infrastructure provisioning (--provision or first-run check) ───────────
 # This block is intentionally run BEFORE the git push so the database is ready
@@ -447,6 +490,344 @@ OLLAMA_PROVISION
 BOTENV
 
   success "Ollama droplet ready — trading bot will use http://${OLLAMA_IP}:11434"
+  exit 0
+fi
+
+# ── 0c. Production infrastructure provisioning (--provision-prod) ────────────
+if $DO_PROVISION_PROD; then
+  # ── Preflight: doctl ──────────────────────────────────────────────────────
+  if ! command -v doctl &>/dev/null; then
+    error "doctl is not installed. Install it with:"
+    error "  brew install doctl"
+    error "  or: https://docs.digitalocean.com/reference/doctl/how-to/install/"
+    exit 1
+  fi
+  if ! doctl account get &>/dev/null; then
+    error "doctl is not authenticated. Run:"
+    error "  doctl auth init"
+    exit 1
+  fi
+
+  header "Production Provisioning  (DigitalOcean)"
+  info "Using account: $(doctl account get --format Email --no-header 2>/dev/null)"
+
+  # ── SSH keys registered in DO account ─────────────────────────────────────
+  SSH_KEY_IDS=$(doctl compute ssh-key list --format ID --no-header | paste -sd, -)
+  if [[ -z "$SSH_KEY_IDS" ]]; then
+    error "No SSH keys found in your DigitalOcean account."
+    error "Add one: doctl compute ssh-key import my-key --public-key-file ~/.ssh/id_rsa.pub"
+    exit 1
+  fi
+  success "SSH keys: $SSH_KEY_IDS"
+
+  # ── Managed Postgres cluster ───────────────────────────────────────────────
+  info "Checking for existing 'tradingbots-prod' database cluster..."
+  EXISTING_DB_ID=$(doctl databases list --format Name,ID --no-header 2>/dev/null \
+    | awk '/^tradingbots-prod/{print $2}' || true)
+
+  if [[ -n "$EXISTING_DB_ID" ]]; then
+    warn "Managed database 'tradingbots-prod' already exists (ID: $EXISTING_DB_ID) — reusing"
+    DB_ID="$EXISTING_DB_ID"
+  else
+    info "Creating Managed Postgres 16 cluster (SGP1, db-s-1vcpu-1gb) — takes ~5 min..."
+    DB_ID=$(doctl databases create tradingbots-prod \
+      --engine pg --version 16 \
+      --size db-s-1vcpu-1gb \
+      --region sgp1 \
+      --num-nodes 1 \
+      --format ID --no-header)
+    success "Database cluster created: $DB_ID"
+  fi
+
+  # ── Production droplet ─────────────────────────────────────────────────────
+  info "Checking for existing 'tradingbots-prod' droplet..."
+  EXISTING_DROPLET_ID=$(doctl compute droplet list --format Name,ID --no-header 2>/dev/null \
+    | awk '/^tradingbots-prod/{print $2}' || true)
+
+  if [[ -n "$EXISTING_DROPLET_ID" ]]; then
+    warn "Droplet 'tradingbots-prod' already exists (ID: $EXISTING_DROPLET_ID) — reusing"
+    PROD_DROPLET_ID="$EXISTING_DROPLET_ID"
+  else
+    info "Creating production droplet (s-2vcpu-4gb, SGP1, Ubuntu 22.04)..."
+    PROD_DROPLET_ID=$(doctl compute droplet create tradingbots-prod \
+      --size s-2vcpu-4gb \
+      --image ubuntu-22-04-x64 \
+      --region sgp1 \
+      --ssh-keys "$SSH_KEY_IDS" \
+      --enable-private-networking \
+      --format ID --no-header \
+      --wait)
+    success "Droplet created: $PROD_DROPLET_ID"
+  fi
+
+  PROD_DROPLET_IP=$(doctl compute droplet get "$PROD_DROPLET_ID" \
+    --format PublicIPv4 --no-header)
+  success "Production droplet IP: $PROD_DROPLET_IP"
+
+  # ── Wait for Managed Postgres to be online ─────────────────────────────────
+  info "Waiting for Managed Postgres to come online (polling every 20s)..."
+  for i in $(seq 1 30); do
+    DB_STATUS=$(doctl databases get "$DB_ID" --format Status --no-header 2>/dev/null || echo "unknown")
+    if [[ "$DB_STATUS" == "online" ]]; then
+      success "Managed Postgres online"
+      break
+    fi
+    echo "  Status: $DB_STATUS  (attempt $i/30, waiting 20s…)"
+    sleep 20
+  done
+
+  # Get the managed DB connection URI
+  PROD_DB_URI=$(doctl databases connection "$DB_ID" --format URI --no-header)
+  success "Database URI obtained"
+
+  # ── Trust the production droplet in the DB firewall ────────────────────────
+  info "Adding droplet to Managed Postgres trusted sources..."
+  doctl databases firewalls append "$DB_ID" \
+    --rule "droplet:${PROD_DROPLET_ID}" 2>/dev/null \
+    && success "Droplet added to DB trusted sources" \
+    || warn "Could not add firewall rule — add manually in DO console: Databases → Trusted Sources"
+
+  # ── Wait for SSH on the new droplet ───────────────────────────────────────
+  PROD_SSH="ssh -o ConnectTimeout=30 -o StrictHostKeyChecking=accept-new -o BatchMode=yes root@${PROD_DROPLET_IP}"
+  info "Waiting for SSH on production droplet..."
+  for i in $(seq 1 15); do
+    if $PROD_SSH "echo ok" &>/dev/null 2>&1; then
+      success "SSH ready"
+      break
+    fi
+    echo "  Waiting for SSH ($i/15, 10s)..."
+    sleep 10
+  done
+
+  # ── Provision the production app server ───────────────────────────────────
+  # Unlike staging, we skip local Postgres — the app points at Managed Postgres.
+  info "Provisioning production app server..."
+  $PROD_SSH bash <<PROD_PROVISION
+    set -euo pipefail
+    export DEBIAN_FRONTEND=noninteractive
+    GREEN='\033[0;32m'; CYAN='\033[0;36m'; YELLOW='\033[1;33m'; RESET='\033[0m'
+    ok()   { echo -e "\${GREEN}✓ \$*\${RESET}"; }
+    inf()  { echo -e "\${CYAN}▸ \$*\${RESET}"; }
+    warn() { echo -e "\${YELLOW}⚠ \$*\${RESET}"; }
+
+    # ── System packages ──────────────────────────────────────────────────────
+    apt-get update -q
+    apt-get install -y curl ca-certificates gnupg build-essential git pkg-config \
+      libssl-dev lsb-release postgresql-client-16 || \
+    apt-get install -y curl ca-certificates gnupg build-essential git pkg-config \
+      libssl-dev lsb-release postgresql-client
+    ok "System packages installed"
+
+    # ── Swap file (needed for cargo build on 4GB RAM) ────────────────────────
+    if ! swapon --show 2>/dev/null | grep -q .; then
+      fallocate -l 2G /swapfile && chmod 600 /swapfile
+      mkswap /swapfile && swapon /swapfile
+      echo '/swapfile none swap sw 0 0' >> /etc/fstab
+      ok "2G swap created"
+    else
+      ok "Swap already active"
+    fi
+
+    # ── Rust toolchain ───────────────────────────────────────────────────────
+    if ! command -v cargo &>/dev/null; then
+      inf "Installing Rust toolchain..."
+      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --default-toolchain stable
+      ok "Rust installed"
+    else
+      ok "Rust: \$(rustc --version)"
+    fi
+    export PATH="\$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin:\$PATH"
+    source "\$HOME/.cargo/env" 2>/dev/null || true
+
+    # ── Node.js LTS ──────────────────────────────────────────────────────────
+    if ! command -v node &>/dev/null; then
+      curl -fsSL https://deb.nodesource.com/setup_lts.x | bash -
+      apt-get install -y nodejs
+      ok "Node.js \$(node --version) installed"
+    else
+      ok "Node.js: \$(node --version)"
+    fi
+
+    # ── Clone the app repo ───────────────────────────────────────────────────
+    if [ ! -d "/tradingbots-fun/.git" ]; then
+      inf "Cloning TradingBots.fun repo..."
+      git clone https://github.com/RedRobotKK/TradingBots.fun.git /tradingbots-fun \
+        && ok "Repo cloned → /tradingbots-fun" \
+        || { warn "Clone failed — you may need to add a GitHub deploy key."; \
+             warn "On this server run: cat ~/.ssh/id_rsa.pub"; \
+             warn "Then add as a deploy key: https://github.com/RedRobotKK/TradingBots.fun/settings/keys"; }
+    else
+      ok "Repo already present at /tradingbots-fun"
+    fi
+
+    # ── Write environment variables ──────────────────────────────────────────
+    # DATABASE_URL uses the DO Managed Postgres connection string (sslmode=require is included)
+    DB_URL="${PROD_DB_URI}"
+    if ! grep -q "^DATABASE_URL=" /etc/environment 2>/dev/null; then
+      echo "DATABASE_URL=\${DB_URL}" >> /etc/environment
+      ok "DATABASE_URL written to /etc/environment"
+    else
+      sed -i "s|^DATABASE_URL=.*|DATABASE_URL=\${DB_URL}|" /etc/environment
+      ok "DATABASE_URL updated in /etc/environment"
+    fi
+
+    # ── sqlx-cli for migrations ──────────────────────────────────────────────
+    SQLX_BIN="\$HOME/.cargo/bin/sqlx"
+    if ! "\${SQLX_BIN}" --version &>/dev/null 2>&1; then
+      inf "Installing sqlx-cli..."
+      cargo install sqlx-cli --no-default-features --features postgres 2>&1 | tail -3
+      ok "sqlx-cli installed"
+    else
+      ok "sqlx-cli: \$(\${SQLX_BIN} --version)"
+    fi
+
+    # ── Install systemd service unit ─────────────────────────────────────────
+    if [ -f "/tradingbots-fun/tradingbots.service" ]; then
+      cp /tradingbots-fun/tradingbots.service /etc/systemd/system/tradingbots.service
+      systemctl daemon-reload
+      systemctl enable tradingbots --quiet
+      ok "systemd service installed and enabled"
+    fi
+
+    echo ""
+    echo "════════════════════════════════════════════════════════════════"
+    echo "Production app server provisioned"
+    echo "────────────────────────────────────────────────────────────────"
+    echo "  Droplet IP  : ${PROD_DROPLET_IP}"
+    echo "  Database    : DO Managed Postgres (${DB_URL%%@*}@...)"
+    echo "  Repo        : /tradingbots-fun"
+    echo "────────────────────────────────────────────────────────────────"
+    echo "  Next: add env vars (PRIVY_APP_ID, etc.) to /etc/environment"
+    echo "  Then: ./deploy.sh --setup-https=tradingbots.fun --prod"
+    echo "  Then: ./deploy.sh --prod"
+    echo "════════════════════════════════════════════════════════════════"
+PROD_PROVISION
+
+  # ── Save production config to Mac ─────────────────────────────────────────
+  cat > "$PROD_ENV_FILE" <<PRODENV
+# TradingBots.fun — production environment config
+# Written by: ./deploy.sh --provision-prod on $(date)
+# DO NOT commit this file. It is already in .gitignore.
+PROD_DROPLET_IP=${PROD_DROPLET_IP}
+PROD_DROPLET_ID=${PROD_DROPLET_ID}
+PROD_DB_ID=${DB_ID}
+PROD_DATABASE_URL=${PROD_DB_URI}
+PROD_DOMAIN=tradingbots.fun
+PRODENV
+  chmod 600 "$PROD_ENV_FILE"
+  success "Production config saved → $PROD_ENV_FILE"
+
+  echo ""
+  echo "════════════════════════════════════════════════════════════════"
+  echo -e "${BOLD}Production Environment Ready${RESET}"
+  echo "────────────────────────────────────────────────────────────────"
+  echo "  Droplet IP   : ${PROD_DROPLET_IP}  (2vCPU / 4GB RAM)"
+  echo "  Database     : DO Managed Postgres (db-s-1vcpu-1gb)"
+  echo "  Config file  : ${PROD_ENV_FILE}"
+  echo "────────────────────────────────────────────────────────────────"
+  echo "  Next steps:"
+  echo "  1. Point tradingbots.fun A record → ${PROD_DROPLET_IP}"
+  echo "  2. SSH in and add secrets to /etc/environment on prod:"
+  echo "       ssh root@${PROD_DROPLET_IP}"
+  echo "       echo 'PRIVY_APP_ID=...' >> /etc/environment"
+  echo "       echo 'PRIVY_APP_SECRET=...' >> /etc/environment"
+  echo "  3. Set up HTTPS (once DNS propagates):"
+  echo "       ./deploy.sh --setup-https=tradingbots.fun --prod"
+  echo "  4. Deploy to production:"
+  echo "       ./deploy.sh --prod"
+  echo "════════════════════════════════════════════════════════════════"
+  exit 0
+fi
+
+# ── 0d. HTTPS setup via nginx + Let's Encrypt (--setup-https=DOMAIN) ─────────
+if $DO_SETUP_HTTPS; then
+  if [[ -z "$HTTPS_DOMAIN" ]]; then
+    error "--setup-https requires a domain name, e.g.:"
+    error "  ./deploy.sh --setup-https=tradingbots.fun"
+    exit 1
+  fi
+
+  TARGET_SSH="ssh -o ConnectTimeout=10 -o BatchMode=yes ${VPS_USER}@${VPS_IP}"
+
+  header "HTTPS Setup  (${HTTPS_DOMAIN} → ${VPS_IP})"
+
+  info "Checking SSH connectivity..."
+  if ! $TARGET_SSH "echo ok" &>/dev/null; then
+    error "Cannot reach ${VPS_USER}@${VPS_IP}"
+    exit 1
+  fi
+  success "SSH OK"
+
+  info "Installing nginx + certbot and requesting Let's Encrypt certificate..."
+
+  $TARGET_SSH bash <<HTTPS_SETUP
+    set -euo pipefail
+    export DEBIAN_FRONTEND=noninteractive
+    GREEN='\033[0;32m'; CYAN='\033[0;36m'; RESET='\033[0m'
+    ok()  { echo -e "\${GREEN}✓ \$*\${RESET}"; }
+    inf() { echo -e "\${CYAN}▸ \$*\${RESET}"; }
+
+    # ── nginx + certbot ──────────────────────────────────────────────────────
+    apt-get install -y nginx certbot python3-certbot-nginx
+    ok "nginx + certbot installed"
+
+    # ── nginx reverse-proxy config ───────────────────────────────────────────
+    # Serves the Rust app (127.0.0.1:3000) behind nginx on 80/443.
+    # Let's Encrypt certbot will append the SSL server block automatically.
+    cat > /etc/nginx/sites-available/tradingbots <<'NGINX'
+server {
+    listen 80;
+    server_name ${HTTPS_DOMAIN} www.${HTTPS_DOMAIN};
+
+    # Pass X-Forwarded-Proto so the app knows it's behind HTTPS
+    location / {
+        proxy_pass         http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header   Upgrade            \$http_upgrade;
+        proxy_set_header   Connection         "upgrade";
+        proxy_set_header   Host               \$host;
+        proxy_set_header   X-Real-IP          \$remote_addr;
+        proxy_set_header   X-Forwarded-For    \$proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto  \$scheme;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+}
+NGINX
+
+    ln -sf /etc/nginx/sites-available/tradingbots /etc/nginx/sites-enabled/tradingbots
+    rm -f /etc/nginx/sites-enabled/default
+    nginx -t && systemctl reload nginx
+    ok "nginx configured and reloaded for ${HTTPS_DOMAIN}"
+
+    # ── Let's Encrypt cert ───────────────────────────────────────────────────
+    # DNS must already point at this server — certbot does an HTTP-01 challenge.
+    inf "Requesting Let's Encrypt certificate (this requires DNS to already point here)..."
+    certbot --nginx \
+      -d ${HTTPS_DOMAIN} -d www.${HTTPS_DOMAIN} \
+      --non-interactive --agree-tos \
+      --email daniel@redrobot.jp \
+      --redirect
+    ok "SSL certificate issued and nginx updated for HTTPS"
+
+    # ── Auto-renewal ─────────────────────────────────────────────────────────
+    systemctl enable certbot.timer --quiet 2>/dev/null || true
+    systemctl start  certbot.timer 2>/dev/null || true
+    ok "Certbot auto-renewal enabled (certbot.timer)"
+
+    echo ""
+    echo "════════════════════════════════════════════════════════════════"
+    echo "HTTPS ready: https://${HTTPS_DOMAIN}"
+    echo "────────────────────────────────────────────────────────────────"
+    echo "  HTTP  port 80  → redirects to HTTPS"
+    echo "  HTTPS port 443 → nginx → 127.0.0.1:3000 (Rust app)"
+    echo "  Cert auto-renews via certbot.timer (every 12h check)"
+    echo "════════════════════════════════════════════════════════════════"
+HTTPS_SETUP
+
+  success "HTTPS configured: https://${HTTPS_DOMAIN}"
+  info "Update Privy allowed origins to include: https://${HTTPS_DOMAIN}"
   exit 0
 fi
 
@@ -969,7 +1350,11 @@ fi
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 echo ""
-success "Deploy complete  🚀  Dashboard → http://${VPS_IP}:3000"
+if [[ "$TARGET" == "prod" ]]; then
+  success "Deploy complete  🚀  Dashboard → https://tradingbots.fun"
+else
+  success "Deploy complete  🚀  Dashboard → http://${VPS_IP}:3000  [staging]"
+fi
 echo ""
 dim "  Logs on VPS:"
 dim "    CI gate  : ${CI_LOG}"
