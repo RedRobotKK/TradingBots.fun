@@ -596,6 +596,45 @@ if $DO_PROVISION_DB; then
   success "Connection strings built using canonical host: ${DB_CANONICAL_HOST}"
   info  "DO cluster hostname (needed for CNAME): ${DO_DB_HOST}"
 
+  # ── Create db.tradingbots.fun CNAME in DigitalOcean DNS ───────────────────
+  APP_DOMAIN="tradingbots.fun"
+  info "Checking if domain '${APP_DOMAIN}' exists in DO DNS..."
+  DOMAIN_EXISTS=$(doctl compute domain list --format Domain --no-header 2>/dev/null \
+    | grep -x "${APP_DOMAIN}" || true)
+
+  if [[ -z "$DOMAIN_EXISTS" ]]; then
+    warn "Domain '${APP_DOMAIN}' not found in DO DNS — skipping CNAME creation"
+    warn "Run first:  doctl compute domain create ${APP_DOMAIN}"
+    warn "Then add manually:  doctl compute domain records create ${APP_DOMAIN} \\"
+    warn "  --record-type CNAME --record-name db --record-data ${DO_DB_HOST}. --record-ttl 3600"
+  else
+    # Check if db CNAME already exists
+    DB_RECORD_ID=$(doctl compute domain records list "${APP_DOMAIN}" \
+      --format Name,ID --no-header 2>/dev/null \
+      | awk '/^db /{print $2}' || true)
+
+    if [[ -n "$DB_RECORD_ID" ]]; then
+      # Update existing record
+      doctl compute domain records update "${APP_DOMAIN}" \
+        --record-id "${DB_RECORD_ID}" \
+        --record-type CNAME \
+        --record-name db \
+        --record-data "${DO_DB_HOST}." \
+        --record-ttl 3600 &>/dev/null \
+        && success "db.tradingbots.fun CNAME updated → ${DO_DB_HOST}" \
+        || warn "Could not update CNAME — update manually in DO console"
+    else
+      # Create new record
+      doctl compute domain records create "${APP_DOMAIN}" \
+        --record-type CNAME \
+        --record-name db \
+        --record-data "${DO_DB_HOST}." \
+        --record-ttl 3600 &>/dev/null \
+        && success "db.tradingbots.fun CNAME created → ${DO_DB_HOST}" \
+        || warn "Could not create CNAME — add manually in DO console"
+    fi
+  fi
+
   # ── Trust the staging droplet in the cluster firewall ─────────────────────
   info "Looking up staging droplet ID for ${VPS_IP}..."
   STAGING_DROPLET_ID=$(doctl compute droplet list \
