@@ -2343,7 +2343,7 @@ body{{background:#0d1117;color:#c9d1d9;
 
     <div class="wnote">
       <div class="wnote-dot"></div>
-      Start with $20 · 2 bots · compete for weekly prizes
+      $20/mo · 9 bots · compete for weekly prizes
     </div>
   </div>
 </div>
@@ -2427,15 +2427,31 @@ async function exchangeToken(privyToken) {{
 
 // Load the pre-built Privy SDK bundle from our own server — no external CDN.
 // All exports share a single bundled React instance so hooks work correctly.
-// Rebuild after SDK upgrades: cd js && npm install && npm run build
-import('/static/privy-login.js').then(({{ PrivyProvider, usePrivy, createElement, useState, useEffect, createRoot }}) => {{
+// Rebuild after SDK upgrades: cd js && npm run build
+import('/static/privy-login.js').then(({{ PrivyProvider, usePrivy, createElement, useState, useEffect, createRoot, Component }}) => {{
   const h = createElement;
+
+  // ── Error boundary — catches Privy render errors so the button never vanishes ──
+  class PrivyErrorBoundary extends Component {{
+    constructor(props) {{ super(props); this.state = {{ err: null }}; }}
+    static getDerivedStateFromError(e) {{ return {{ err: e }}; }}
+    componentDidCatch(e) {{
+      console.error('Privy render error:', e);
+      setErr('Auth SDK failed to load — please reload the page.');
+    }}
+    render() {{
+      if (this.state.err) {{
+        return h('button', {{ className: 'btn btn-p', disabled: true }}, 'Auth unavailable — reload');
+      }}
+      return this.props.children;
+    }}
+  }}
 
   function LoginButton() {{
     const {{ ready, authenticated, login, getAccessToken }} = usePrivy();
     const [, setTick] = useState(0);
 
-    // Re-render whenever TOS checkbox or invite input change
+    // Re-render whenever ToS checkbox or invite input change
     useEffect(() => {{
       const rerender = () => setTick(t => t + 1);
       const tos = document.getElementById('tos-check');
@@ -2480,17 +2496,21 @@ import('/static/privy-login.js').then(({{ PrivyProvider, usePrivy, createElement
     }}, ready ? 'Sign in with Privy' : 'Loading…');
   }}
 
-  // Mount React component in place of the static placeholder button
+  // Mount React in place of the static placeholder button
   const btn = document.getElementById('login-btn');
   const mount = document.createElement('div');
   btn.parentNode.replaceChild(mount, btn);
 
   createRoot(mount).render(
-    h(PrivyProvider, {{
-      appId: PRIVY_APP_ID,
-      config: {{ loginMethods: ['email', 'wallet'], appearance: {{ theme: 'dark' }} }},
-    }},
-      h(LoginButton)
+    h(PrivyErrorBoundary, {{}},
+      h(PrivyProvider, {{
+        appId: PRIVY_APP_ID,
+        // 'email' OTP works out of the box — no WalletConnect project ID needed.
+        // Add 'wallet' here only after setting walletConnectCloudProjectId.
+        config: {{ loginMethods: ['email'], appearance: {{ theme: 'dark' }} }},
+      }},
+        h(LoginButton)
+      )
     )
   );
 }}).catch((e) => {{
