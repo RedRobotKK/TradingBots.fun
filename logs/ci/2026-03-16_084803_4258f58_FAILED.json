@@ -1,0 +1,175 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-03-16T08:45:10Z",
+    "commit": "4258f58",
+    "commit_full": "4258f582358b156a746c1f8aecc4f7b1a2ae3f9d",
+    "commit_message": "fix: resolve CI compile errors (rust_decimal, require_tenant_id, IntoResponse, email col)",
+    "branch": "master",
+    "overall_status": "FAILED",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
+    "cargo": "cargo 1.93.1 (083ac5135 2025-12-15)",
+    "os_kernel": "6.8.0-101-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 99,
+      "total_passed": 0,
+      "total_failed": 0,
+      "total_ignored": 0,
+      "failures": []
+    },
+    "clippy": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 68,
+      "error_count": 15,
+      "errors": [
+        {
+          "code": "E0599",
+          "message": "no method named `into_response` found for struct `axum::Json<serde_json::Value>` in the current scope",
+          "file": "src/web_dashboard.rs",
+          "line": 3526,
+          "col": 86
+        },
+        {
+          "code": "E0599",
+          "message": "no method named `into_response` found for struct `axum::Json<serde_json::Value>` in the current scope",
+          "file": "src/web_dashboard.rs",
+          "line": 3530,
+          "col": 81
+        },
+        {
+          "code": "E0308",
+          "message": "mismatched types",
+          "file": "src/invite.rs",
+          "line": 75,
+          "col": 22
+        },
+        {
+          "code": "E0599",
+          "message": "`std::option::Option<rust_decimal::Decimal>` doesn't implement `std::fmt::Display`",
+          "file": "src/leaderboard.rs",
+          "line": 140,
+          "col": 44
+        },
+        {
+          "code": "E0599",
+          "message": "`std::option::Option<rust_decimal::Decimal>` doesn't implement `std::fmt::Display`",
+          "file": "src/leaderboard.rs",
+          "line": 141,
+          "col": 50
+        },
+        {
+          "code": "E0599",
+          "message": "`std::option::Option<rust_decimal::Decimal>` doesn't implement `std::fmt::Display`",
+          "file": "src/leaderboard.rs",
+          "line": 142,
+          "col": 44
+        },
+        {
+          "code": "E0308",
+          "message": "mismatched types",
+          "file": "src/leaderboard.rs",
+          "line": 143,
+          "col": 31
+        },
+        {
+          "code": "E0599",
+          "message": "no method named `flatten` found for enum `std::option::Option<std::string::String>` in the current scope",
+          "file": "src/invite.rs",
+          "line": 175,
+          "col": 6
+        },
+        {
+          "code": "E0599",
+          "message": "no method named `flatten` found for enum `std::option::Option<uuid::Uuid>` in the current scope",
+          "file": "src/invite.rs",
+          "line": 104,
+          "col": 6
+        },
+        {
+          "code": "E0599",
+          "message": "no method named `flatten` found for enum `std::option::Option<uuid::Uuid>` in the current scope",
+          "file": "src/leaderboard.rs",
+          "line": 173,
+          "col": 6
+        },
+        {
+          "code": "E0609",
+          "message": "no field `campaign_id` on type `tenant::TenantConfig`",
+          "file": "src/leaderboard.rs",
+          "line": 184,
+          "col": 34
+        },
+        {
+          "code": "E0599",
+          "message": "no method named `flatten` found for enum `std::option::Option<rust_decimal::Decimal>` in the current scope",
+          "file": "src/leaderboard.rs",
+          "line": 215,
+          "col": 10
+        },
+        {
+          "code": "E0282",
+          "message": "type annotations needed",
+          "file": "src/leaderboard.rs",
+          "line": 218,
+          "col": 19
+        },
+        {
+          "code": "E0277",
+          "message": "`std::option::Option<_>` doesn't implement `std::fmt::Display`",
+          "file": "src/leaderboard.rs",
+          "line": 243,
+          "col": 82
+        },
+        {
+          "code": "E",
+          "message": "could not compile `tradingbots-fun` (bin \"tradingbots-fun\" test) due to 14 previous errors"
+        }
+      ]
+    },
+    "audit": {
+      "status": "ADVISORY",
+      "exit_code": 1,
+      "duration_seconds": 4,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2023-0071",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2023-0071",
+          "severity": "5.9 (medium)",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "tradingbots",
+    "status": "active",
+    "active_since": "Mon 2026-03-16 08:45:11 UTC",
+    "recent_logs": [
+      "Mar 16 08:45:10 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: tradingbots.service: Deactivated successfully.",
+      "Mar 16 08:45:10 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Stopped tradingbots.service - TradingBots.fun.",
+      "Mar 16 08:45:10 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: tradingbots.service: Consumed 1.764s CPU time, 12.9M memory peak, 6.4M memory swap peak.",
+      "Mar 16 08:45:10 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Starting tradingbots.service - TradingBots.fun...",
+      "Mar 16 08:45:11 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Started tradingbots.service - TradingBots.fun."
+    ]
+  }
+}
