@@ -2428,24 +2428,17 @@ async function exchangeToken(privyToken) {{
 // Load the pre-built Privy SDK bundle from our own server — no external CDN.
 // All exports share a single bundled React instance so hooks work correctly.
 // Rebuild after SDK upgrades: cd js && npm run build
-import('/static/privy-login.js').then(({{ PrivyProvider, usePrivy, createElement, useState, useEffect, createRoot, Component }}) => {{
+import('/static/privy-login.js').then(({{ PrivyProvider, usePrivy, createElement, useState, useEffect, createRoot }}) => {{
   const h = createElement;
 
-  // ── Error boundary — catches Privy render errors so the button never vanishes ──
-  class PrivyErrorBoundary extends Component {{
-    constructor(props) {{ super(props); this.state = {{ err: null }}; }}
-    static getDerivedStateFromError(e) {{ return {{ err: e }}; }}
-    componentDidCatch(e) {{
-      console.error('Privy render error:', e);
-      setErr('Auth SDK failed to load — please reload the page.');
+  // Watchdog: if the mount div is still empty 8 s after the bundle loads,
+  // Privy silently crashed — restore a visible error so the user isn't stuck.
+  const watchdog = setTimeout(() => {{
+    if (mount.childElementCount === 0) {{
+      setErr('Auth SDK failed to initialise — please reload the page.');
+      mount.innerHTML = '<button class="btn btn-p" disabled>Auth unavailable — reload</button>';
     }}
-    render() {{
-      if (this.state.err) {{
-        return h('button', {{ className: 'btn btn-p', disabled: true }}, 'Auth unavailable — reload');
-      }}
-      return this.props.children;
-    }}
-  }}
+  }}, 8000);
 
   function LoginButton() {{
     const {{ ready, authenticated, login, getAccessToken }} = usePrivy();
@@ -2502,17 +2495,20 @@ import('/static/privy-login.js').then(({{ PrivyProvider, usePrivy, createElement
   btn.parentNode.replaceChild(mount, btn);
 
   createRoot(mount).render(
-    h(PrivyErrorBoundary, {{}},
-      h(PrivyProvider, {{
-        appId: PRIVY_APP_ID,
-        // 'email' OTP works out of the box — no WalletConnect project ID needed.
-        // Add 'wallet' here only after setting walletConnectCloudProjectId.
-        config: {{ loginMethods: ['email'], appearance: {{ theme: 'dark' }} }},
-      }},
-        h(LoginButton)
-      )
+    h(PrivyProvider, {{
+      appId: PRIVY_APP_ID,
+      // 'email' OTP works out of the box — no WalletConnect project ID needed.
+      // Add 'wallet' here only after setting walletConnectCloudProjectId.
+      config: {{ loginMethods: ['email'], appearance: {{ theme: 'dark' }} }},
+    }},
+      h(LoginButton)
     )
   );
+
+  // Cancel watchdog once React has successfully rendered something
+  const cancelWatchdog = setInterval(() => {{
+    if (mount.childElementCount > 0) {{ clearTimeout(watchdog); clearInterval(cancelWatchdog); }}
+  }}, 200);
 }}).catch((e) => {{
   setErr('Could not load authentication SDK: ' + e.message);
 }});
