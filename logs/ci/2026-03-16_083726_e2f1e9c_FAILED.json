@@ -1,0 +1,213 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-03-16T08:36:17Z",
+    "commit": "e2f1e9c",
+    "commit_full": "e2f1e9ccd5bc8ad22d4b20892a8bdf11dc1551f3",
+    "commit_message": "fix: remove invite/leaderboard/mailer from lib.rs (binary-only modules)",
+    "branch": "master",
+    "overall_status": "FAILED",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
+    "cargo": "cargo 1.93.1 (083ac5135 2025-12-15)",
+    "os_kernel": "6.8.0-101-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 38,
+      "total_passed": 0,
+      "total_failed": 0,
+      "total_ignored": 0,
+      "failures": []
+    },
+    "clippy": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 27,
+      "error_count": 20,
+      "errors": [
+        {
+          "code": "E",
+          "message": "error returned from database: column \"email\" does not exist",
+          "file": "src/db.rs",
+          "line": 454,
+          "col": 20
+        },
+        {
+          "code": "E",
+          "message": "SQLx feature `bigdecimal` required for type NUMERIC of column #7 (\"prize_pool_usd\")",
+          "file": "src/leaderboard.rs",
+          "line": 77,
+          "col": 15
+        },
+        {
+          "code": "E",
+          "message": "SQLx feature `bigdecimal` required for type NUMERIC of column #4 (\"equity_usd\")",
+          "file": "src/leaderboard.rs",
+          "line": 119,
+          "col": 16
+        },
+        {
+          "code": "E",
+          "message": "SQLx feature `bigdecimal` required for type NUMERIC of column #5 (\"start_equity_usd\")",
+          "file": "src/leaderboard.rs",
+          "line": 119,
+          "col": 16
+        },
+        {
+          "code": "E",
+          "message": "SQLx feature `bigdecimal` required for type NUMERIC of column #6 (\"pct_return\")",
+          "file": "src/leaderboard.rs",
+          "line": 119,
+          "col": 16
+        },
+        {
+          "code": "E",
+          "message": "SQLx feature `bigdecimal` required for type NUMERIC of column #1 (\"start_equity_usd\")",
+          "file": "src/leaderboard.rs",
+          "line": 207,
+          "col": 61
+        },
+        {
+          "code": "E",
+          "message": "optional sqlx feature `bigdecimal` required for type NUMERIC of param #3",
+          "file": "src/leaderboard.rs",
+          "line": 221,
+          "col": 22
+        },
+        {
+          "code": "E",
+          "message": "optional sqlx feature `bigdecimal` required for type NUMERIC of param #4",
+          "file": "src/leaderboard.rs",
+          "line": 295,
+          "col": 9
+        },
+        {
+          "code": "E0425",
+          "message": "cannot find function `require_tenant_id` in module `crate::privy`",
+          "file": "src/web_dashboard.rs",
+          "line": 3445,
+          "col": 41
+        },
+        {
+          "code": "E0425",
+          "message": "cannot find function `require_tenant_id` in module `crate::privy`",
+          "file": "src/web_dashboard.rs",
+          "line": 3479,
+          "col": 41
+        },
+        {
+          "code": "E",
+          "message": "empty line after doc comment",
+          "file": "src/web_dashboard.rs",
+          "line": 3237,
+          "col": 1
+        },
+        {
+          "code": "E0282",
+          "message": "type annotations needed",
+          "file": "src/db.rs",
+          "line": 454,
+          "col": 20
+        },
+        {
+          "code": "E0599",
+          "message": "no method named `into_response` found for tuple `(axum::http::StatusCode, axum::Json<serde_json::Value>)` in the current",
+          "file": "src/web_dashboard.rs",
+          "line": 3448,
+          "col": 70
+        },
+        {
+          "code": "E0599",
+          "message": "no method named `into_response` found for tuple `(axum::http::StatusCode, axum::Json<serde_json::Value>)` in the current",
+          "file": "src/web_dashboard.rs",
+          "line": 3454,
+          "col": 81
+        },
+        {
+          "code": "E0599",
+          "message": "no method named `into_response` found for struct `axum::Json<serde_json::Value>` in the current scope",
+          "file": "src/web_dashboard.rs",
+          "line": 3463,
+          "col": 13
+        },
+        {
+          "code": "E0599",
+          "message": "no method named `into_response` found for tuple `(axum::http::StatusCode, axum::Json<serde_json::Value>)` in the current",
+          "file": "src/web_dashboard.rs",
+          "line": 3467,
+          "col": 82
+        },
+        {
+          "code": "E0599",
+          "message": "no method named `into_response` found for tuple `(axum::http::StatusCode, axum::Json<serde_json::Value>)` in the current",
+          "file": "src/web_dashboard.rs",
+          "line": 3482,
+          "col": 70
+        },
+        {
+          "code": "E0599",
+          "message": "no method named `into_response` found for tuple `(axum::http::StatusCode, axum::Json<serde_json::Value>)` in the current",
+          "file": "src/web_dashboard.rs",
+          "line": 3488,
+          "col": 81
+        },
+        {
+          "code": "E0599",
+          "message": "no method named `into_response` found for tuple `(axum::http::StatusCode, axum::Json<serde_json::Value>)` in the current",
+          "file": "src/web_dashboard.rs",
+          "line": 3500,
+          "col": 93
+        },
+        {
+          "code": "E0599",
+          "message": "no method named `into_response` found for tuple `(axum::http::StatusCode, axum::Json<serde_json::Value>)` in the current",
+          "file": "src/web_dashboard.rs",
+          "line": 3507,
+          "col": 70
+        }
+      ]
+    },
+    "audit": {
+      "status": "ADVISORY",
+      "exit_code": 1,
+      "duration_seconds": 3,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2023-0071",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2023-0071",
+          "severity": "5.9 (medium)",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "tradingbots",
+    "status": "active",
+    "active_since": "Mon 2026-03-16 08:36:13 UTC",
+    "recent_logs": [
+      "Mar 16 08:36:13 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: tradingbots.service: Deactivated successfully.",
+      "Mar 16 08:36:13 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Stopped tradingbots.service - TradingBots.fun.",
+      "Mar 16 08:36:13 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: tradingbots.service: Consumed 2.951s CPU time, 11.0M memory peak, 4.4M memory swap peak.",
+      "Mar 16 08:36:13 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Starting tradingbots.service - TradingBots.fun...",
+      "Mar 16 08:36:13 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Started tradingbots.service - TradingBots.fun."
+    ]
+  }
+}
