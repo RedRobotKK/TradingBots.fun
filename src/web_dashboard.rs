@@ -2407,10 +2407,12 @@ async function exchangeToken(privyToken) {{
 
 // @privy-io/js-sdk-core is server-side only (no login() method).
 // Use the React Auth SDK for browser login flows.
+// The ?deps= pin ensures esm.sh shares the same React instance rather than
+// bundling a second copy, which causes hook errors and fetch failures.
 Promise.all([
-  import('https://esm.sh/react@18'),
-  import('https://esm.sh/react-dom@18/client'),
-  import('https://esm.sh/@privy-io/react-auth'),
+  import('https://esm.sh/react@18.3.1'),
+  import('https://esm.sh/react-dom@18.3.1/client'),
+  import('https://esm.sh/@privy-io/react-auth?deps=react@18.3.1,react-dom@18.3.1'),
 ]).then(([React, ReactDOM, PrivyReact]) => {{
   const {{ createElement: h, useState, useEffect }} = React;
   const {{ createRoot }} = ReactDOM;
