@@ -82,7 +82,9 @@ OLLAMA_USER="${OLLAMA_USER:-root}"
 # ~/.tradingbots-prod.env is written by --provision-prod and read by --prod.
 # It holds PROD_DROPLET_IP, PROD_DATABASE_URL, etc. Never commit this file.
 PROD_ENV_FILE="$HOME/.tradingbots-prod.env"
+DB_ENV_FILE="$HOME/.tradingbots-db.env"   # written by --provision-db
 DO_PROVISION_PROD=false
+DO_PROVISION_DB=false
 DO_SETUP_HTTPS=false
 HTTPS_DOMAIN=""
 TARGET="staging"   # "staging" | "prod"
@@ -97,6 +99,7 @@ for arg in "$@"; do
     --no-log-push)      DO_LOG_PUSH=false ;;
     --provision)        DO_PROVISION=true; DO_PUSH=false; DO_BUILD=false; DO_TEST=false ;;
     --provision-ollama) DO_PROVISION_OLLAMA=true; DO_PUSH=false; DO_BUILD=false; DO_TEST=false; DO_DEPLOY=false ;;
+    --provision-db)     DO_PROVISION_DB=true; DO_PUSH=false; DO_BUILD=false; DO_TEST=false; DO_DEPLOY=false ;;
     --provision-prod)   DO_PROVISION_PROD=true; DO_PUSH=false; DO_BUILD=false; DO_TEST=false; DO_DEPLOY=false ;;
     --prod)             TARGET="prod" ;;
     --setup-https=*)    DO_SETUP_HTTPS=true; HTTPS_DOMAIN="${arg#*=}"; DO_PUSH=false; DO_BUILD=false; DO_TEST=false; DO_DEPLOY=false ;;
@@ -112,6 +115,10 @@ for arg in "$@"; do
       echo "  --provision         set up trading-bot VPS: PostgreSQL 16 + MCP (NO Ollama)"
       echo "  --provision-ollama  provision a SEPARATE dedicated Ollama droplet"
       echo "                      Requires: export OLLAMA_IP=<droplet-ip> first"
+      echo "  --provision-db      create DO Managed Postgres cluster shared by staging + prod"
+      echo "                      One cluster, two databases: tradingbots_staging + tradingbots"
+      echo "                      Migrates existing local staging data and untethers the DB from VPS"
+      echo "                      Requires: doctl installed and authenticated"
       echo "  --provision-prod    create DO production droplet (s-2vcpu-4gb) + Managed Postgres"
       echo "                      Requires: doctl installed and authenticated (doctl auth init)"
       echo "  --prod              deploy to production instead of staging"
@@ -166,8 +173,15 @@ if $DO_PROVISION || $DO_DEPLOY; then
     inf() { echo -e "${CYAN}▸ $*${RESET}"; }
 
     # ── PostgreSQL 16 ──────────────────────────────────────────────────────────
-    # We use the official PGDG repo to guarantee PostgreSQL 16 regardless of
-    # the Ubuntu LTS version.  Ubuntu 22.04 ships with PG 14 by default.
+    # Skip local Postgres installation if DATABASE_URL already points to a
+    # remote managed cluster (set by --provision-db).  Local Postgres is only
+    # needed when the DB is co-located on this VPS (legacy / first-time setup).
+    source /etc/environment 2>/dev/null || true
+    if echo "${DATABASE_URL:-}" | grep -qv "127\.0\.0\.1\|localhost"; then
+      ok "DATABASE_URL points to remote managed cluster — skipping local Postgres install"
+      ok "PostgreSQL client tools only (for pg_dump / psql access)"
+      apt-get install -y postgresql-client 2>/dev/null || true
+    else
     inf "PostgreSQL 16..."
     if ! command -v psql &>/dev/null || ! psql --version | grep -q "16\|17"; then
       inf "Installing PostgreSQL 16 from PGDG..."
@@ -272,6 +286,7 @@ if $DO_PROVISION || $DO_DEPLOY; then
       echo -e "${RED}✗ Cannot connect as tradingbots — check pg_hba.conf and password${RESET}"
       echo "  Run: PGPASSWORD='${DB_PASSWORD}' psql -h 127.0.0.1 -U tradingbots tradingbots"
     fi
+    fi  # end: local Postgres block (skipped when DATABASE_URL is remote)
 
     # ── sqlx-cli: run schema migrations ───────────────────────────────────────
     # sqlx migrate run reads ./migrations/*.sql and applies any not yet tracked
@@ -493,6 +508,204 @@ BOTENV
   exit 0
 fi
 
+# ── 0c. Managed database provisioning (--provision-db) ───────────────────────
+# Creates ONE shared DO Managed Postgres cluster with two logical databases:
+#   tradingbots_staging  – used by the staging VPS (165.232.160.43)
+#   tradingbots          – used by production (created later via --provision-prod)
+#
+# After this runs, the staging VPS no longer has a local Postgres process.
+# The app just talks to the managed cluster over a private network connection.
+if $DO_PROVISION_DB; then
+  # ── Preflight ──────────────────────────────────────────────────────────────
+  if ! command -v doctl &>/dev/null; then
+    error "doctl is not installed.  Install: brew install doctl"
+    exit 1
+  fi
+  if ! doctl account get &>/dev/null; then
+    error "doctl not authenticated.  Run: doctl auth init"
+    exit 1
+  fi
+
+  header "Managed Database Provisioning  (DigitalOcean)"
+  info "Account: $(doctl account get --format Email --no-header 2>/dev/null)"
+
+  # ── Create or reuse the cluster ───────────────────────────────────────────
+  info "Checking for existing 'tradingbots-db' cluster..."
+  DB_CLUSTER_ID=$(doctl databases list --format Name,ID --no-header 2>/dev/null \
+    | awk '/^tradingbots-db/{print $2}' || true)
+
+  if [[ -n "$DB_CLUSTER_ID" ]]; then
+    warn "Cluster 'tradingbots-db' already exists (ID: $DB_CLUSTER_ID) — reusing"
+  else
+    info "Creating Managed Postgres 16 cluster 'tradingbots-db' (db-s-1vcpu-1gb, SGP1)..."
+    info "This takes ~5 minutes — grab a coffee ☕"
+    DB_CLUSTER_ID=$(doctl databases create tradingbots-db \
+      --engine pg --version 16 \
+      --size db-s-1vcpu-1gb \
+      --region sgp1 \
+      --num-nodes 1 \
+      --format ID --no-header)
+    success "Cluster created: $DB_CLUSTER_ID"
+  fi
+
+  # ── Wait for the cluster to be online ─────────────────────────────────────
+  info "Waiting for cluster to come online..."
+  for i in $(seq 1 30); do
+    DB_STATUS=$(doctl databases get "$DB_CLUSTER_ID" --format Status --no-header 2>/dev/null || echo "unknown")
+    if [[ "$DB_STATUS" == "online" ]]; then
+      success "Cluster online"
+      break
+    fi
+    echo "  Status: $DB_STATUS  (attempt $i/30, retrying in 20s…)"
+    sleep 20
+  done
+
+  # ── Create logical databases inside the cluster ───────────────────────────
+  for DBNAME in tradingbots_staging tradingbots; do
+    EXISTS=$(doctl databases db list "$DB_CLUSTER_ID" --format Name --no-header 2>/dev/null | grep -x "$DBNAME" || true)
+    if [[ -n "$EXISTS" ]]; then
+      warn "Database '$DBNAME' already exists — skipping create"
+    else
+      doctl databases db create "$DB_CLUSTER_ID" "$DBNAME"
+      success "Database '$DBNAME' created"
+    fi
+  done
+
+  # ── Get connection URIs for each database ─────────────────────────────────
+  STAGING_DB_URI=$(doctl databases connection "$DB_CLUSTER_ID" \
+    --database tradingbots_staging --format URI --no-header)
+  PROD_DB_URI=$(doctl databases connection "$DB_CLUSTER_ID" \
+    --database tradingbots --format URI --no-header)
+  success "Connection strings obtained"
+
+  # ── Trust the staging droplet in the cluster firewall ─────────────────────
+  info "Looking up staging droplet ID for ${VPS_IP}..."
+  STAGING_DROPLET_ID=$(doctl compute droplet list \
+    --format PublicIPv4,ID --no-header 2>/dev/null \
+    | awk -v ip="${VPS_IP}" '$1==ip{print $2}')
+
+  if [[ -n "$STAGING_DROPLET_ID" ]]; then
+    doctl databases firewalls append "$DB_CLUSTER_ID" \
+      --rule "droplet:${STAGING_DROPLET_ID}" 2>/dev/null \
+      && success "Staging droplet (${STAGING_DROPLET_ID}) added to DB trusted sources" \
+      || warn "Could not add firewall rule — add manually in DO console: Databases → Trusted Sources"
+  else
+    warn "Could not find droplet ID for ${VPS_IP} — add trusted source manually in DO console"
+  fi
+
+  # ── Dump existing local staging data and restore to managed cluster ───────
+  STAGING_SSH="ssh -o ConnectTimeout=10 -o BatchMode=yes ${VPS_USER}@${VPS_IP}"
+  info "Migrating existing staging data to managed cluster..."
+  $STAGING_SSH bash <<MIGRATE
+    set -euo pipefail
+    GREEN='\033[0;32m'; CYAN='\033[0;36m'; YELLOW='\033[1;33m'; RESET='\033[0m'
+    ok()   { echo -e "\${GREEN}✓ \$*\${RESET}"; }
+    inf()  { echo -e "\${CYAN}▸ \$*\${RESET}"; }
+    warn() { echo -e "\${YELLOW}⚠ \$*\${RESET}"; }
+
+    source /etc/environment 2>/dev/null || true
+    export PATH="\$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin:\$PATH"
+
+    # ── Dump local staging DB ────────────────────────────────────────────────
+    if command -v pg_dump &>/dev/null && psql "\${DATABASE_URL:-}" -c "SELECT 1" &>/dev/null 2>&1; then
+      inf "Dumping local staging database..."
+      pg_dump "\${DATABASE_URL}" \
+        --no-owner --no-privileges \
+        --exclude-table='_sqlx_migrations' \
+        -f /tmp/staging_dump.sql \
+        && ok "Local staging DB dumped → /tmp/staging_dump.sql" \
+        || warn "Dump failed — will start with a clean schema on managed DB"
+    else
+      warn "Local DB not reachable or pg_dump unavailable — skipping data migration"
+      warn "Schema will be created fresh from sqlx migrations on next deploy"
+    fi
+
+    # ── Restore dump to managed cluster ─────────────────────────────────────
+    MANAGED_URL="${STAGING_DB_URI}"
+    if [ -f /tmp/staging_dump.sql ]; then
+      inf "Restoring dump to managed cluster..."
+      psql "\${MANAGED_URL}" -f /tmp/staging_dump.sql &>/dev/null \
+        && ok "Data restored to managed tradingbots_staging" \
+        || warn "Restore had warnings — check data manually. Schema will be fixed by migrations."
+      rm -f /tmp/staging_dump.sql
+    fi
+
+    # ── Switch DATABASE_URL to managed cluster ────────────────────────────────
+    inf "Updating DATABASE_URL in /etc/environment → managed cluster..."
+    if grep -q "^DATABASE_URL=" /etc/environment; then
+      sed -i "s|^DATABASE_URL=.*|DATABASE_URL=\${MANAGED_URL}|" /etc/environment
+    else
+      echo "DATABASE_URL=\${MANAGED_URL}" >> /etc/environment
+    fi
+    ok "DATABASE_URL now points to DO Managed Postgres"
+
+    # ── Run migrations on the managed DB ─────────────────────────────────────
+    SQLX_BIN="\$HOME/.cargo/bin/sqlx"
+    if "\${SQLX_BIN}" --version &>/dev/null 2>&1; then
+      inf "Running migrations on managed cluster..."
+      cd /tradingbots-fun
+      "\${SQLX_BIN}" migrate run --database-url "\${MANAGED_URL}" \
+        && ok "Migrations applied on managed cluster" \
+        || warn "Migrations failed — will retry on next deploy"
+    fi
+
+    # ── Restart the service to pick up new DATABASE_URL ───────────────────────
+    systemctl restart tradingbots 2>/dev/null \
+      && ok "tradingbots service restarted with managed DB" \
+      || warn "Service restart failed — run: systemctl restart tradingbots"
+
+    # ── Stop local Postgres (no longer needed on this VPS) ────────────────────
+    if systemctl is-active postgresql &>/dev/null; then
+      inf "Stopping local Postgres (data now lives in managed cluster)..."
+      systemctl stop postgresql
+      systemctl disable postgresql --quiet
+      ok "Local Postgres stopped and disabled"
+    fi
+MIGRATE
+
+  # ── Save DB config ────────────────────────────────────────────────────────
+  cat > "$DB_ENV_FILE" <<DBENV
+# TradingBots.fun — Managed Postgres config
+# Written by: ./deploy.sh --provision-db on $(date)
+# DO NOT commit this file. It is already in .gitignore.
+DB_CLUSTER_ID=${DB_CLUSTER_ID}
+STAGING_DATABASE_URL=${STAGING_DB_URI}
+PROD_DATABASE_URL=${PROD_DB_URI}
+DBENV
+  chmod 600 "$DB_ENV_FILE"
+  success "DB config saved → $DB_ENV_FILE"
+
+  # ── Also patch the prod env file if it exists ────────────────────────────
+  if [[ -f "$PROD_ENV_FILE" ]]; then
+    if grep -q "^PROD_DATABASE_URL=" "$PROD_ENV_FILE"; then
+      sed -i "s|^PROD_DATABASE_URL=.*|PROD_DATABASE_URL=${PROD_DB_URI}|" "$PROD_ENV_FILE"
+    else
+      echo "PROD_DATABASE_URL=${PROD_DB_URI}" >> "$PROD_ENV_FILE"
+    fi
+    success "PROD_DATABASE_URL updated in $PROD_ENV_FILE"
+  fi
+
+  echo ""
+  echo "════════════════════════════════════════════════════════════════"
+  echo -e "${BOLD}Managed Postgres Ready${RESET}"
+  echo "────────────────────────────────────────────────────────────────"
+  echo "  Cluster      : tradingbots-db (${DB_CLUSTER_ID})"
+  echo "  Region       : SGP1  |  Size: db-s-1vcpu-1gb"
+  echo "  Staging DB   : tradingbots_staging"
+  echo "  Production DB: tradingbots"
+  echo "  Config file  : ${DB_ENV_FILE}"
+  echo "────────────────────────────────────────────────────────────────"
+  echo "  Staging VPS ${VPS_IP} now uses managed cluster"
+  echo "  Local Postgres on staging VPS has been stopped"
+  echo ""
+  echo "  Next steps:"
+  echo "  1. Verify staging still works:  curl http://${VPS_IP}:3000/health"
+  echo "  2. When ready for production:   ./deploy.sh --provision-prod"
+  echo "     (will reuse the 'tradingbots' database already in this cluster)"
+  echo "════════════════════════════════════════════════════════════════"
+  exit 0
+fi
+
 # ── 0c. Production infrastructure provisioning (--provision-prod) ────────────
 if $DO_PROVISION_PROD; then
   # ── Preflight: doctl ──────────────────────────────────────────────────────
@@ -521,22 +734,43 @@ if $DO_PROVISION_PROD; then
   success "SSH keys: $SSH_KEY_IDS"
 
   # ── Managed Postgres cluster ───────────────────────────────────────────────
-  info "Checking for existing 'tradingbots-prod' database cluster..."
-  EXISTING_DB_ID=$(doctl databases list --format Name,ID --no-header 2>/dev/null \
-    | awk '/^tradingbots-prod/{print $2}' || true)
+  # Prefer the shared cluster created by --provision-db (tradingbots-db).
+  # Fall back to creating a dedicated prod-only cluster if it doesn't exist.
+  info "Checking for shared 'tradingbots-db' cluster (from --provision-db)..."
+  DB_ID=$(doctl databases list --format Name,ID --no-header 2>/dev/null \
+    | awk '/^tradingbots-db/{print $2}' || true)
 
-  if [[ -n "$EXISTING_DB_ID" ]]; then
-    warn "Managed database 'tradingbots-prod' already exists (ID: $EXISTING_DB_ID) — reusing"
-    DB_ID="$EXISTING_DB_ID"
+  if [[ -n "$DB_ID" ]]; then
+    success "Reusing shared cluster 'tradingbots-db' (${DB_ID})"
+    # Ensure the production database exists in the shared cluster
+    EXISTS=$(doctl databases db list "$DB_ID" --format Name --no-header 2>/dev/null | grep -x "tradingbots" || true)
+    if [[ -z "$EXISTS" ]]; then
+      doctl databases db create "$DB_ID" tradingbots
+      success "Production database 'tradingbots' created in shared cluster"
+    else
+      success "Production database 'tradingbots' already exists"
+    fi
+    PROD_DB_URI=$(doctl databases connection "$DB_ID" --database tradingbots --format URI --no-header)
   else
-    info "Creating Managed Postgres 16 cluster (SGP1, db-s-1vcpu-1gb) — takes ~5 min..."
-    DB_ID=$(doctl databases create tradingbots-prod \
-      --engine pg --version 16 \
-      --size db-s-1vcpu-1gb \
-      --region sgp1 \
-      --num-nodes 1 \
-      --format ID --no-header)
-    success "Database cluster created: $DB_ID"
+    info "No shared cluster found — checking for dedicated 'tradingbots-prod' cluster..."
+    EXISTING_DB_ID=$(doctl databases list --format Name,ID --no-header 2>/dev/null \
+      | awk '/^tradingbots-prod/{print $2}' || true)
+
+    if [[ -n "$EXISTING_DB_ID" ]]; then
+      warn "Managed database 'tradingbots-prod' already exists (ID: $EXISTING_DB_ID) — reusing"
+      DB_ID="$EXISTING_DB_ID"
+    else
+      info "Creating dedicated Managed Postgres 16 cluster (SGP1, db-s-1vcpu-1gb) — takes ~5 min..."
+      info "Tip: run ./deploy.sh --provision-db first to share one cluster across staging + prod"
+      DB_ID=$(doctl databases create tradingbots-prod \
+        --engine pg --version 16 \
+        --size db-s-1vcpu-1gb \
+        --region sgp1 \
+        --num-nodes 1 \
+        --format ID --no-header)
+      success "Database cluster created: $DB_ID"
+    fi
+    PROD_DB_URI=$(doctl databases connection "$DB_ID" --format URI --no-header)
   fi
 
   # ── Production droplet ─────────────────────────────────────────────────────
