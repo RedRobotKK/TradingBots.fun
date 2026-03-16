@@ -250,6 +250,7 @@ pub async fn snapshot_daily(
 /// campaign and optionally starts the next one.
 ///
 /// Returns a list of `(rank, tenant_id, prize_usd)` for operator confirmation.
+#[allow(dead_code)]
 pub async fn award_campaign_prizes(
     db:          &SharedDb,
     campaign_id: Uuid,

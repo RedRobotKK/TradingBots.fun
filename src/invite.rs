@@ -37,6 +37,7 @@ use crate::tenant::TenantId;
 #[derive(Debug, Clone)]
 pub struct ClaimedInvite {
     /// PK of the invite_codes row (for audit linkage).
+    #[allow(dead_code)]
     pub invite_id:   Uuid,
     /// Campaign this code belongs to (may be NULL for uncampaigned codes).
     pub campaign_id: Option<Uuid>,
@@ -126,6 +127,7 @@ pub async fn generate_referral_code(
 /// Admin: generate N blast codes for a campaign.
 ///
 /// Returns the list of generated code strings.
+#[allow(dead_code)]
 pub async fn generate_blast_codes(
     db:          &SharedDb,
     campaign_id: Uuid,
@@ -179,6 +181,7 @@ pub async fn get_referral_code_for_tenant(
 
 /// Payload for POST /admin/invite/generate-blast
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct GenerateBlastRequest {
     pub campaign_id: Uuid,
     pub count:       u32,
@@ -188,6 +191,7 @@ pub struct GenerateBlastRequest {
 
 /// Response shape for invite code endpoints.
 #[derive(Debug, Serialize)]
+#[allow(dead_code)]
 pub struct InviteCodeResponse {
     pub code:        String,
     pub expires_at:  Option<String>,
@@ -197,6 +201,7 @@ pub struct InviteCodeResponse {
 
 /// Admin: list all invite codes for a campaign.
 #[derive(Debug, Serialize)]
+#[allow(dead_code)]
 pub struct InviteCodeSummary {
     pub code:        String,
     pub uses_count:  i16,
@@ -207,6 +212,7 @@ pub struct InviteCodeSummary {
     pub created_by:  Option<String>,  // tenant display_name or "operator"
 }
 
+#[allow(dead_code)]
 pub async fn list_codes_for_campaign(
     db:          &SharedDb,
     campaign_id: Uuid,

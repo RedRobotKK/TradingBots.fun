@@ -57,6 +57,7 @@ pub struct AppState {
     pub coinzilla_zone_id: Option<String>,
     /// Resend-powered transactional mailer.  `None` when `RESEND_API_KEY` is unset.
     /// Used by the trial-expiry batch job to send the $9.95 promo email.
+    #[allow(dead_code)]
     pub mailer: Option<std::sync::Arc<crate::mailer::Mailer>>,
     /// Stripe Price ID for the $9.95 first-month intro offer sent to expired-trial users.
     /// When set, `/billing/checkout?promo=1` substitutes this for the standard price.

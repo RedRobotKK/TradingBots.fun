@@ -88,9 +88,10 @@ impl Mailer {
     /// Returns the HTML body for the post-trial promo email.
     ///
     /// Arguments:
+    ///
     /// - `display_name`  — first-name or wallet short (e.g. "0x1234")
     /// - `checkout_url`  — full URL to the $9.95 promo Stripe Checkout session
-    ///                      (e.g. `https://tradingbots.fun/billing/checkout?promo=1&tenant_id=…`)
+    ///   (e.g. `https://tradingbots.fun/billing/checkout?promo=1&tenant_id=…`)
     pub fn trial_expiry_html(display_name: &str, checkout_url: &str) -> String {
         let name = if display_name.is_empty() { "Trader" } else { display_name };
 

@@ -238,6 +238,7 @@ impl TenantConfig {
     /// | Pro or Internal                |  1  | Reward: lighter take on paid users |
     ///
     /// Returns `u32` because `HlBuilder.f` is typed as u32 in the HL payload.
+    #[allow(dead_code)]
     pub fn builder_fee_bps(&self) -> u32 {
         match self.tier {
             TenantTier::Pro | TenantTier::Internal => 1,
