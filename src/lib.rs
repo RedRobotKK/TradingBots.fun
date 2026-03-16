@@ -42,9 +42,8 @@ pub mod dca_scoring_integration;
 pub mod price_action;
 pub mod price_action_backtest;
 pub mod price_action_scoring;
-pub mod invite;
-pub mod leaderboard;
-pub mod mailer;
+// invite, leaderboard, mailer are binary-only (depend on web_dashboard/db/tenant)
+// They are declared in main.rs only, not re-exported from lib.
 
 pub use models::{AccountPurpose, HealthMetrics, LiquidationRisk, Protocol, TradingAccount};
 pub use modules::{AccountManager, AccountSummary};
