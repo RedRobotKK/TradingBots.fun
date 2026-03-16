@@ -48,7 +48,9 @@ sqlx = { version = "0.8", default-features = false, features = [
     "chrono",
     "uuid",
     "json",
+    "rust_decimal",
 ] }
+rust_decimal = "1"
 
 [profile.release]
 opt-level = 3

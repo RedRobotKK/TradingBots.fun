@@ -254,6 +254,26 @@ pub fn clear_session_header() -> &'static str {
     "rr_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"
 }
 
+/// Convenience helper for API handlers: extract and verify the session cookie
+/// from request headers, returning the `TenantId` or an error.
+///
+/// Usage:
+/// ```rust
+/// let tenant_id = crate::privy::require_tenant_id(&headers, &app.session_secret)?;
+/// ```
+pub fn require_tenant_id(
+    headers: &axum::http::HeaderMap,
+    secret:  &str,
+) -> anyhow::Result<crate::tenant::TenantId> {
+    let cookie_header = headers
+        .get("cookie")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let session_val = extract_session_cookie(cookie_header)
+        .ok_or_else(|| anyhow::anyhow!("No session cookie"))?;
+    verify_session(session_val, secret)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 //  Internal helpers
 // ─────────────────────────────────────────────────────────────────────────────

@@ -3234,7 +3234,7 @@ async fn apple_pay_domain_handler(
 //  Public TVL API — no auth required, powers landing page hero graph
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// `GET /api/public/tvl`
+// `GET /api/public/tvl`
 // ─────────────────────────────────────────────────────────────────────────────
 // Leaderboard + campaign handlers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3441,6 +3441,7 @@ async fn generate_invite_handler(
     headers: axum::http::HeaderMap,
 ) -> impl axum::response::IntoResponse {
     use axum::http::StatusCode;
+    use axum::response::IntoResponse;
 
     let tenant_id = match crate::privy::require_tenant_id(&headers, &app.session_secret) {
         Ok(id) => id,
@@ -3475,6 +3476,7 @@ async fn get_invite_handler(
     headers: axum::http::HeaderMap,
 ) -> impl axum::response::IntoResponse {
     use axum::http::StatusCode;
+    use axum::response::IntoResponse;
 
     let tenant_id = match crate::privy::require_tenant_id(&headers, &app.session_secret) {
         Ok(id) => id,
