@@ -571,12 +571,30 @@ if $DO_PROVISION_DB; then
     fi
   done
 
-  # ── Get connection URIs for each database ─────────────────────────────────
-  STAGING_DB_URI=$(doctl databases connection "$DB_CLUSTER_ID" \
+  # ── Get connection details from the cluster ───────────────────────────────
+  # Extract individual fields so we can substitute db.tradingbots.fun as the
+  # canonical, stable hostname instead of the DO-generated one.
+  DB_CANONICAL_HOST="db.tradingbots.fun"
+  DB_PORT=25060
+
+  RAW_STAGING_URI=$(doctl databases connection "$DB_CLUSTER_ID" \
     --database tradingbots_staging --format URI --no-header)
-  PROD_DB_URI=$(doctl databases connection "$DB_CLUSTER_ID" \
+  RAW_PROD_URI=$(doctl databases connection "$DB_CLUSTER_ID" \
     --database tradingbots --format URI --no-header)
-  success "Connection strings obtained"
+
+  # Pull user+password out of the raw URI (format: postgres://user:pass@host:port/db?sslmode=require)
+  DB_USER=$(echo "$RAW_STAGING_URI" | sed -E 's|postgres://([^:]+):.*|\1|')
+  DB_PASS=$(echo "$RAW_STAGING_URI" | sed -E 's|postgres://[^:]+:([^@]+)@.*|\1|')
+
+  # Extract the real DO hostname so the user can set the CNAME
+  DO_DB_HOST=$(echo "$RAW_STAGING_URI" | sed -E 's|postgres://[^@]+@([^:]+):.*|\1|')
+
+  # Build canonical connection URIs using db.tradingbots.fun
+  STAGING_DB_URI="postgres://${DB_USER}:${DB_PASS}@${DB_CANONICAL_HOST}:${DB_PORT}/tradingbots_staging?sslmode=require"
+  PROD_DB_URI="postgres://${DB_USER}:${DB_PASS}@${DB_CANONICAL_HOST}:${DB_PORT}/tradingbots?sslmode=require"
+
+  success "Connection strings built using canonical host: ${DB_CANONICAL_HOST}"
+  info  "DO cluster hostname (needed for CNAME): ${DO_DB_HOST}"
 
   # ── Trust the staging droplet in the cluster firewall ─────────────────────
   info "Looking up staging droplet ID for ${VPS_IP}..."
@@ -669,6 +687,10 @@ MIGRATE
 # Written by: ./deploy.sh --provision-db on $(date)
 # DO NOT commit this file. It is already in .gitignore.
 DB_CLUSTER_ID=${DB_CLUSTER_ID}
+DO_DB_HOST=${DO_DB_HOST}
+DB_CANONICAL_HOST=${DB_CANONICAL_HOST}
+DB_PORT=${DB_PORT}
+DB_USER=${DB_USER}
 STAGING_DATABASE_URL=${STAGING_DB_URI}
 PROD_DATABASE_URL=${PROD_DB_URI}
 DBENV
@@ -693,15 +715,26 @@ DBENV
   echo "  Region       : SGP1  |  Size: db-s-1vcpu-1gb"
   echo "  Staging DB   : tradingbots_staging"
   echo "  Production DB: tradingbots"
+  echo "  Port         : ${DB_PORT}"
   echo "  Config file  : ${DB_ENV_FILE}"
+  echo "────────────────────────────────────────────────────────────────"
+  echo -e "${BOLD}  ⚠  ACTION REQUIRED — Add CNAME in Cloudflare:${RESET}"
+  echo ""
+  echo "    Name  :  db"
+  echo "    Type  :  CNAME"
+  echo "    Target:  ${DO_DB_HOST}"
+  echo "    Proxy :  DNS only (grey cloud — NOT proxied)"
+  echo ""
+  echo "  After adding the CNAME, all environments connect via:"
+  echo "    db.tradingbots.fun:${DB_PORT}"
   echo "────────────────────────────────────────────────────────────────"
   echo "  Staging VPS ${VPS_IP} now uses managed cluster"
   echo "  Local Postgres on staging VPS has been stopped"
   echo ""
   echo "  Next steps:"
-  echo "  1. Verify staging still works:  curl http://${VPS_IP}:3000/health"
-  echo "  2. When ready for production:   ./deploy.sh --provision-prod"
-  echo "     (will reuse the 'tradingbots' database already in this cluster)"
+  echo "  1. Add CNAME in Cloudflare (see above)"
+  echo "  2. Verify staging:   curl http://${VPS_IP}:3000/health"
+  echo "  3. Provision prod:   ./deploy.sh --provision-prod"
   echo "════════════════════════════════════════════════════════════════"
   exit 0
 fi
