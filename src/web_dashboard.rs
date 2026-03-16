@@ -2404,50 +2404,82 @@ async function exchangeToken(privyToken) {{
   return res.json();
 }}
 
-import('https://esm.sh/@privy-io/js-sdk-core')
-  .then(async (mod) => {{
-    let privy;
-    if (typeof mod.PrivyClient === 'function') {{
-      try {{ privy = new mod.PrivyClient(PRIVY_APP_ID, {{ storage: window.localStorage }}); }}
-      catch (_) {{ privy = mod.PrivyClient(PRIVY_APP_ID, {{ storage: window.localStorage }}); }}
-    }} else if (typeof mod.createPrivyClient === 'function') {{
-      privy = mod.createPrivyClient({{ appId: PRIVY_APP_ID }});
-    }} else if (mod.default && typeof mod.default === 'function') {{
-      try {{ privy = new mod.default(PRIVY_APP_ID, {{ storage: window.localStorage }}); }}
-      catch (_) {{ privy = mod.default({{ appId: PRIVY_APP_ID }}); }}
-    }} else {{
-      throw new Error('Unrecognised Privy SDK: ' + Object.keys(mod).join(', '));
-    }}
+// @privy-io/js-sdk-core is server-side only (no login() method).
+// Use the React Auth SDK for browser login flows.
+Promise.all([
+  import('https://esm.sh/react@18'),
+  import('https://esm.sh/react-dom@18/client'),
+  import('https://esm.sh/@privy-io/react-auth'),
+]).then(([React, ReactDOM, PrivyReact]) => {{
+  const {{ createElement: h, useState, useEffect }} = React;
+  const {{ createRoot }} = ReactDOM;
+  const {{ PrivyProvider, usePrivy }} = PrivyReact;
 
-    // Auto-login if already authenticated
-    privy.getAccessToken().then(async (token) => {{
-      if (token) {{
-        setStatus('Already signed in — loading…'); setLoading(true);
+  function LoginButton() {{
+    const {{ ready, authenticated, login, getAccessToken }} = usePrivy();
+    const [, setTick] = useState(0);
+
+    // Re-render whenever TOS checkbox or invite input change
+    useEffect(() => {{
+      const rerender = () => setTick(t => t + 1);
+      const tos = document.getElementById('tos-check');
+      const inv = document.getElementById('invite-input');
+      tos?.addEventListener('change', rerender);
+      inv?.addEventListener('input', rerender);
+      return () => {{
+        tos?.removeEventListener('change', rerender);
+        inv?.removeEventListener('input', rerender);
+      }};
+    }}, []);
+
+    // Auto-redirect if already authenticated
+    useEffect(() => {{
+      if (!ready || !authenticated) return;
+      setStatus('Already signed in — loading…');
+      getAccessToken().then(async (token) => {{
         try {{ await exchangeToken(token); window.location.href = '/app'; }}
-        catch(e) {{ setStatus(''); setLoading(false); setErr('Session setup failed. Please sign in again.'); }}
-      }}
-    }}).catch(() => {{}});
+        catch(e) {{ setStatus(''); setErr('Session setup failed. Please sign in again.'); }}
+      }}).catch(() => {{}});
+    }}, [ready, authenticated]);
 
-    loginBtn.addEventListener('click', async () => {{
-      if (!tosCheck.checked) return;
-      setErr(''); setLoading(true); setStatus('Opening Privy…');
+    const handleClick = async () => {{
+      if (!canLogin()) return;
+      setErr(''); setStatus('Opening Privy…');
       try {{
-        await privy.login();
+        await login();
         setStatus('Authenticated — setting up your account…');
-        const token = await privy.getAccessToken();
+        const token = await getAccessToken();
         await exchangeToken(token);
         window.location.href = '/app';
       }} catch(e) {{
-        setLoading(false); setStatus('');
+        setStatus('');
         setErr(e.message || 'Login failed. Please try again.');
-        loginBtn.disabled = !tosCheck.checked;
       }}
-    }});
-  }})
-  .catch((e) => {{
-    setErr('Could not load authentication SDK: ' + e.message);
-    loginBtn.disabled = !tosCheck.checked;
-  }});
+    }};
+
+    return h('button', {{
+      className: 'btn btn-p',
+      disabled: !ready || !canLogin(),
+      onClick: handleClick,
+    }}, ready ? 'Sign in with Privy' : 'Loading…');
+  }}
+
+  // Mount React component in place of the static placeholder button
+  const btn = document.getElementById('login-btn');
+  const mount = document.createElement('div');
+  btn.parentNode.replaceChild(mount, btn);
+
+  createRoot(mount).render(
+    h(PrivyProvider, {{
+      appId: PRIVY_APP_ID,
+      config: {{ loginMethods: ['email', 'wallet'], appearance: {{ theme: 'dark' }} }},
+    }},
+      h(LoginButton)
+    )
+  );
+}}).catch((e) => {{
+  setErr('Could not load authentication SDK: ' + e.message);
+}});
 </script>
 </body></html>"#, app_id = app_id)
     } else {
