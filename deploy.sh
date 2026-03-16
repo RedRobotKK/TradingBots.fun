@@ -539,26 +539,18 @@ if $DO_PROVISION_DB; then
   else
     info "Creating Managed Postgres 16 cluster 'tradingbots-db' (db-s-1vcpu-1gb, SGP1)..."
     info "This takes ~5 minutes — grab a coffee ☕"
-    DB_CLUSTER_ID=$(doctl databases create tradingbots-db \
+    # --wait blocks until the cluster is online; no --format flag on create
+    doctl databases create tradingbots-db \
       --engine pg --version 16 \
       --size db-s-1vcpu-1gb \
       --region sgp1 \
       --num-nodes 1 \
-      --format ID --no-header)
-    success "Cluster created: $DB_CLUSTER_ID"
+      --wait
+    # Fetch the ID now that the cluster exists
+    DB_CLUSTER_ID=$(doctl databases list --format Name,ID --no-header 2>/dev/null \
+      | awk '/^tradingbots-db/{print $2}')
+    success "Cluster created and online: $DB_CLUSTER_ID"
   fi
-
-  # ── Wait for the cluster to be online ─────────────────────────────────────
-  info "Waiting for cluster to come online..."
-  for i in $(seq 1 30); do
-    DB_STATUS=$(doctl databases get "$DB_CLUSTER_ID" --format Status --no-header 2>/dev/null || echo "unknown")
-    if [[ "$DB_STATUS" == "online" ]]; then
-      success "Cluster online"
-      break
-    fi
-    echo "  Status: $DB_STATUS  (attempt $i/30, retrying in 20s…)"
-    sleep 20
-  done
 
   # ── Create logical databases inside the cluster ───────────────────────────
   for DBNAME in tradingbots_staging tradingbots; do
