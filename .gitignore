@@ -13,6 +13,10 @@ secrets.json
 /dist
 Cargo.lock
 
+# JS login bundle build deps (built output is committed to static/)
+js/node_modules/
+js/package-lock.json
+
 # IDE files
 .vscode/
 .idea/

@@ -3,6 +3,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+
+// Pre-built Privy login SDK bundle (ESM). Served at /static/privy-login.js so
+// the browser never needs to reach an external CDN.
+// Rebuild the bundle whenever you upgrade @privy-io/react-auth:
+//   cd js && npm install && npm run build
+//   git add static/privy-login.js && git commit
+static PRIVY_BUNDLE_JS: &str = include_str!("../static/privy-login.js");
 use crate::learner::{SignalContribution, SignalWeights};
 use crate::metrics::PerformanceMetrics;
 use crate::coins;
@@ -2129,6 +2136,19 @@ async fn auth_logout_handler(
 ///   "Login" button that triggers Privy's authentication modal.
 /// - When Privy is not configured: shows a message directing to `/app`
 ///   (single-operator mode — auth not required).
+/// Serve the pre-built Privy SDK ESM bundle.
+/// Cached by the browser for 24 h; no external CDN required at runtime.
+async fn privy_bundle_handler() -> impl axum::response::IntoResponse {
+    use axum::http::header;
+    (
+        [
+            (header::CONTENT_TYPE,  "application/javascript; charset=utf-8"),
+            (header::CACHE_CONTROL, "public, max-age=86400"),
+        ],
+        PRIVY_BUNDLE_JS,
+    )
+}
+
 async fn login_handler(
     State(app): State<AppState>,
 ) -> axum::response::Html<String> {
@@ -2405,18 +2425,11 @@ async function exchangeToken(privyToken) {{
   return res.json();
 }}
 
-// @privy-io/js-sdk-core is server-side only (no login() method).
-// Use the React Auth SDK for browser login flows.
-// The ?deps= pin ensures esm.sh shares the same React instance rather than
-// bundling a second copy, which causes hook errors and fetch failures.
-Promise.all([
-  import('https://esm.sh/react@18.3.1'),
-  import('https://esm.sh/react-dom@18.3.1/client'),
-  import('https://esm.sh/@privy-io/react-auth?deps=react@18.3.1,react-dom@18.3.1'),
-]).then(([React, ReactDOM, PrivyReact]) => {{
-  const {{ createElement: h, useState, useEffect }} = React;
-  const {{ createRoot }} = ReactDOM;
-  const {{ PrivyProvider, usePrivy }} = PrivyReact;
+// Load the pre-built Privy SDK bundle from our own server — no external CDN.
+// All exports share a single bundled React instance so hooks work correctly.
+// Rebuild after SDK upgrades: cd js && npm install && npm run build
+import('/static/privy-login.js').then(({{ PrivyProvider, usePrivy, createElement, useState, useEffect, createRoot }}) => {{
+  const h = createElement;
 
   function LoginButton() {{
     const {{ ready, authenticated, login, getAccessToken }} = usePrivy();
@@ -3760,6 +3773,7 @@ pub async fn serve(app_state: AppState, port: u16) -> Result<(), Box<dyn std::er
         .route("/webhooks/stripe",      post(crate::stripe::webhook_handler))
         // ── Privy authentication ────────────────────────────────────────────
         .route("/login",                get(login_handler))
+        .route("/static/privy-login.js", get(privy_bundle_handler))
         .route("/auth/session",         post(auth_session_handler))
         .route("/auth/logout",          get(auth_logout_handler))
         // ── Onboarding / Terms wall ─────────────────────────────────────────
