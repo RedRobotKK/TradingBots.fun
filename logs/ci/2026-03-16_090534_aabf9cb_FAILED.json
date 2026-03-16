@@ -1,0 +1,147 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-03-16T09:02:02Z",
+    "commit": "aabf9cb",
+    "commit_full": "aabf9cb71cb4b692810187a7eb0eb96fb5d72f5b",
+    "commit_message": "chore: bump version 0.1.3 \u2192 0.1.4",
+    "branch": "master",
+    "overall_status": "FAILED",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
+    "cargo": "cargo 1.93.1 (083ac5135 2025-12-15)",
+    "os_kernel": "6.8.0-101-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "PASSED",
+      "exit_code": 0,
+      "duration_seconds": 181,
+      "total_passed": 496,
+      "total_failed": 0,
+      "total_ignored": 2,
+      "failures": []
+    },
+    "clippy": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 28,
+      "error_count": 11,
+      "errors": [
+        {
+          "code": "E",
+          "message": "field `mailer` is never read",
+          "file": "src/web_dashboard.rs",
+          "line": 60,
+          "col": 9
+        },
+        {
+          "code": "E",
+          "message": "method `builder_fee_bps` is never used",
+          "file": "src/tenant.rs",
+          "line": 241,
+          "col": 12
+        },
+        {
+          "code": "E",
+          "message": "field `invite_id` is never read",
+          "file": "src/invite.rs",
+          "line": 40,
+          "col": 9
+        },
+        {
+          "code": "E",
+          "message": "function `generate_blast_codes` is never used",
+          "file": "src/invite.rs",
+          "line": 129,
+          "col": 14
+        },
+        {
+          "code": "E",
+          "message": "struct `GenerateBlastRequest` is never constructed",
+          "file": "src/invite.rs",
+          "line": 182,
+          "col": 12
+        },
+        {
+          "code": "E",
+          "message": "struct `InviteCodeResponse` is never constructed",
+          "file": "src/invite.rs",
+          "line": 191,
+          "col": 12
+        },
+        {
+          "code": "E",
+          "message": "struct `InviteCodeSummary` is never constructed",
+          "file": "src/invite.rs",
+          "line": 200,
+          "col": 12
+        },
+        {
+          "code": "E",
+          "message": "function `list_codes_for_campaign` is never used",
+          "file": "src/invite.rs",
+          "line": 210,
+          "col": 14
+        },
+        {
+          "code": "E",
+          "message": "function `award_campaign_prizes` is never used",
+          "file": "src/leaderboard.rs",
+          "line": 253,
+          "col": 14
+        },
+        {
+          "code": "E",
+          "message": "doc list item overindented",
+          "file": "src/mailer.rs",
+          "line": 93,
+          "col": 9
+        },
+        {
+          "code": "E",
+          "message": "could not compile `tradingbots-fun` (bin \"tradingbots-fun\") due to 10 previous errors"
+        }
+      ]
+    },
+    "audit": {
+      "status": "ADVISORY",
+      "exit_code": 1,
+      "duration_seconds": 3,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2023-0071",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2023-0071",
+          "severity": "5.9 (medium)",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "tradingbots",
+    "status": "active",
+    "active_since": "Mon 2026-03-16 08:45:11 UTC",
+    "recent_logs": [
+      "Mar 16 08:45:10 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: tradingbots.service: Deactivated successfully.",
+      "Mar 16 08:45:10 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Stopped tradingbots.service - TradingBots.fun.",
+      "Mar 16 08:45:10 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: tradingbots.service: Consumed 1.764s CPU time, 12.9M memory peak, 6.4M memory swap peak.",
+      "Mar 16 08:45:10 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Starting tradingbots.service - TradingBots.fun...",
+      "Mar 16 08:45:11 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Started tradingbots.service - TradingBots.fun."
+    ]
+  }
+}
