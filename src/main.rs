@@ -60,6 +60,8 @@ mod stripe;
 mod privy;
 mod fund_tracker;
 mod funnel;
+mod invite;
+mod leaderboard;
 
 use anyhow::Result;
 use log::{error, info, warn};
@@ -251,10 +253,14 @@ async fn main() -> Result<()> {
     }
 
     // Dashboard
+    // Shared tenant manager: used by both the dashboard and the midnight
+    // leaderboard snapshot task — keep one instance so registrations are
+    // visible in both places.
+    let tenant_manager = tenant::new_tenant_manager();
     {
         let app_state = web_dashboard::AppState {
             bot_state:             bot_state.clone(),
-            tenants:               tenant::new_tenant_manager(),
+            tenants:               tenant_manager.clone(),
             db:                    shared_db.clone(),
             stripe_api_key:        config.stripe_secret_key.clone(),
             stripe_webhook_secret: config.stripe_webhook_secret.clone(),
@@ -300,7 +306,8 @@ async fn main() -> Result<()> {
 
         // ── Midnight analysis trigger ─────────────────────────────────────
         // Check once per cycle if the date has rolled over.  If so, run the
-        // daily analysis for yesterday's log in the background.
+        // daily analysis for yesterday's log in the background, and write
+        // leaderboard snapshots for every active tenant.
         let today_now = date_today();
         if today_now != last_analysis_date {
             last_analysis_date = today_now.clone();
@@ -309,6 +316,17 @@ async fn main() -> Result<()> {
                 tokio::spawn(async move {
                     info!("🌙 Midnight — running daily analysis for yesterday…");
                     daily_analyst::analyse_day(&logger_clone, &api_key).await;
+                });
+            }
+            // Write leaderboard snapshots for the active campaign
+            if let Some(ref db) = shared_db {
+                let db_snap   = db.clone();
+                let tm_snap   = tenant_manager.clone();
+                tokio::spawn(async move {
+                    match leaderboard::snapshot_daily(&db_snap, &tm_snap).await {
+                        Ok(n)  => info!("📊 Leaderboard: wrote {} daily snapshots", n),
+                        Err(e) => log::warn!("Leaderboard snapshot failed: {e}"),
+                    }
                 });
             }
         }

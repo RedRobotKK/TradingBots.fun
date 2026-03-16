@@ -1932,6 +1932,10 @@ async fn resolve_consumer_state(
 #[derive(serde::Deserialize)]
 struct SessionRequest {
     token: String,
+    /// Invite code entered on the login page — required for new signups.
+    /// Existing users who already have a session don't need to re-supply this.
+    #[serde(default)]
+    invite_code:  Option<String>,
     /// First-touch acquisition source (utm_source) — sent by the login page JS
     /// from the URL query params / cookie captured on landing.
     #[serde(default)]
@@ -1939,8 +1943,7 @@ struct SessionRequest {
     /// utm_campaign captured at landing — sent through to funnel_events.
     #[serde(default)]
     utm_campaign: Option<String>,
-    /// True when the user arrived via our Hyperliquid referral link
-    /// (`?ref=TRADINGBOTS` or similar query param on the HL sign-up page).
+    /// True when the user arrived via our Hyperliquid referral link.
     #[serde(default)]
     hl_referred:  bool,
 }
@@ -1976,14 +1979,54 @@ async fn auth_session_handler(
         }
     };
 
-    // Register new user or retrieve existing tenant.
-    // Attribution params (utm_source, hl_referred, utm_campaign) are set
-    // once at first signup and never overwritten (first-touch model).
+    // ── Invite-code gate ──────────────────────────────────────────────────────
+    // New users must supply a valid invite code.  Existing users (DID already
+    // known) bypass this check — they already have an account.
+    let is_known_user = {
+        let tenants = app.tenants.read().await;
+        tenants.find_by_privy_did(&privy_did).is_some()
+    };
+
+    let mut claimed_invite: Option<crate::invite::ClaimedInvite> = None;
+
+    if !is_known_user {
+        let code = match &req.invite_code {
+            Some(c) if !c.trim().is_empty() => c.trim().to_uppercase(),
+            _ => {
+                return (StatusCode::FORBIDDEN,
+                    axum::Json(serde_json::json!({"error":"invite_required","message":"An invite code is required to create an account. Get one from a friend or the weekly campaign."}))).into_response();
+            }
+        };
+
+        match &app.db {
+            Some(db) => {
+                match crate::invite::claim_invite_code(db, &code).await {
+                    Ok(Some(invite)) => { claimed_invite = Some(invite); }
+                    Ok(None) => {
+                        return (StatusCode::FORBIDDEN,
+                            axum::Json(serde_json::json!({"error":"invalid_invite","message":"That invite code is invalid, already used, or expired. Ask for a new one."}))).into_response();
+                    }
+                    Err(e) => {
+                        log::error!("invite claim DB error: {}", e);
+                        return (StatusCode::INTERNAL_SERVER_ERROR,
+                            axum::Json(serde_json::json!({"error":"db_error","message":"Could not validate invite code. Please try again."}))).into_response();
+                    }
+                }
+            }
+            None => {
+                // No DB — accept any non-empty code in dev/paper mode
+                log::warn!("⚠ No DB — invite code '{}' accepted without validation", code);
+            }
+        }
+    }
+
+    // ── Register new user or retrieve existing tenant ─────────────────────────
     let referral_source = if req.hl_referred {
         Some("hl_referral".to_string())
     } else {
         req.utm_source.clone()
     };
+
     let (tenant_id, is_new) = {
         let mut tenants = app.tenants.write().await;
         let existing = tenants.find_by_privy_did(&privy_did).map(|h| h.id.clone());
@@ -1998,10 +2041,33 @@ async fn auth_session_handler(
         (id, is_new)
     };
 
-    // Fire funnel events (non-blocking — analytics never block auth)
+    // ── Stamp invite attribution on the tenant row in DB ─────────────────────
+    if is_new {
+        if let (Some(db), Some(invite)) = (&app.db, &claimed_invite) {
+            let tenant_uuid = uuid::Uuid::parse_str(tenant_id.as_str()).ok();
+            let campaign_id = invite.campaign_id;
+            let invited_by  = invite.created_by;
+            let code_used   = req.invite_code.clone().unwrap_or_default();
+
+            if let Some(tid) = tenant_uuid {
+                let _ = sqlx::query!(
+                    "UPDATE tenants SET invite_code_used = $1, invited_by = $2, campaign_id = $3 WHERE id = $4",
+                    code_used,
+                    invited_by,
+                    campaign_id,
+                    tid,
+                )
+                .execute(db.pool())
+                .await
+                .map_err(|e| log::warn!("invite attribution stamp failed: {}", e));
+            }
+        }
+    }
+
+    // ── Fire funnel events (non-blocking) ─────────────────────────────────────
     crate::funnel::auth_success(
         &app.db,
-        "",           // anon_id — not available here; client fires LOGIN_CLICK with it
+        "",           // anon_id — client fires LOGIN_CLICK with it separately
         &tenant_id,
         is_new,
         referral_source.as_deref(),
@@ -2009,16 +2075,22 @@ async fn auth_session_handler(
         req.utm_campaign.as_deref(),
     ).await;
 
-    // Issue HMAC-signed session cookie (7-day TTL)
+    // ── Issue HMAC-signed session cookie (7-day TTL) ───────────────────────
     let set_cookie = crate::privy::set_session_header(&tenant_id, &app.session_secret);
+
+    // Tell the client whether they're in an active campaign for UX
+    let in_campaign = claimed_invite
+        .as_ref()
+        .and_then(|i| i.campaign_id)
+        .is_some();
 
     axum::response::Response::builder()
         .status(StatusCode::OK)
         .header("Set-Cookie", set_cookie)
         .header("Content-Type", "application/json")
         .body(axum::body::Body::from(format!(
-            r#"{{"ok":true,"tenant_id":"{}"}}"#,
-            tenant_id.as_str()
+            r#"{{"ok":true,"tenant_id":"{}","in_campaign":{}}}"#,
+            tenant_id.as_str(), in_campaign
         )))
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
@@ -2123,6 +2195,19 @@ body{{background:#0d1117;color:#c9d1d9;
         padding:9px 12px;font-size:.73rem;color:#8b949e}}
 .wnote-dot{{width:6px;height:6px;border-radius:50%;background:#3fb950;
              flex-shrink:0;box-shadow:0 0 5px #3fb950}}
+/* Invite code field */
+.inv-wrap{{display:flex;flex-direction:column;gap:6px}}
+.inv-lbl{{display:flex;justify-content:space-between;align-items:baseline;
+          font-size:.78rem;font-weight:600;color:#c9d1d9}}
+.inv-hint{{font-size:.7rem;color:#484f58;font-weight:400}}
+.inv-inp{{width:100%;padding:11px 14px;background:#010409;border:1px solid #30363d;
+          border-radius:8px;color:#e6edf3;font-size:.95rem;font-weight:700;
+          letter-spacing:.08em;text-transform:uppercase;outline:none;transition:.15s}}
+.inv-inp:focus{{border-color:#58a6ff;box-shadow:0 0 0 3px rgba(88,166,255,.12)}}
+.inv-inp.ok{{border-color:#3fb950;box-shadow:0 0 0 3px rgba(63,185,80,.1)}}
+.inv-inp.bad{{border-color:#f85149;box-shadow:0 0 0 3px rgba(248,81,73,.1)}}
+.inv-status{{font-size:.72rem;min-height:16px;transition:.15s}}
+.inv-status.ok{{color:#3fb950}}.inv-status.bad{{color:#f85149}}
 @media(max-width:600px){{
   .pl{{display:none}}
   .pr{{width:100%;padding:36px 24px}}
@@ -2187,7 +2272,20 @@ body{{background:#0d1117;color:#c9d1d9;
   <div class="pr">
     <div class="lh">
       <h2>Sign in to your account</h2>
-      <p>Connect your wallet to access the dashboard</p>
+      <p>Invite-only · <a href="/leaderboard" style="color:#58a6ff;text-decoration:none">🏆 View leaderboard</a></p>
+    </div>
+
+    <!-- Invite code field -->
+    <div class="inv-wrap">
+      <label class="inv-lbl" for="invite-input">
+        <span>🎟 Invite Code</span>
+        <span class="inv-hint">Get one from a friend or the <a href="/leaderboard" style="color:#58a6ff">weekly campaign</a></span>
+      </label>
+      <input id="invite-input" type="text" class="inv-inp"
+             placeholder="TB-XXXXXXXX"
+             autocomplete="off" autocapitalize="characters" spellcheck="false"
+             maxlength="20">
+      <div id="inv-status" class="inv-status"></div>
     </div>
 
     <div class="tos">
@@ -2213,7 +2311,7 @@ body{{background:#0d1117;color:#c9d1d9;
 
     <div class="wnote">
       <div class="wnote-dot"></div>
-      Your funds remain in your Hyperliquid wallet at all times
+      Start with $20 · 2 bots · compete for weekly prizes
     </div>
   </div>
 </div>
@@ -2221,12 +2319,40 @@ body{{background:#0d1117;color:#c9d1d9;
 <script type="module">
 const PRIVY_APP_ID = '{app_id}';
 
-const tosCheck  = document.getElementById('tos-check');
-const loginBtn  = document.getElementById('login-btn');
+const tosCheck    = document.getElementById('tos-check');
+const loginBtn    = document.getElementById('login-btn');
+const inviteInp   = document.getElementById('invite-input');
+const invStatus   = document.getElementById('inv-status');
 
-// Only enable sign-in once user has accepted ToS
-tosCheck.addEventListener('change', () => {{
-  if (!loginBtn.dataset.loading) loginBtn.disabled = !tosCheck.checked;
+// Read invite code from URL param ?invite=TB-XXXX if present
+const urlParams = new URLSearchParams(window.location.search);
+const prefilledCode = urlParams.get('invite') || urlParams.get('code') || '';
+if (prefilledCode) {{ inviteInp.value = prefilledCode.toUpperCase(); }}
+
+// Gate: both ToS checked AND invite code non-empty
+function canLogin() {{
+  return tosCheck.checked && inviteInp.value.trim().length >= 6;
+}}
+function updateBtn() {{
+  if (!loginBtn.dataset.loading) loginBtn.disabled = !canLogin();
+}}
+tosCheck.addEventListener('change', updateBtn);
+
+// Live invite input feedback
+inviteInp.addEventListener('input', () => {{
+  const v = inviteInp.value.trim().toUpperCase();
+  inviteInp.value = v;
+  if (v.length === 0) {{
+    inviteInp.classList.remove('ok','bad');
+    invStatus.textContent = ''; invStatus.className = 'inv-status';
+  }} else if (v.length < 6) {{
+    inviteInp.classList.remove('ok'); inviteInp.classList.add('bad');
+    invStatus.textContent = 'Code too short'; invStatus.className = 'inv-status bad';
+  }} else {{
+    inviteInp.classList.remove('bad'); inviteInp.classList.add('ok');
+    invStatus.textContent = '✓ Code looks good'; invStatus.className = 'inv-status ok';
+  }}
+  updateBtn();
 }});
 
 function setStatus(msg) {{ document.getElementById('status').textContent = msg; }}
@@ -2237,12 +2363,32 @@ function setLoading(yes) {{
   loginBtn.textContent = yes ? 'Signing in…' : 'Sign in with Privy';
 }}
 
+// Read UTM params from cookie or URL for attribution
+function getUtm(key) {{
+  const url = new URLSearchParams(window.location.search);
+  return url.get(key) || '';
+}}
+
 async function exchangeToken(privyToken) {{
+  const body = {{
+    token:        privyToken,
+    invite_code:  inviteInp.value.trim().toUpperCase() || null,
+    utm_source:   getUtm('utm_source') || 'direct',
+    utm_campaign: getUtm('utm_campaign') || null,
+    hl_referred:  getUtm('ref') === 'TRADINGBOTS' || getUtm('hl_ref') === '1',
+  }};
   const res = await fetch('/auth/session', {{
     method: 'POST',
     headers: {{ 'Content-Type': 'application/json' }},
-    body:    JSON.stringify({{ token: privyToken }}),
+    body:    JSON.stringify(body),
   }});
+  if (res.status === 403) {{
+    const j = await res.json().catch(() => ({{}}));
+    const msg = j.message || (j.error === 'invite_required'
+      ? 'An invite code is required to create an account.'
+      : 'That invite code is invalid or already used.');
+    throw new Error(msg);
+  }}
   if (!res.ok) throw new Error('Session exchange failed: ' + res.status);
   return res.json();
 }}
@@ -3046,6 +3192,299 @@ async fn apple_pay_domain_handler(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /// `GET /api/public/tvl`
+// ─────────────────────────────────────────────────────────────────────────────
+// Leaderboard + campaign handlers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// `GET /leaderboard` — public leaderboard page for the active campaign.
+///
+/// Shows the current standings, prize pool, countdown timer, and how to get
+/// an invite code.  No authentication required — it's a viral acquisition page.
+async fn leaderboard_handler(
+    State(app): State<AppState>,
+) -> axum::response::Html<String> {
+    let (campaign, entries) = match &app.db {
+        Some(db) => {
+            let c = crate::leaderboard::active_campaign(db).await.ok().flatten();
+            let e = if c.is_some() {
+                crate::leaderboard::live_standings(db, 50).await.unwrap_or_default()
+            } else { vec![] };
+            (c, e)
+        }
+        None => (None, vec![]),
+    };
+
+    let campaign_title = campaign.as_ref().map(|c| c.title.clone())
+        .unwrap_or_else(|| "Weekly Trading Contest".into());
+    let campaign_desc = campaign.as_ref()
+        .and_then(|c| c.description.clone())
+        .unwrap_or_else(|| "Top traders by % return win weekly prizes.".into());
+    let prize_pool = campaign.as_ref().map(|c| c.prize_pool_usd).unwrap_or(0.0);
+    let seconds_left = campaign.as_ref().map(|c| c.seconds_left).unwrap_or(0);
+
+    let prizes_html = campaign.as_ref().map(|c| {
+        c.prizes.iter().map(|p| format!(
+            r#"<div class="prize-row"><span class="prize-label">{}</span><span class="prize-amt">${}</span></div>"#,
+            p.label, p.usd as i64
+        )).collect::<Vec<_>>().join("")
+    }).unwrap_or_default();
+
+    let rows_html: String = if entries.is_empty() {
+        r#"<tr><td colspan="5" style="text-align:center;color:#484f58;padding:32px">No trades recorded yet this week — be the first!</td></tr>"#.into()
+    } else {
+        entries.iter().map(|e| {
+            let medal = match e.rank { 1 => "🥇", 2 => "🥈", 3 => "🥉", _ => "" };
+            let pct_color = if e.pct_return >= 0.0 { "#3fb950" } else { "#f85149" };
+            let pct_sign  = if e.pct_return >= 0.0 { "+" } else { "" };
+            format!(
+                r#"<tr class="lb-row{rank_cls}">
+                  <td class="lb-rank">{medal}{rank}</td>
+                  <td class="lb-name">{name}</td>
+                  <td class="lb-wallet">{wallet}</td>
+                  <td class="lb-trades">{trades}</td>
+                  <td class="lb-pct" style="color:{pct_color}">{pct_sign}{pct:.2}%</td>
+                </tr>"#,
+                rank_cls = if e.rank <= 3 { " top3" } else { "" },
+                medal = medal,
+                rank  = e.rank,
+                name  = html_escape(&e.display_name),
+                wallet = e.wallet_short,
+                trades = e.trades_in_period,
+                pct_color = pct_color,
+                pct_sign  = pct_sign,
+                pct       = e.pct_return,
+            )
+        }).collect()
+    };
+
+    axum::response::Html(format!(r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TradingBots.fun · Leaderboard</title>
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{background:#0d1117;color:#c9d1d9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh;padding:0 0 60px}}
+.hero{{background:linear-gradient(155deg,#161b22,#0d1117);border-bottom:1px solid #21262d;padding:48px 24px 40px;text-align:center}}
+.hero-badge{{display:inline-block;background:rgba(255,215,0,.12);border:1px solid rgba(255,215,0,.3);border-radius:20px;padding:5px 14px;font-size:.72rem;font-weight:700;color:#ffd700;letter-spacing:.8px;text-transform:uppercase;margin-bottom:16px}}
+.hero h1{{font-size:2rem;font-weight:800;color:#e6edf3;margin-bottom:8px}}
+.hero h1 .g{{color:#3fb950}}.hero h1 .r{{color:#e6343a}}
+.hero-sub{{font-size:.9rem;color:#8b949e;max-width:500px;margin:0 auto 24px}}
+.prize-bar{{display:flex;justify-content:center;gap:16px;flex-wrap:wrap;margin-bottom:28px}}
+.prize-row{{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:12px 20px;text-align:center;min-width:100px}}
+.prize-label{{display:block;font-size:.75rem;color:#8b949e;margin-bottom:4px}}
+.prize-amt{{display:block;font-size:1.3rem;font-weight:800;color:#ffd700}}
+.countdown{{font-size:.82rem;color:#484f58;margin-top:8px}}
+.countdown span{{color:#58a6ff;font-weight:700}}
+.cta-strip{{background:rgba(63,185,80,.07);border:1px solid rgba(63,185,80,.2);border-radius:12px;padding:20px 24px;max-width:520px;margin:0 auto;text-align:left}}
+.cta-strip h3{{font-size:.92rem;font-weight:700;color:#e6edf3;margin-bottom:6px}}
+.cta-strip p{{font-size:.78rem;color:#8b949e;line-height:1.6;margin-bottom:12px}}
+.cta-strip .how{{font-size:.75rem;color:#6e7681;line-height:1.8}}
+.cta-strip .how b{{color:#c9d1d9}}
+.btn-signin{{display:inline-block;padding:11px 24px;background:#3fb950;color:#0d1117;border-radius:8px;font-weight:700;font-size:.88rem;text-decoration:none;transition:.15s}}
+.btn-signin:hover{{background:#52c965}}
+.wrap{{max-width:860px;margin:0 auto;padding:32px 20px 0}}
+.lb-wrap{{background:#161b22;border:1px solid #21262d;border-radius:14px;overflow:hidden}}
+.lb-hd{{padding:18px 22px;border-bottom:1px solid #21262d;display:flex;align-items:center;justify-content:space-between}}
+.lb-hd-title{{font-size:.92rem;font-weight:700;color:#e6edf3}}
+.lb-hd-sub{{font-size:.72rem;color:#484f58}}
+table{{width:100%;border-collapse:collapse}}
+th{{padding:10px 16px;font-size:.7rem;font-weight:700;color:#484f58;text-transform:uppercase;letter-spacing:.6px;text-align:left;border-bottom:1px solid #21262d}}
+.lb-row td{{padding:13px 16px;font-size:.85rem;border-bottom:1px solid rgba(48,54,61,.5);transition:.1s}}
+.lb-row:hover td{{background:rgba(255,255,255,.02)}}
+.lb-row.top3 td{{background:rgba(255,215,0,.03)}}
+.lb-rank{{font-weight:700;color:#e6edf3;width:60px}}
+.lb-name{{color:#c9d1d9;font-weight:600}}
+.lb-wallet{{color:#484f58;font-size:.78rem;font-family:monospace}}
+.lb-trades{{color:#8b949e;text-align:center;width:80px}}
+.lb-pct{{font-weight:700;text-align:right;width:100px}}
+.pool-badge{{display:inline-block;background:rgba(255,215,0,.12);border:1px solid rgba(255,215,0,.25);border-radius:8px;padding:4px 10px;font-size:.8rem;color:#ffd700;font-weight:700}}
+</style>
+</head>
+<body>
+
+<!-- Hero -->
+<div class="hero">
+  <div class="hero-badge">🏆 Weekly Contest</div>
+  <h1>TradingBots<span class="g">.fun</span> Leaderboard</h1>
+  <p class="hero-sub">{desc}</p>
+
+  <div class="prize-bar">
+    {prizes_html}
+  </div>
+  <div class="countdown" id="countdown">Prize pool: <span class="pool-badge">${prize_pool}</span></div>
+
+  <!-- How to join -->
+  <div class="cta-strip" style="margin-top:28px">
+    <h3>🎟 How to join</h3>
+    <p>TradingBots.fun is invite-only. Get a code from a friend, enter it on the sign-in page, deposit as little as <b style="color:#e6edf3">$20</b>, and let two bots trade for you. Best % return wins.</p>
+    <div class="how">
+      <b>1.</b> Get an invite code from a friend or this leaderboard ·
+      <b>2.</b> Sign in at <a href="/login" style="color:#58a6ff">/login</a> ·
+      <b>3.</b> Deposit $20+ to Hyperliquid ·
+      <b>4.</b> Two bots start automatically · <b>5.</b> Compete
+    </div>
+    <br>
+    <a href="/login" class="btn-signin">Get started →</a>
+  </div>
+</div>
+
+<!-- Standings -->
+<div class="wrap">
+  <div class="lb-wrap">
+    <div class="lb-hd">
+      <span class="lb-hd-title">{title} · Current Standings</span>
+      <span class="lb-hd-sub">Ranked by % return · any deposit size competes equally</span>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Rank</th>
+          <th>Trader</th>
+          <th>Wallet</th>
+          <th style="text-align:center">Trades</th>
+          <th style="text-align:right">Return</th>
+        </tr>
+      </thead>
+      <tbody>{rows_html}</tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+// Countdown timer
+const secsLeft = {seconds_left};
+function fmt(s) {{
+  if (s <= 0) return 'Contest ended';
+  const d = Math.floor(s/86400), h = Math.floor((s%86400)/3600),
+        m = Math.floor((s%3600)/60), ss = s%60;
+  if (d > 0) return d+'d '+h+'h '+m+'m left';
+  if (h > 0) return h+'h '+m+'m '+ss+'s left';
+  return m+'m '+ss+'s left';
+}}
+let remaining = secsLeft;
+const el = document.getElementById('countdown');
+function tick() {{
+  const pool = el.querySelector('.pool-badge');
+  const poolHtml = pool ? pool.outerHTML : '';
+  el.innerHTML = 'Prize pool: '+poolHtml+'  ·  <span style="color:#58a6ff;font-weight:700">'+fmt(remaining)+'</span>';
+  remaining--;
+  if (remaining >= 0) setTimeout(tick, 1000);
+}}
+if (secsLeft > 0) tick();
+</script>
+</body></html>"#,
+        title      = html_escape(&campaign_title),
+        desc       = html_escape(&campaign_desc),
+        prizes_html = prizes_html,
+        prize_pool = prize_pool as i64,
+        rows_html  = rows_html,
+        seconds_left = seconds_left,
+    ))
+}
+
+// ─── tiny helper ─────────────────────────────────────────────────────────────
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+     .replace('"', "&quot;").replace('\'', "&#39;")
+}
+
+/// `POST /app/invite/generate` — authenticated endpoint.
+///
+/// Generates a personal referral code for the logged-in tenant and returns it.
+/// The code is valid for 30 days, single-use, and tied to the active campaign.
+async fn generate_invite_handler(
+    State(app): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> impl axum::response::IntoResponse {
+    use axum::http::StatusCode;
+
+    let tenant_id = match crate::privy::require_tenant_id(&headers, &app.session_secret) {
+        Ok(id) => id,
+        Err(_) => return (StatusCode::UNAUTHORIZED,
+            axum::Json(serde_json::json!({"error":"Unauthorized"}))).into_response(),
+    };
+
+    let db = match &app.db {
+        Some(db) => db,
+        None => return (StatusCode::SERVICE_UNAVAILABLE,
+            axum::Json(serde_json::json!({"error":"Database not configured"}))).into_response(),
+    };
+
+    match crate::invite::generate_referral_code(db, &tenant_id).await {
+        Ok(code) => axum::Json(serde_json::json!({
+            "ok": true,
+            "code": code,
+            "share_url": format!("/login?invite={}", code),
+            "expires_days": 30,
+        })).into_response(),
+        Err(e) => {
+            log::error!("generate_invite_handler: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR,
+             axum::Json(serde_json::json!({"error":"Could not generate code"}))).into_response()
+        }
+    }
+}
+
+/// `GET /app/invite` — returns the tenant's current referral code (or generates one).
+async fn get_invite_handler(
+    State(app): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> impl axum::response::IntoResponse {
+    use axum::http::StatusCode;
+
+    let tenant_id = match crate::privy::require_tenant_id(&headers, &app.session_secret) {
+        Ok(id) => id,
+        Err(_) => return (StatusCode::UNAUTHORIZED,
+            axum::Json(serde_json::json!({"error":"Unauthorized"}))).into_response(),
+    };
+
+    let db = match &app.db {
+        Some(db) => db,
+        None => return (StatusCode::SERVICE_UNAVAILABLE,
+            axum::Json(serde_json::json!({"error":"Database not configured"}))).into_response(),
+    };
+
+    let code = match crate::invite::get_referral_code_for_tenant(db, &tenant_id).await {
+        Ok(Some(c)) => c,
+        Ok(None) => {
+            // Auto-generate on first request
+            match crate::invite::generate_referral_code(db, &tenant_id).await {
+                Ok(c)  => c,
+                Err(e) => {
+                    log::error!("get_invite auto-generate: {}", e);
+                    return (StatusCode::INTERNAL_SERVER_ERROR,
+                        axum::Json(serde_json::json!({"error":"Could not generate code"}))).into_response();
+                }
+            }
+        }
+        Err(e) => {
+            log::error!("get_invite_handler: {}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(serde_json::json!({"error":"DB error"}))).into_response();
+        }
+    };
+
+    axum::Json(serde_json::json!({
+        "ok": true,
+        "code": code,
+        "share_url": format!("/login?invite={}", code),
+    })).into_response()
+}
+
+/// `GET /api/leaderboard` — JSON endpoint for the current standings.
+async fn api_leaderboard_handler(
+    State(app): State<AppState>,
+) -> impl axum::response::IntoResponse {
+    let db = match &app.db {
+        Some(db) => db,
+        None => return axum::Json(serde_json::json!({"entries":[],"campaign":null})).into_response(),
+    };
+    let campaign = crate::leaderboard::active_campaign(db).await.ok().flatten();
+    let entries  = crate::leaderboard::live_standings(db, 100).await.unwrap_or_default();
+    axum::Json(serde_json::json!({ "campaign": campaign, "entries": entries })).into_response()
+}
+
 ///
 /// Returns the last 90 days of AUM snapshots as JSON.
 /// Used by the landing page to render the TVL hero graph client-side.
@@ -3292,6 +3731,11 @@ pub async fn serve(app_state: AppState, port: u16) -> Result<(), Box<dyn std::er
         .route("/api/public/tvl/svg",   get(public_tvl_svg_handler))
         // ── Funnel / analytics (first-party, no third-party scripts) ───────
         .route("/api/funnel",           post(funnel_event_handler))
+        // ── Leaderboard & invite codes ──────────────────────────────────────
+        .route("/leaderboard",          get(leaderboard_handler))
+        .route("/app/invite",           get(get_invite_handler))
+        .route("/app/invite/generate",  post(generate_invite_handler))
+        .route("/api/leaderboard",      get(api_leaderboard_handler))
         .with_state(app_state);
     let addr = format!("0.0.0.0:{}", port);
     log::info!("🌐 Dashboard at http://{}", addr);
