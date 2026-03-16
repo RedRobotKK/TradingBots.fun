@@ -39,6 +39,13 @@ pub struct Config {
     /// Leave unset in paper mode; set on testnet to validate the code path.
     pub builder_code: Option<String>,
 
+    /// Builder fee in basis points for the operator's own trading account.
+    /// 1 = Pro reward (operator is always Internal/Pro).
+    /// Overridden per-tenant at runtime via `TenantConfig::builder_fee_bps()`.
+    /// Set via `BUILDER_FEE_BPS` env var; defaults to 1 if unset.
+    /// HL maximum is 3 bps — values above 3 are clamped before submission.
+    pub builder_fee_bps: u32,
+
     // Stripe — subscription billing
     /// Stripe secret API key (sk_live_… / sk_test_…).
     pub stripe_secret_key:      Option<String>,
@@ -135,6 +142,11 @@ impl Config {
             hyperliquid_secret:         env::var("HYPERLIQUID_SECRET").ok(),
             hyperliquid_wallet_address: env::var("HYPERLIQUID_WALLET_ADDRESS").ok(),
             builder_code:               env::var("BUILDER_CODE").ok(),
+            builder_fee_bps:            env::var("BUILDER_FEE_BPS")
+                .ok()
+                .and_then(|v| v.parse::<u32>().ok())
+                .unwrap_or(1)
+                .min(3), // HL hard cap
             referral_code:              env::var("REFERRAL_CODE").ok(),
             stripe_secret_key:          env::var("STRIPE_SECRET_KEY").ok(),
             stripe_webhook_secret:      env::var("STRIPE_WEBHOOK_SECRET").ok(),

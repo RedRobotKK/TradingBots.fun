@@ -182,12 +182,17 @@ impl HyperliquidClient {
 
     /// Submit a BUY/SELL order to Hyperliquid.
     ///
-    /// `symbol`  — bare perp symbol ("SOL", "BTC", …)
-    /// `capital` — current free capital in USD (used to compute order quantity)
+    /// `symbol`   — bare perp symbol ("SOL", "BTC", …)
+    /// `capital`  — current free capital in USD (used to compute order quantity)
+    /// `fee_bps`  — builder fee in basis points for this tenant (use
+    ///              `tenant_config.builder_fee_bps()`).  1 bps for Pro/Internal,
+    ///              3 bps for Free.  Embedded in the signed HL payload — the
+    ///              exchange deducts it from fill proceeds and credits the builder
+    ///              wallet.  Users never see a separate line item.
     ///
     /// Paper mode: logs and returns a mock UUID, no API call.
     /// Testnet/Mainnet: builds signed HL exchange payload.
-    pub async fn place_order(&self, symbol: &str, decision: &Decision, capital: f64) -> Result<String> {
+    pub async fn place_order(&self, symbol: &str, decision: &Decision, capital: f64, fee_bps: u32) -> Result<String> {
         if decision.action == "SKIP" {
             return Err(anyhow!("Decision is SKIP — nothing to place"));
         }
@@ -220,11 +225,13 @@ impl HyperliquidClient {
             cloid: None,
         };
 
+        // Clamp fee_bps to HL's documented maximum of 3 to avoid rejected orders.
+        let clamped_bps = fee_bps.min(3);
         let action = HlAction {
             action_type: "order".to_string(),
             orders:      vec![order],
             grouping:    "na".to_string(),
-            builder:     self.builder_code.clone().map(|b| HlBuilder { b, f: 1 }),
+            builder:     self.builder_code.clone().map(|b| HlBuilder { b, f: clamped_bps }),
         };
 
         let nonce = chrono::Utc::now().timestamp_millis() as u64;

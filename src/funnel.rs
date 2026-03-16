@@ -63,6 +63,10 @@ pub enum FunnelEvent {
     AdImpression,
     /// Ad creative clicked.
     AdClick,
+    /// User signed up via our Hyperliquid referral link — platform earns 10%
+    /// of their HL taker fee indefinitely on top of the standard builder fee.
+    /// Fired at TRIAL_START when `hl_referred = true`.
+    Referred,
 }
 
 impl FunnelEvent {
@@ -82,6 +86,7 @@ impl FunnelEvent {
             FunnelEvent::Churned          => "CHURNED",
             FunnelEvent::AdImpression     => "AD_IMPRESSION",
             FunnelEvent::AdClick          => "AD_CLICK",
+            FunnelEvent::Referred         => "REFERRED",
         }
     }
 }
@@ -153,19 +158,36 @@ pub async fn page_view(
     record(db, FunnelEvent::PageView, anon_id, None, Some(props)).await;
 }
 
-/// Record a successful Privy login + optional TRIAL_START for new users.
+/// Record a successful Privy login + optional TRIAL_START / REFERRED for new users.
+///
+/// `referral_source` — utm_source or `"hl_referral"` / `"direct"`
+/// `hl_referred`     — true if the user arrived via our Hyperliquid referral link
+/// `utm_campaign`    — optional campaign tag
 #[allow(dead_code)] // called from auth_session_handler once server-side tracking ships
 pub async fn auth_success(
-    db:        &Option<SharedDb>,
-    anon_id:   &str,
-    tenant_id: &TenantId,
-    is_new:    bool,
+    db:              &Option<SharedDb>,
+    anon_id:         &str,
+    tenant_id:       &TenantId,
+    is_new:          bool,
+    referral_source: Option<&str>,
+    hl_referred:     bool,
+    utm_campaign:    Option<&str>,
 ) {
     record(db, FunnelEvent::AuthSuccess, anon_id, Some(tenant_id), None).await;
     if is_new {
         record(db, FunnelEvent::TrialStart, anon_id, Some(tenant_id), Some(json!({
-            "trial_days": 14,
+            "trial_days":       14,
+            "referral_source":  referral_source,
+            "utm_campaign":     utm_campaign,
         }))).await;
+
+        // Fire REFERRED if this user came via our HL referral link —
+        // used to segment referred cohorts in the ltv_by_cohort view.
+        if hl_referred {
+            record(db, FunnelEvent::Referred, anon_id, Some(tenant_id), Some(json!({
+                "referral_source": referral_source,
+            }))).await;
+        }
     }
 }
 

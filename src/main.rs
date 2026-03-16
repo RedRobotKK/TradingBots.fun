@@ -317,7 +317,7 @@ async fn main() -> Result<()> {
 
         match run_cycle(&config, &market, &hl, &shared_db, &bot_state, &weights,
                         &sentiment_cache, &funding_cache, &mut prev_mids, &btc_dominance,
-                        &trade_logger).await
+                        &trade_logger, config.builder_fee_bps).await
         {
             Ok(_) => {
                 // Persist state every N cycles (cheap; atomic rename)
@@ -391,6 +391,7 @@ async fn run_cycle(
     prev_mids:       &mut HashMap<String, f64>,
     btc_dominance:   &SharedBtcDominance,
     trade_logger:    &SharedTradeLogger,
+    fee_bps:         u32,   // builder fee bps — passed through to every place_order call
 ) -> Result<()> {
     { bot_state.write().await.cycle_count += 1; }
 
@@ -725,7 +726,7 @@ async fn run_cycle(
         set_status(bot_state,
             &format!("🔬 Analysing {}/{}: {}…", i + 1, total, sym)).await;
 
-        match analyse_symbol(sym, market, hl, db, config, bot_state, weights, sent_cache, fund_cache, btc_dom, btc_ret_24h, btc_ret_4h, trade_logger).await {
+        match analyse_symbol(sym, market, hl, db, config, bot_state, weights, sent_cache, fund_cache, btc_dom, btc_ret_24h, btc_ret_4h, trade_logger, fee_bps).await {
             Ok(Some((dec, ind))) => {
                 if dec.action != "SKIP" {
                     info!("💡 {} → {} conf={:.0}%", sym, dec.action, dec.confidence * 100.0);
@@ -976,6 +977,7 @@ async fn analyse_symbol(
     btc_ret_24h:  f64,   // BTC 24h return %
     btc_ret_4h:   f64,   // BTC 4h return % (for relative performance signal)
     trade_logger: &SharedTradeLogger,
+    fee_bps:      u32,   // builder fee bps for this tenant (1 = Pro, 3 = Free)
 ) -> Result<Option<(decision::Decision, SymbolIndicators)>> {
     let candles = market.fetch_market_data(symbol).await?;
     if candles.len() < 26 { return Ok(None); }
@@ -1072,7 +1074,7 @@ async fn analyse_symbol(
         let account = hl.get_account().await?;
         if risk::should_trade(&dec, &account)? {
             let capital = bot_state.read().await.capital;
-            match hl.place_order(symbol, &dec, capital).await {
+            match hl.place_order(symbol, &dec, capital, fee_bps).await {
                 Ok(id) => { info!("✅ {} {} @ ${:.4} [{}]", dec.action, symbol, dec.entry_price, id); }
                 Err(e) => error!("❌ Order failed {}: {}", symbol, e),
             }

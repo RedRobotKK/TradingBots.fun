@@ -1932,6 +1932,17 @@ async fn resolve_consumer_state(
 #[derive(serde::Deserialize)]
 struct SessionRequest {
     token: String,
+    /// First-touch acquisition source (utm_source) — sent by the login page JS
+    /// from the URL query params / cookie captured on landing.
+    #[serde(default)]
+    utm_source:   Option<String>,
+    /// utm_campaign captured at landing — sent through to funnel_events.
+    #[serde(default)]
+    utm_campaign: Option<String>,
+    /// True when the user arrived via our Hyperliquid referral link
+    /// (`?ref=TRADINGBOTS` or similar query param on the HL sign-up page).
+    #[serde(default)]
+    hl_referred:  bool,
 }
 
 /// `POST /auth/session`
@@ -1965,11 +1976,38 @@ async fn auth_session_handler(
         }
     };
 
-    // Register new user or retrieve existing tenant
-    let tenant_id = {
-        let mut tenants = app.tenants.write().await;
-        tenants.register_or_get_by_privy_did(&privy_did, None)
+    // Register new user or retrieve existing tenant.
+    // Attribution params (utm_source, hl_referred, utm_campaign) are set
+    // once at first signup and never overwritten (first-touch model).
+    let referral_source = if req.hl_referred {
+        Some("hl_referral".to_string())
+    } else {
+        req.utm_source.clone()
     };
+    let (tenant_id, is_new) = {
+        let mut tenants = app.tenants.write().await;
+        let existing = tenants.find_by_privy_did(&privy_did).map(|h| h.id.clone());
+        let is_new = existing.is_none();
+        let id = tenants.register_or_get_by_privy_did(
+            &privy_did,
+            None,
+            referral_source.clone(),
+            req.hl_referred,
+            req.utm_campaign.clone(),
+        );
+        (id, is_new)
+    };
+
+    // Fire funnel events (non-blocking — analytics never block auth)
+    crate::funnel::auth_success(
+        &app.db,
+        "",           // anon_id — not available here; client fires LOGIN_CLICK with it
+        &tenant_id,
+        is_new,
+        referral_source.as_deref(),
+        req.hl_referred,
+        req.utm_campaign.as_deref(),
+    ).await;
 
     // Issue HMAC-signed session cookie (7-day TTL)
     let set_cookie = crate::privy::set_session_header(&tenant_id, &app.session_secret);

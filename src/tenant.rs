@@ -115,6 +115,22 @@ pub struct TenantConfig {
     /// to detect deposits / withdrawals between cycles.
     /// This is the *cleared* balance — NOT the mark-to-market equity.
     pub hl_balance_usd:     f64,
+
+    // ── Acquisition attribution ───────────────────────────────────────────
+
+    /// First-touch acquisition source captured at TRIAL_START.
+    /// Set from the `utm_source` query param or cookie on the landing page.
+    /// Stored as-is (e.g. `"twitter"`, `"google"`, `"hl_referral"`, `"direct"`).
+    /// Never overwritten after signup — first-touch attribution model.
+    pub referral_source:    Option<String>,
+
+    /// True when the user arrived via our Hyperliquid referral link.
+    /// When true, the platform earns 10% of their HL taker fee indefinitely
+    /// in addition to the standard builder fee.
+    pub hl_referred:        bool,
+
+    /// UTM campaign tag from the signup landing page (for campaign drill-down).
+    pub utm_campaign:       Option<String>,
 }
 
 impl TenantConfig {
@@ -134,6 +150,9 @@ impl TenantConfig {
             terms_accepted_at:  None,
             wallet_linked_at:   None,
             hl_balance_usd:     0.0,
+            referral_source:    None,
+            hl_referred:        false,
+            utm_campaign:       None,
         }
     }
 
@@ -154,6 +173,9 @@ impl TenantConfig {
             terms_accepted_at:  None,
             wallet_linked_at:   None,
             hl_balance_usd:     0.0,
+            referral_source:    None,
+            hl_referred:        false,
+            utm_campaign:       None,
         }
     }
 
@@ -201,6 +223,25 @@ impl TenantConfig {
                     .unwrap_or(false);
                 if trial_active { 6 } else { 2 }
             }
+        }
+    }
+
+    /// Builder fee in basis points charged on every HL fill for this tenant.
+    ///
+    /// Hyperliquid allows up to 3 bps.  We use the maximum on free accounts —
+    /// the fee is invisible to users (deducted at exchange level), so it costs
+    /// them nothing perceived while the higher rate extracts more LTV per fill.
+    ///
+    /// | Tier                           | bps | Rationale                          |
+    /// |--------------------------------|-----|------------------------------------|
+    /// | Free (trial active or expired) |  3  | Max extraction — no sub revenue    |
+    /// | Pro or Internal                |  1  | Reward: lighter take on paid users |
+    ///
+    /// Returns `u32` because `HlBuilder.f` is typed as u32 in the HL payload.
+    pub fn builder_fee_bps(&self) -> u32 {
+        match self.tier {
+            TenantTier::Pro | TenantTier::Internal => 1,
+            TenantTier::Free => 3,
         }
     }
 
@@ -365,10 +406,16 @@ impl TenantManager {
     /// Called on every successful Privy login.  New users are created with
     /// zero capital and no HL wallet; the operator links those separately.
     /// Returns the `TenantId` (existing or newly created).
+    ///
+    /// Attribution fields (`referral_source`, `hl_referred`, `utm_campaign`) are
+    /// captured at first signup and never overwritten (first-touch model).
     pub fn register_or_get_by_privy_did(
         &mut self,
-        did:   &str,
-        email: Option<String>,
+        did:              &str,
+        email:            Option<String>,
+        referral_source:  Option<String>,   // utm_source or "hl_referral" / "direct"
+        hl_referred:      bool,             // true if arrived via our HL referral link
+        utm_campaign:     Option<String>,   // utm_campaign tag for campaign drill-down
     ) -> TenantId {
         // Return existing tenant if we already know this Privy DID
         if let Some(handle) = self.find_by_privy_did(did) {
@@ -378,17 +425,22 @@ impl TenantManager {
         // New user — register as Free with a 14-day full-access trial.
         // After the trial expires they can still trade but are capped at
         // max_positions() = 2 until they upgrade to Pro.
-        let mut cfg         = TenantConfig::paper(did, 0.0);
-        cfg.privy_did       = Some(did.to_string());
-        cfg.email           = email;
-        cfg.display_name    = did.to_string(); // DID shown until name is set
-        cfg.trial_ends_at   = Some(Utc::now() + Duration::days(14));
-        cfg.live_trading    = true; // live allowed during trial
+        let mut cfg             = TenantConfig::paper(did, 0.0);
+        cfg.privy_did           = Some(did.to_string());
+        cfg.email               = email;
+        cfg.display_name        = did.to_string(); // DID shown until name is set
+        cfg.trial_ends_at       = Some(Utc::now() + Duration::days(14));
+        cfg.live_trading        = true; // live allowed during trial
+
+        // First-touch attribution — set once, never overwritten
+        cfg.referral_source     = referral_source.clone();
+        cfg.hl_referred         = hl_referred;
+        cfg.utm_campaign        = utm_campaign;
 
         let id = self.register(cfg);
         log::info!(
-            "👤 New Privy user registered: tenant_id={} did={} (14-day trial started)",
-            id, did
+            "👤 New Privy user registered: tenant_id={} did={} source={:?} hl_referred={} (14-day trial started)",
+            id, did, referral_source, hl_referred
         );
         id
     }
@@ -535,7 +587,7 @@ mod tests {
     fn register_or_get_creates_new_tenant_for_unknown_did() {
         let mut mgr = TenantManager::new();
         let did     = "did:privy:cltest0000000001";
-        let id      = mgr.register_or_get_by_privy_did(did, Some("alice@test.com".into()));
+        let id      = mgr.register_or_get_by_privy_did(did, Some("alice@test.com".into()), None, false, None);
         assert!(mgr.get(&id).is_some());
         assert_eq!(mgr.get(&id).unwrap().config.privy_did.as_deref(), Some(did));
         assert_eq!(mgr.get(&id).unwrap().config.email.as_deref(), Some("alice@test.com"));
@@ -546,8 +598,8 @@ mod tests {
     fn register_or_get_returns_same_id_for_known_did() {
         let mut mgr = TenantManager::new();
         let did     = "did:privy:cltest0000000002";
-        let id1     = mgr.register_or_get_by_privy_did(did, None);
-        let id2     = mgr.register_or_get_by_privy_did(did, None);
+        let id1     = mgr.register_or_get_by_privy_did(did, None, None, false, None);
+        let id2     = mgr.register_or_get_by_privy_did(did, None, None, false, None);
         // Second call must return the SAME tenant, not create a duplicate
         assert_eq!(id1, id2,    "same DID must map to same tenant_id");
         assert_eq!(mgr.count(), 1, "must not create a second tenant");
@@ -556,7 +608,7 @@ mod tests {
     #[test]
     fn find_by_privy_did_returns_none_for_unknown_did() {
         let mut mgr = TenantManager::new();
-        mgr.register_or_get_by_privy_did("did:privy:cltest0000000003", None);
+        mgr.register_or_get_by_privy_did("did:privy:cltest0000000003", None, None, false, None);
         let result = mgr.find_by_privy_did("did:privy:nobody");
         assert!(result.is_none());
     }
@@ -684,12 +736,45 @@ mod tests {
     #[test]
     fn new_privy_signup_gets_14_day_trial() {
         let mut mgr = TenantManager::new();
-        let id = mgr.register_or_get_by_privy_did("did:privy:newtrial001", None);
+        let id = mgr.register_or_get_by_privy_did("did:privy:newtrial001", None, None, false, None);
         let cfg = &mgr.get(&id).unwrap().config;
         assert!(cfg.trial_ends_at.is_some(), "trial_ends_at must be set on signup");
         let days = cfg.trial_days_remaining();
         assert!((13..=14).contains(&days), "trial must be ~14 days, got {}", days);
         assert_eq!(cfg.max_positions(), 6, "in-trial user must have 6-position cap");
         assert!(cfg.live_trading, "live trading must be enabled during trial");
+    }
+
+    // ── Builder fee / tiered revenue tests ───────────────────────────────────
+
+    #[test]
+    fn free_tier_pays_3_bps_builder_fee() {
+        // Free with no trial
+        let cfg = TenantConfig::paper("Free User", 0.0);
+        assert_eq!(cfg.builder_fee_bps(), 3,
+            "free tier must carry 3 bps builder fee for maximum LTV extraction");
+    }
+
+    #[test]
+    fn free_tier_with_active_trial_still_pays_3_bps() {
+        let mut cfg = TenantConfig::paper("Trial User", 0.0);
+        cfg.trial_ends_at = Some(Utc::now() + Duration::days(10));
+        assert_eq!(cfg.builder_fee_bps(), 3,
+            "trial is still Free tier — builder fee must be 3 bps");
+    }
+
+    #[test]
+    fn pro_tier_pays_1_bps_builder_fee() {
+        let cfg = TenantConfig::live("Pro User", 1000.0, "0xABCdef1234567890", "secret");
+        assert_eq!(cfg.builder_fee_bps(), 1,
+            "Pro tier reward: 1 bps builder fee as incentive to upgrade");
+    }
+
+    #[test]
+    fn internal_tier_pays_1_bps_builder_fee() {
+        // Internal (operator capital) should not be taxed at the high free rate
+        let mut cfg = TenantConfig::live("Operator", 50000.0, "0xABCdef1234567890", "secret");
+        cfg.tier = crate::tenant::TenantTier::Internal;
+        assert_eq!(cfg.builder_fee_bps(), 1);
     }
 }
