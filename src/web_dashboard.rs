@@ -2499,7 +2499,9 @@ import('/static/privy-login.js').then(({{ PrivyProvider, usePrivy, createElement
       appId: PRIVY_APP_ID,
       // 'email' OTP works out of the box — no WalletConnect project ID needed.
       // Add 'wallet' here only after setting walletConnectCloudProjectId.
-      config: {{ loginMethods: ['email'], appearance: {{ theme: 'dark' }} }},
+      // embeddedWallets createOnLogin:'off' prevents the HTTPS-only embedded
+      // wallet initialiser from crashing Privy when served over plain HTTP.
+      config: {{ loginMethods: ['email'], appearance: {{ theme: 'dark' }}, embeddedWallets: {{ createOnLogin: 'off' }} }},
     }},
       h(LoginButton)
     )
