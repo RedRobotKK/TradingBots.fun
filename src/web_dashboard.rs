@@ -2128,16 +2128,8 @@ async fn auth_logout_handler(
         .unwrap()
 }
 
-/// `GET /login`
-///
-/// Renders the Privy-powered login page.
-///
-/// - When `PRIVY_APP_ID` is set: embeds the Privy JS SDK and shows a
-///   "Login" button that triggers Privy's authentication modal.
-/// - When Privy is not configured: shows a message directing to `/app`
-///   (single-operator mode — auth not required).
-/// Serve the pre-built Privy SDK ESM bundle.
-/// Cached by the browser for 24 h; no external CDN required at runtime.
+// Serve the pre-built Privy SDK ESM bundle.
+// Cached by the browser for 24 h; no external CDN required at runtime.
 async fn privy_bundle_handler() -> impl axum::response::IntoResponse {
     use axum::http::header;
     (
@@ -2149,6 +2141,14 @@ async fn privy_bundle_handler() -> impl axum::response::IntoResponse {
     )
 }
 
+/// `GET /login`
+///
+/// Renders the Privy-powered login page.
+///
+/// - When `PRIVY_APP_ID` is set: embeds the Privy JS SDK and shows a
+///   "Login" button that triggers Privy's authentication modal.
+/// - When Privy is not configured: shows a message directing to `/app`
+///   (single-operator mode — auth not required).
 async fn login_handler(
     State(app): State<AppState>,
 ) -> axum::response::Html<String> {
