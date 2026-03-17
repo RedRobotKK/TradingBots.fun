@@ -188,7 +188,7 @@ mod tests {
     #[test]
     fn unknown_pair_defaults_low() {
         let r = get_correlation("BTC", "DOGE");
-        assert!(r >= 0.30 && r < 0.75);
+        assert!((0.30..0.75).contains(&r));
     }
 
     #[test]

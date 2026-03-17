@@ -212,14 +212,13 @@ fn normalised_to_strength(norm: f64) -> f64 {
     //   0.005 = 0.5 %  (significant daily move)
     //   0.002 = 0.2 %  (moderate)
     //   0.0005= 0.05%  (noise boundary)
-    let raw = if      norm >  0.0050 { -1.00 } // strong inflows  → strong bear
-              else if norm >  0.0020 { -0.65 } // moderate inflows → moderate bear
-              else if norm >  0.0005 { -0.30 } // mild inflows    → slight bear
-              else if norm < -0.0050 {  1.00 } // strong outflows  → strong bull
-              else if norm < -0.0020 {  0.65 } // moderate outflows → moderate bull
-              else if norm < -0.0005 {  0.30 } // mild outflows   → slight bull
-              else                   {  0.00 }; // neutral band
-    raw
+    if      norm >  0.0050 { -1.00 } // strong inflows  → strong bear
+    else if norm >  0.0020 { -0.65 } // moderate inflows → moderate bear
+    else if norm >  0.0005 { -0.30 } // mild inflows    → slight bear
+    else if norm < -0.0050 {  1.00 } // strong outflows  → strong bull
+    else if norm < -0.0020 {  0.65 } // moderate outflows → moderate bull
+    else if norm < -0.0005 {  0.30 } // mild outflows   → slight bull
+    else                   {  0.00 } // neutral band
 }
 
 // ─────────────────────────── Tests ───────────────────────────────────────────

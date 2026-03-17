@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Signal watchlist — tracks high-confidence SKIPs across cycles.
 //!
 //! When `make_decision` returns a SKIP with confidence above the watch threshold,

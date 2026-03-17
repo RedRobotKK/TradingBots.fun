@@ -83,6 +83,7 @@ impl Notifier {
     // ── Public event methods ──────────────────────────────────────────────
 
     /// A new position was opened.
+    #[allow(clippy::too_many_arguments)]
     pub async fn position_opened(
         &self,
         symbol:     &str,

@@ -367,6 +367,7 @@ impl CrossExchangeMonitor {
 
     /// Number of symbols with an active (persistent) anomaly.
     /// Uses the same `+1` offset as `evaluate()` so counts stay in sync.
+    #[allow(dead_code)]
     pub async fn active_anomaly_count(&self) -> usize {
         let r = self.inner.read().await;
         r.persistence.values()
@@ -375,6 +376,7 @@ impl CrossExchangeMonitor {
     }
 
     /// Age of the CEX price cache in seconds.  `None` if never populated.
+    #[allow(dead_code)]
     pub async fn cache_age_secs(&self) -> Option<u64> {
         self.inner.read().await
             .last_fetch
