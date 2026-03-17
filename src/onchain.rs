@@ -141,7 +141,7 @@ impl OnchainCache {
         // Check staleness under a read lock.
         let stale = {
             let inner = self.inner.read().await;
-            inner.fetched_at.map_or(true, |t| t.elapsed() > CACHE_TTL)
+            inner.fetched_at.is_none_or(|t| t.elapsed() > CACHE_TTL)
         };
         if stale {
             self.refresh().await;
