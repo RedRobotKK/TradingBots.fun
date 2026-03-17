@@ -10,6 +10,11 @@ const MAX_RETRIES: u32 = 5;
 /// 1 000 ms base → 1 s, 2 s, 4 s, 8 s between retries.
 const RETRY_BASE_MS: u64 = 1_000;
 
+/// Maximum number of candidate symbols to analyse per cycle.
+/// With HL's native candle API (one POST per coin, no external rate-limit),
+/// 40 pairs fit comfortably within a 30-second cycle budget.
+const MAX_CANDIDATES: usize = 40;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PriceData {
     pub symbol: String,
@@ -29,33 +34,24 @@ pub struct OrderBook {
     pub asks: Vec<(f64, f64)>,
 }
 
-/// Convert a Hyperliquid symbol to a Binance USDT pair symbol.
-/// e.g.  kBONK → 1000BONKUSDT,  BTC → BTCUSDT
+/// Returns `true` for vanilla Hyperliquid perp symbols that have native candle data.
 ///
-/// Returns `None` for HL-specific instrument types that have no Binance listing:
+/// Excludes two HL-specific instrument types the candle API cannot serve:
 ///   • `@N` symbols — HL price-level derivative contracts (e.g. @232, @7)
-///   • Any symbol containing `/`  — HL spot market pairs
-pub fn hl_to_binance(hl: &str) -> Option<String> {
-    // Price-level derivatives: HL uses @<price> as the symbol name.
-    // These are not listed on Binance and will always return HTTP 400.
-    if hl.starts_with('@') { return None; }
-    // Spot pairs (e.g. PURR/USDC) — not on Binance perps
-    if hl.contains('/') { return None; }
-    // k-prefix on Hyperliquid means the coin trades in "1000x" units on Binance
-    if let Some(base) = hl.strip_prefix('k') {
-        Some(format!("1000{base}USDT"))
-    } else {
-        Some(format!("{hl}USDT"))
-    }
+///   • Any symbol containing `/`  — HL spot market pairs (e.g. PURR/USDC)
+#[inline]
+pub fn is_hl_perp(sym: &str) -> bool {
+    !sym.starts_with('@') && !sym.contains('/')
 }
 
-/// Two-tier market data client.
-/// Tier 1: Hyperliquid `allMids` – one call returns ALL prices (rate weight = 2)
-/// Tier 2: Binance candles – fetched only for the ~18 top candidates
+/// Single-source market data client — Hyperliquid only.
+///
+/// Tier 1: `allMids`        — one POST returns ALL ~150+ perp prices
+/// Tier 2: `candleSnapshot` — one POST per coin, no Binance rate-limit concern
+/// Tier 3: `l2Book`         — one POST per coin for order book depth
 pub struct MarketClient {
-    client: reqwest::Client,
+    client:  reqwest::Client,
     hl_base: String,
-    bn_base: String,
 }
 
 impl MarketClient {
@@ -66,7 +62,6 @@ impl MarketClient {
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new()),
             hl_base: "https://api.hyperliquid.xyz".to_string(),
-            bn_base: "https://api.binance.com".to_string(),
         }
     }
 
@@ -87,7 +82,7 @@ impl MarketClient {
                 Err(e) => {
                     last_err = e;
                     if attempt + 1 < MAX_RETRIES {
-                        let delay_ms = RETRY_BASE_MS * (1 << attempt); // 300, 600, 1200 ms
+                        let delay_ms = RETRY_BASE_MS * (1 << attempt);
                         log::warn!("HTTP attempt {}/{} failed — retrying in {}ms: {}",
                             attempt + 1, MAX_RETRIES, delay_ms, last_err);
                         tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
@@ -103,8 +98,8 @@ impl MarketClient {
     /// Returns symbol → price map for every perp traded on the exchange.
     /// Retries up to `MAX_RETRIES` times with exponential back-off on failure.
     pub async fn fetch_all_mids(&self) -> Result<HashMap<String, f64>> {
-        let url  = format!("{}/info", self.hl_base);
-        let body = serde_json::json!({ "type": "allMids" });
+        let url    = format!("{}/info", self.hl_base);
+        let body   = serde_json::json!({ "type": "allMids" });
         let client = self.client.clone();
 
         Self::with_retry(|| {
@@ -144,7 +139,10 @@ impl MarketClient {
     }
 
     /// Select trading candidates from the full mid-price universe.
-    /// Always includes BTC, ETH, SOL anchors plus the top movers vs previous cycle.
+    ///
+    /// Always includes BTC/ETH/SOL anchors, then fills to `MAX_CANDIDATES` with
+    /// the top movers by absolute % change since the previous cycle.
+    /// Filters out HL-specific non-perp instruments (`@N` and `/` symbols).
     pub fn filter_candidates(
         &self,
         current: &HashMap<String, f64>,
@@ -152,15 +150,13 @@ impl MarketClient {
     ) -> Vec<String> {
         let anchors = ["BTC", "ETH", "SOL"];
 
-        // Score each symbol by absolute % change since last cycle
+        // Score each valid HL perp by absolute % change since last cycle
         let mut movers: Vec<(String, f64)> = current
             .iter()
-            .filter(|(sym, _)| hl_to_binance(sym).is_some())
+            .filter(|(sym, _)| is_hl_perp(sym))
             .filter_map(|(sym, &cur)| {
                 let prev = previous.get(sym.as_str()).copied().unwrap_or(cur);
-                if prev == 0.0 {
-                    return None;
-                }
+                if prev == 0.0 { return None; }
                 let pct = ((cur - prev) / prev).abs();
                 Some((sym.clone(), pct))
             })
@@ -168,116 +164,153 @@ impl MarketClient {
 
         movers.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-        // Start with anchors
+        // Start with anchors (always included regardless of move size)
         let mut candidates: Vec<String> = anchors
             .iter()
             .filter(|&&s| current.contains_key(s))
             .map(|&s| s.to_string())
             .collect();
 
-        // Fill up to 18 with top movers
-        for (sym, _) in movers.iter().take(20) {
+        // Fill to MAX_CANDIDATES with top movers
+        for (sym, _) in &movers {
+            if candidates.len() >= MAX_CANDIDATES { break; }
             if !candidates.contains(sym) {
                 candidates.push(sym.clone());
-            }
-            if candidates.len() >= 18 {
-                break;
             }
         }
 
         candidates
     }
 
-    /// Fetch OHLCV candles from Binance for the given Hyperliquid symbol.
+    /// Fetch OHLCV candles from Hyperliquid's native `candleSnapshot` endpoint.
     ///
-    /// - `hl_symbol` — Hyperliquid ticker (e.g. `"BTC"`, `"kBONK"`)
-    /// - `interval`  — Binance interval string, e.g. `"1h"` or `"4h"`
-    /// - `limit`     — Number of candles to fetch (newest candle is last)
+    /// - `coin`     — Hyperliquid ticker (e.g. `"BTC"`, `"kBONK"`)
+    /// - `interval` — HL interval string: `"1h"`, `"4h"`, `"15m"`, etc.
+    /// - `limit`    — Number of candles to return (newest last)
     ///
-    /// Returns `Err` if the symbol has no Binance mapping (`@N` symbols, spot
-    /// pairs) or if all retry attempts fail.
-    async fn fetch_klines(&self, hl_symbol: &str, interval: &str, limit: u32) -> Result<Vec<PriceData>> {
-        let bn_sym = hl_to_binance(hl_symbol)
-            .ok_or_else(|| anyhow::anyhow!("No Binance mapping for {}", hl_symbol))?;
+    /// `startTime` is derived as `now − limit × interval_ms` so we always get
+    /// exactly `limit` closed candles regardless of the current time-of-day.
+    /// History on HL goes back to ~2023 — sufficient for 14-period RSI / 20-period MACD.
+    async fn fetch_hl_candles(&self, coin: &str, interval: &str, limit: u32) -> Result<Vec<PriceData>> {
+        let interval_ms: i64 = match interval {
+            "1m"  =>       60_000,
+            "5m"  =>      300_000,
+            "15m" =>      900_000,
+            "1h"  =>    3_600_000,
+            "4h"  =>   14_400_000,
+            "1d"  =>   86_400_000,
+            other => anyhow::bail!("Unknown interval: {}", other),
+        };
 
-        let url = format!(
-            "{}/api/v3/klines?symbol={}&interval={}&limit={}",
-            self.bn_base, bn_sym, interval, limit
-        );
-        let client     = self.client.clone();
-        let hl_sym_str = hl_symbol.to_string();
+        let now_ms    = chrono::Utc::now().timestamp_millis();
+        // Extra +2 candles of buffer so the window always contains `limit` closed bars
+        let start_ms  = now_ms - (limit as i64 + 2) * interval_ms;
+
+        let url    = format!("{}/info", self.hl_base);
+        let body   = serde_json::json!({
+            "type": "candleSnapshot",
+            "req": {
+                "coin":      coin,
+                "interval":  interval,
+                "startTime": start_ms,
+                "endTime":   now_ms
+            }
+        });
+        let client   = self.client.clone();
+        let coin_str = coin.to_string();
 
         Self::with_retry(|| {
-            let url        = url.clone();
-            let client     = client.clone();
-            let bn_sym     = bn_sym.clone();
-            let hl_sym_str = hl_sym_str.clone();
+            let url      = url.clone();
+            let body     = body.clone();
+            let client   = client.clone();
+            let coin_str = coin_str.clone();
             async move {
-                let resp = client.get(&url).send().await?;
+                let resp = client.post(&url).json(&body).send().await?;
                 if !resp.status().is_success() {
-                    anyhow::bail!("Binance {} {} → HTTP {}", bn_sym, interval, resp.status());
+                    anyhow::bail!("HL candleSnapshot {} {} → HTTP {}", coin_str, interval, resp.status());
                 }
-                let raw: Vec<Vec<serde_json::Value>> = resp.json().await?;
+                // HL returns an array of candle objects:
+                // {"t":<open_ms>,"T":<close_ms>,"s":"BTC","i":"1h",
+                //  "o":"50000","h":"51000","l":"49500","c":"50800","v":"1234","n":500}
+                let raw: Vec<serde_json::Value> = resp.json().await?;
                 if raw.is_empty() {
-                    anyhow::bail!("No candle data for {} {}", bn_sym, interval);
+                    anyhow::bail!("No candle data for {} {}", coin_str, interval);
                 }
-                let candles: Vec<PriceData> = raw
+
+                let parse = |v: &serde_json::Value, key: &str| -> f64 {
+                    v[key].as_str()
+                        .and_then(|s| s.parse().ok())
+                        .or_else(|| v[key].as_f64())
+                        .unwrap_or(0.0)
+                };
+
+                let mut candles: Vec<PriceData> = raw
                     .iter()
                     .map(|c| PriceData {
-                        symbol:    hl_sym_str.clone(),
-                        timestamp: c[0].as_i64().unwrap_or(0),
-                        open:   c[1].as_str().unwrap_or("0").parse().unwrap_or(0.0),
-                        high:   c[2].as_str().unwrap_or("0").parse().unwrap_or(0.0),
-                        low:    c[3].as_str().unwrap_or("0").parse().unwrap_or(0.0),
-                        close:  c[4].as_str().unwrap_or("0").parse().unwrap_or(0.0),
-                        volume: c[7].as_str().unwrap_or("0").parse().unwrap_or(0.0),
+                        symbol:    coin_str.clone(),
+                        timestamp: c["t"].as_i64().unwrap_or(0),
+                        open:      parse(c, "o"),
+                        high:      parse(c, "h"),
+                        low:       parse(c, "l"),
+                        close:     parse(c, "c"),
+                        volume:    parse(c, "v"),
                     })
                     .collect();
+
+                // Trim to exactly `limit` (drop the oldest if buffer over-fetched)
+                if candles.len() > limit as usize {
+                    let drop = candles.len() - limit as usize;
+                    candles.drain(..drop);
+                }
+
                 Ok(candles)
             }
         }).await
     }
 
-    /// Fetch 50 hourly candles from Binance for the given Hyperliquid symbol.
-    pub async fn fetch_market_data(&self, hl_symbol: &str) -> Result<Vec<PriceData>> {
-        self.fetch_klines(hl_symbol, "1h", 50).await
+    /// Fetch 50 hourly candles from Hyperliquid for the given symbol.
+    /// 50 × 1h = ~2 days of 1h context (sufficient for RSI-14, MACD-26).
+    pub async fn fetch_market_data(&self, coin: &str) -> Result<Vec<PriceData>> {
+        self.fetch_hl_candles(coin, "1h", 50).await
     }
 
-    /// Fetch 50 four-hour candles from Binance for the given Hyperliquid symbol.
+    /// Fetch 50 four-hour candles from Hyperliquid for the given symbol.
     /// Used for multi-timeframe confirmation (HTF indicators).
     /// 50 × 4h = 200 hours ≈ 8 days of context.
-    pub async fn fetch_market_data_4h(&self, hl_symbol: &str) -> Result<Vec<PriceData>> {
-        self.fetch_klines(hl_symbol, "4h", 50).await
+    pub async fn fetch_market_data_4h(&self, coin: &str) -> Result<Vec<PriceData>> {
+        self.fetch_hl_candles(coin, "4h", 50).await
     }
 
-    /// Fetch top-20 order book depth from Binance for the given Hyperliquid symbol.
+    /// Fetch order book depth from Hyperliquid's `l2Book` endpoint.
     ///
-    /// Returns bids and asks as `(price, quantity)` pairs, sorted best-first.
+    /// Returns top-20 bids and asks as `(price, quantity)` pairs, sorted best-first.
     /// Retries up to `MAX_RETRIES` times with exponential back-off on failure.
-    pub async fn fetch_order_book(&self, hl_symbol: &str) -> Result<OrderBook> {
-        let bn_sym = hl_to_binance(hl_symbol)
-            .ok_or_else(|| anyhow::anyhow!("No Binance mapping for {}", hl_symbol))?;
-
-        let url    = format!("{}/api/v3/depth?symbol={}&limit=20", self.bn_base, bn_sym);
-        let client = self.client.clone();
-        let sym_str = hl_symbol.to_string();
+    pub async fn fetch_order_book(&self, coin: &str) -> Result<OrderBook> {
+        let url     = format!("{}/info", self.hl_base);
+        let body    = serde_json::json!({ "type": "l2Book", "coin": coin });
+        let client  = self.client.clone();
+        let sym_str = coin.to_string();
 
         Self::with_retry(|| {
             let url     = url.clone();
+            let body    = body.clone();
             let client  = client.clone();
             let sym_str = sym_str.clone();
             async move {
-                let resp = client.get(&url).send().await?;
+                let resp = client.post(&url).json(&body).send().await?;
                 if !resp.status().is_success() {
-                    anyhow::bail!("Binance depth {} → HTTP {}", sym_str, resp.status());
+                    anyhow::bail!("HL l2Book {} → HTTP {}", sym_str, resp.status());
                 }
+                // HL l2Book response:
+                // {"coin":"BTC","levels":[[bids…],[asks…]],"time":…}
+                // Each entry: {"n":<orders>,"px":"price","sz":"size"}
                 let book: serde_json::Value = resp.json().await?;
 
-                let parse_side = |key: &str| -> Vec<(f64, f64)> {
-                    book[key].as_array().map_or(vec![], |list| {
-                        list.iter().filter_map(|entry| {
-                            let p = entry[0].as_str()?.parse().ok()?;
-                            let q = entry[1].as_str()?.parse().ok()?;
+                let parse_side = |idx: usize| -> Vec<(f64, f64)> {
+                    book["levels"][idx].as_array().map_or(vec![], |list| {
+                        list.iter().take(20).filter_map(|entry| {
+                            let p: f64 = entry["px"].as_str()?.parse().ok()?;
+                            let q: f64 = entry["sz"].as_str()?.parse().ok()?;
                             Some((p, q))
                         }).collect()
                     })
@@ -285,9 +318,10 @@ impl MarketClient {
 
                 Ok(OrderBook {
                     symbol:    sym_str,
-                    timestamp: chrono::Utc::now().timestamp_millis(),
-                    bids:      parse_side("bids"),
-                    asks:      parse_side("asks"),
+                    timestamp: book["time"].as_i64()
+                                   .unwrap_or_else(|| chrono::Utc::now().timestamp_millis()),
+                    bids: parse_side(0),
+                    asks: parse_side(1),
                 })
             }
         }).await
@@ -302,37 +336,27 @@ impl MarketClient {
 mod tests {
     use super::*;
 
-    // ── hl_to_binance ─────────────────────────────────────────────────────────
+    // ── is_hl_perp ─────────────────────────────────────────────────────────────
 
     #[test]
-    fn hl_to_binance_standard_symbols() {
-        assert_eq!(hl_to_binance("BTC"),  Some("BTCUSDT".to_string()));
-        assert_eq!(hl_to_binance("ETH"),  Some("ETHUSDT".to_string()));
-        assert_eq!(hl_to_binance("SOL"),  Some("SOLUSDT".to_string()));
-        assert_eq!(hl_to_binance("AVAX"), Some("AVAXUSDT".to_string()));
+    fn is_hl_perp_accepts_standard_perps() {
+        assert!(is_hl_perp("BTC"),   "BTC should be a valid HL perp");
+        assert!(is_hl_perp("ETH"),   "ETH should be a valid HL perp");
+        assert!(is_hl_perp("kBONK"),"kBONK should be a valid HL perp");
+        assert!(is_hl_perp("AVAX"), "AVAX should be a valid HL perp");
     }
 
     #[test]
-    fn hl_to_binance_k_prefix_becomes_1000() {
-        // HL uses "k" prefix for coins that trade in 1000-unit lots on Binance
-        assert_eq!(hl_to_binance("kBONK"), Some("1000BONKUSDT".to_string()));
-        assert_eq!(hl_to_binance("kPEPE"), Some("1000PEPEUSDT".to_string()));
-        assert_eq!(hl_to_binance("kSHIB"), Some("1000SHIBUSDT".to_string()));
+    fn is_hl_perp_rejects_at_symbols() {
+        assert!(!is_hl_perp("@232"),  "@232 is a price-level derivative");
+        assert!(!is_hl_perp("@7"),    "@7 is a price-level derivative");
+        assert!(!is_hl_perp("@1000"),"@1000 is a price-level derivative");
     }
 
     #[test]
-    fn hl_to_binance_at_symbols_rejected() {
-        // Price-level derivatives have no Binance listing
-        assert_eq!(hl_to_binance("@232"),  None);
-        assert_eq!(hl_to_binance("@7"),    None);
-        assert_eq!(hl_to_binance("@1000"), None);
-    }
-
-    #[test]
-    fn hl_to_binance_spot_pairs_rejected() {
-        // Spot pairs (HL-specific) have no Binance perp listing
-        assert_eq!(hl_to_binance("PURR/USDC"), None);
-        assert_eq!(hl_to_binance("BTC/USDC"),  None);
+    fn is_hl_perp_rejects_spot_pairs() {
+        assert!(!is_hl_perp("PURR/USDC"), "PURR/USDC is a spot pair");
+        assert!(!is_hl_perp("BTC/USDC"),  "BTC/USDC is a spot pair");
     }
 
     // ── filter_candidates ─────────────────────────────────────────────────────
@@ -355,21 +379,25 @@ mod tests {
     }
 
     #[test]
-    fn filter_candidates_caps_at_18() {
-        // Build 30 symbols all with different % moves
-        let current: HashMap<String, f64> = (0..30)
+    fn filter_candidates_caps_at_max() {
+        // Build 60 symbols all with different % moves — should be capped at MAX_CANDIDATES
+        let current: HashMap<String, f64> = (0..60)
             .map(|i| (format!("COIN{i}"), 100.0 + i as f64))
             .chain([("BTC".to_string(), 50000.0), ("ETH".to_string(), 3000.0),
                     ("SOL".to_string(), 100.0)])
             .collect();
-        let previous: HashMap<String, f64> = (0..30)
+        let previous: HashMap<String, f64> = (0..60)
             .map(|i| (format!("COIN{i}"), 100.0))
             .chain([("BTC".to_string(), 50000.0), ("ETH".to_string(), 3000.0),
                     ("SOL".to_string(), 100.0)])
             .collect();
         let market = MarketClient::new();
         let result = market.filter_candidates(&current, &previous);
-        assert!(result.len() <= 18, "Candidate list must be capped at 18, got {}", result.len());
+        assert!(
+            result.len() <= MAX_CANDIDATES,
+            "Candidate list must be capped at {MAX_CANDIDATES}, got {}",
+            result.len()
+        );
     }
 
     #[test]
@@ -381,13 +409,12 @@ mod tests {
                                     ("MOON", 1.0), ("STABLE", 1.0)]);  // MOON +100%
         let market = MarketClient::new();
         let result = market.filter_candidates(&current, &previous);
-        assert!(result.contains(&"MOON".to_string()),
-            "Top mover MOON should be included");
+        assert!(result.contains(&"MOON".to_string()), "Top mover MOON should be included");
     }
 
     #[test]
     fn filter_candidates_rejects_at_symbols() {
-        // @-symbols are HL price-level derivatives — no Binance mapping, must be excluded
+        // @-symbols are HL price-level derivatives — must be excluded
         let current  = make_mids(&[("BTC", 50000.0), ("ETH", 3000.0), ("SOL", 100.0),
                                     ("@232", 232.0), ("@7", 7.0)]);
         let previous = make_mids(&[("BTC", 50000.0), ("ETH", 3000.0), ("SOL", 100.0),
@@ -399,19 +426,30 @@ mod tests {
     }
 
     #[test]
+    fn filter_candidates_rejects_spot_pairs() {
+        // Spot pairs have a "/" — must be excluded even with large moves
+        let current  = make_mids(&[("BTC", 50000.0), ("ETH", 3000.0), ("SOL", 100.0),
+                                    ("PURR/USDC", 2.0)]);
+        let previous = make_mids(&[("BTC", 50000.0), ("ETH", 3000.0), ("SOL", 100.0),
+                                    ("PURR/USDC", 0.01)]);  // 200× move but spot pair
+        let market = MarketClient::new();
+        let result = market.filter_candidates(&current, &previous);
+        assert!(!result.contains(&"PURR/USDC".to_string()), "Spot pairs must be filtered out");
+    }
+
+    #[test]
     fn filter_candidates_empty_previous_gives_zero_change() {
-        // Cycle 1: no previous prices, all anchors still returned
+        // Cycle 1: no previous prices — anchors still returned
         let current  = make_mids(&[("BTC", 50000.0), ("ETH", 3000.0), ("SOL", 100.0)]);
         let previous: HashMap<String, f64> = HashMap::new();
         let market = MarketClient::new();
         let result = market.filter_candidates(&current, &previous);
-        // Anchors are always included regardless
         assert!(result.contains(&"BTC".to_string()));
     }
 
     #[test]
     fn filter_candidates_no_duplicates() {
-        // BTC is both an anchor and a top mover — should appear once
+        // BTC is both an anchor and a top mover — should appear exactly once
         let current  = make_mids(&[("BTC", 60000.0), ("ETH", 3000.0), ("SOL", 100.0)]);
         let previous = make_mids(&[("BTC", 50000.0), ("ETH", 3000.0), ("SOL", 100.0)]);
         let market = MarketClient::new();

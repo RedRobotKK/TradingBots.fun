@@ -967,8 +967,8 @@ var METRIC_INFO={
     fmt:function(v){return String(Math.round(v));},
     no_gauge:true,
     formula:'BTC + ETH + SOL (always) + top movers by |% change| since last cycle',
-    notes:['Hyperliquid has 150+ perpetuals — scanning all would exceed the 30-second cycle budget.','Tier 1 (free): one allMids call fetches every price in the entire HL universe.','Tier 2 (per-coin): Binance klines (2 calls per coin) fetched only for the top 18 most active.','The 18 slots rotate every cycle — the most actively moving coins get full indicator analysis.','All other HL perps are still price-tracked but skip RSI/MACD/ATR/BB/order-flow analysis.'],
-    verdict:function(v){return['#8b949e','ℹ️ '+v+' coins are getting full indicator analysis this cycle. The remaining ~'+Math.max(0,150-v)+' Hyperliquid perps are price-monitored via allMids but only become deep-scan candidates if they move significantly.'];}
+    notes:['Hyperliquid has 150+ perpetuals — scanning uses a two-tier system to stay inside the 30-second cycle budget.','Tier 1 (free): one allMids call fetches every price in the entire HL universe instantly.','Tier 2 (per-coin): HL native candle API fetched for the top 40 most active perps each cycle — no Binance dependency.','The 40 slots rotate every cycle — the most actively moving coins get full RSI/MACD/ATR/order-flow analysis.','All other HL perps are still price-tracked but skip deep indicator analysis unless they start moving.'],
+    verdict:function(v){return['#8b949e','ℹ️ '+v+' coins are getting full indicator analysis this cycle. The remaining ~'+Math.max(0,150-v)+' Hyperliquid perps are price-tracked via allMids and rotate into the deep-scan list when they start moving.'];}
   },
   deployed:{
     name:'Capital Deployed (Margin)',
