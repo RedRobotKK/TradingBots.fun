@@ -99,7 +99,7 @@ mod correlation_tests {
         // Pairs not in the table should default to 0.35 (assumed low correlation).
         let r = get_correlation("BTC", "PEPE"); // PEPE-BTC not in table
         assert!(
-            r >= 0.30 && r < CORR_THRESHOLD,
+            (0.30..CORR_THRESHOLD).contains(&r),
             "Unknown pair should return low correlation (< threshold), got {}", r
         );
     }
@@ -124,8 +124,7 @@ mod correlation_tests {
     #[test]
     fn conf_edge_constant_is_reasonable() {
         // CONF_EDGE of 0.08 means an 8% confidence advantage overrides block.
-        assert!(CONF_EDGE > 0.05 && CONF_EDGE < 0.20,
-            "CONF_EDGE ({}) should be in a reasonable range (0.05–0.20)", CONF_EDGE);
+        const { assert!(CONF_EDGE > 0.05 && CONF_EDGE < 0.20) }
     }
 
     #[test]
@@ -142,10 +141,10 @@ mod correlation_tests {
 // ─────────────────────────── 2. Notifier ─────────────────────────────────────
 
 mod notifier_tests {
-    /// The notifier module itself requires live env vars to construct
-    /// (WEBHOOK_URL / TELEGRAM_*).  We test the business logic:
-    ///   • from_env() returns None when nothing is configured.
-    ///   • discord_embed payload structure is correct (tested via the public interface).
+    //! The notifier module itself requires live env vars to construct
+    //! (WEBHOOK_URL / TELEGRAM_*).  We test the business logic:
+    //!   • from_env() returns None when nothing is configured.
+    //!   • discord_embed payload structure is correct (tested via the public interface).
 
     use tradingbots_fun::notifier::Notifier;
 
