@@ -231,6 +231,7 @@ mod tests {
             leverage:   2.0,
             fees_est:   0.0,
             breakdown:  None,
+            note:       None,
         }
     }
 
