@@ -101,8 +101,8 @@ impl Default for SignalWeights {
         SignalWeights {
             rsi:          0.16,   // +0.02 — mean-reversion works
             bollinger:    0.13,   // +0.02 — regime-aware, marginal boost
-            macd:         0.07,   // -0.05 — harmful at 15m, significantly reduced
-            ema_cross:    0.07,   // -0.06 — reduced; gap filter added in decision.rs
+            macd:         0.05,   // -0.07 — harmful at 15m, further reduced (T-stat -4.02)
+            ema_cross:    0.05,   // -0.08 — reduced; gap filter added in decision.rs (T-stat -6.00)
             order_flow:   0.14,   // +0.03 — real order-book data outperforms candle proxy
             z_score:      0.16,   // +0.09 — highest T-stat, significantly boosted
             volume:       0.03,   // -0.03 — directional removed; amplifier role kept
@@ -110,7 +110,7 @@ impl Default for SignalWeights {
             funding_rate: 0.08,   // +0.01 — contrarian edge, slight boost
             candle_pattern: 0.04, // — pattern recognition weight
             chart_pattern:  0.04, // — structural pattern weight
-            trend:        0.03,   // -0.04 — near-eliminated; threshold raised in decision.rs
+            trend:        0.02,   // -0.05 — near-eliminated; threshold raised in decision.rs (T-stat -4.12)
         }
     }
 }
