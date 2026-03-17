@@ -43,9 +43,12 @@ const BASE_URL:  &str     = "https://open-api.coinglass.com/public/v2/indicator/
 /// On-chain exchange flow snapshot for a single asset.
 #[derive(Debug, Clone)]
 pub struct OnchainData {
+    // symbol and netflow_24h are public for future dashboard / API use.
+    #[allow(dead_code)]
     pub symbol: String,
     /// Net coins moved to exchanges in the last 24 h.
     /// Positive = inflows (bearish), Negative = outflows (bullish).
+    #[allow(dead_code)]
     pub netflow_24h: f64,
     /// Normalised signal strength in [−1.0, +1.0].
     /// Positive = bullish (outflows), Negative = bearish (inflows).
@@ -59,7 +62,8 @@ impl OnchainData {
         self.cached_strength
     }
 
-    /// Human-readable label for the dashboard.
+    /// Human-readable label for the dashboard (reserved for future UI widget).
+    #[allow(dead_code)]
     pub fn label(&self) -> &'static str {
         match self.cached_strength {
             s if s >  0.60 => "🟢 Strong outflows",
