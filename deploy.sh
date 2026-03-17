@@ -297,7 +297,7 @@ if $DO_PROVISION || $DO_DEPLOY; then
     SQLX_BIN="$HOME/.cargo/bin/sqlx"
     if ! "${SQLX_BIN}" --version &>/dev/null; then
       inf "Installing sqlx-cli..."
-      cargo install sqlx-cli --no-default-features --features postgres 2>&1 | tail -3
+      cargo install sqlx-cli --no-default-features --features postgres,native-tls 2>&1 | tail -3
       # Explicitly use the full path — the shell's PATH hash is stale after install
       ok "sqlx-cli installed: $(${SQLX_BIN} --version 2>/dev/null || echo 'ok')"
     else
@@ -751,21 +751,15 @@ DBENV
   echo "  Port         : ${DB_PORT}"
   echo "  Config file  : ${DB_ENV_FILE}"
   echo "────────────────────────────────────────────────────────────────"
-  echo -e "${BOLD}  ⚠  ACTION REQUIRED — Add CNAME in Cloudflare:${RESET}"
-  echo ""
-  echo "    Name  :  db"
-  echo "    Type  :  CNAME"
-  echo "    Target:  ${DO_DB_HOST}"
-  echo "    Proxy :  DNS only (grey cloud — NOT proxied)"
-  echo ""
-  echo "  After adding the CNAME, all environments connect via:"
-  echo "    db.tradingbots.fun:${DB_PORT}"
+  echo "  DB endpoint  : db.tradingbots.fun:${DB_PORT}"
+  echo "  DO hostname  : ${DO_DB_HOST}"
+  echo "  CNAME        : auto-created in DO DNS ✓"
   echo "────────────────────────────────────────────────────────────────"
   echo "  Staging VPS ${VPS_IP} now uses managed cluster"
   echo "  Local Postgres on staging VPS has been stopped"
   echo ""
   echo "  Next steps:"
-  echo "  1. Add CNAME in Cloudflare (see above)"
+  echo "  1. Update nameservers at Unstoppable Domains → ns1/ns2/ns3.digitalocean.com"
   echo "  2. Verify staging:   curl http://${VPS_IP}:3000/health"
   echo "  3. Provision prod:   ./deploy.sh --provision-prod"
   echo "════════════════════════════════════════════════════════════════"
@@ -976,7 +970,7 @@ if $DO_PROVISION_PROD; then
     SQLX_BIN="\$HOME/.cargo/bin/sqlx"
     if ! "\${SQLX_BIN}" --version &>/dev/null 2>&1; then
       inf "Installing sqlx-cli..."
-      cargo install sqlx-cli --no-default-features --features postgres 2>&1 | tail -3
+      cargo install sqlx-cli --no-default-features --features postgres,native-tls 2>&1 | tail -3
       ok "sqlx-cli installed"
     else
       ok "sqlx-cli: \$(\${SQLX_BIN} --version)"
