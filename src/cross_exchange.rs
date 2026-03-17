@@ -54,36 +54,76 @@ use tokio::sync::RwLock;
 
 // ─────────────────────────── Constants ───────────────────────────────────────
 
-/// How often to refresh CEX prices.  5 minutes keeps weight near zero
-/// while still catching meaningful divergences.
-const REFRESH_INTERVAL: Duration = Duration::from_secs(300);
+/// How often to refresh CEX prices.
+/// 1 minute keeps data fresh enough to catch fast-moving anomalies.
+/// Rate cost is negligible: each exchange is ONE bulk call (all symbols),
+/// so 3 calls/min vs limits of 1,200/min (Binance), 120/min (ByBit),
+/// 20/2s (OKX) — well under every limit.
+const REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 
-/// Minimum divergence (%) that triggers a signal.
-/// Below this threshold the difference is exchange-spread noise.
+/// Minimum divergence (%) that triggers any signal processing.
+/// Below this threshold the difference is exchange-spread / fee noise.
 const ANOMALY_THRESHOLD_PCT: f64 = 0.25;
 
-/// How many consecutive 30-second bot cycles the anomaly must persist
-/// before influencing bull/bear scores.
+/// How many consecutive bot-cycles an anomaly must persist before the
+/// MOMENTUM signal (small divergences) fires.  At 1-min CEX refresh and
+/// 30-second bot cycles this is approximately 1.5 minutes.
 const PERSISTENCE_CYCLES: u32 = 3;
 
-/// Maximum signal contribution to bull or bear score per cycle.
-/// Intentionally tiny — anomalies confirm direction but don't override it.
-const MAX_SIGNAL_WEIGHT: f64 = 0.03;
+/// Above this divergence (%) the signal flips from momentum to mean-reversion.
+///
+/// Small divergence (< REVERSION_THRESHOLD):
+///   HL > CEX → HL is leading price discovery → mild BULL
+///   HL < CEX → local sell pressure building    → mild BEAR
+///
+/// Large divergence (≥ REVERSION_THRESHOLD):
+///   HL > CEX → HL has overshot; arb bots will sell HL → BEAR (contrarian)
+///   HL < CEX → HL has undershot; liquidations exhausted → BULL (contrarian)
+const REVERSION_THRESHOLD_PCT: f64 = 1.5;
+
+/// Above this divergence (%) the anomaly is extreme enough to:
+///   1. Bypass the 3-cycle persistence gate (activate immediately).
+///   2. Emit a WARN-level log so the operator sees it in real time.
+const EXTREME_THRESHOLD_PCT: f64 = 2.0;
+
+/// Maximum signal weight for small-divergence MOMENTUM signals.
+/// Intentionally tiny — confirms direction but doesn't override core signals.
+const MAX_MOMENTUM_WEIGHT: f64 = 0.03;
+
+/// Maximum signal weight for large-divergence MEAN-REVERSION signals.
+/// Larger than momentum weight — a 3% dislocation is meaningful — but still
+/// bounded so a single data-feed glitch can't flip a decision on its own.
+const MAX_REVERSION_WEIGHT: f64 = 0.12;
 
 // ─────────────────────────── Public types ────────────────────────────────────
+
+/// How the divergence is being interpreted this cycle.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DivergenceMode {
+    /// Sub-threshold noise — no signal.
+    Inactive,
+    /// Small divergence: HL is leading CEX price discovery.
+    /// HL > CEX → bull,  HL < CEX → bear.
+    Momentum,
+    /// Large divergence: HL has overshot and will snap back to CEX.
+    /// HL > CEX → bear (contrarian), HL < CEX → bull (contrarian).
+    MeanReversion,
+}
 
 /// Cross-exchange divergence signal for a single symbol.
 #[derive(Debug, Clone)]
 pub struct CrossExchangeSignal {
     pub symbol: String,
     /// HL price − reference CEX price, as % of reference price.
-    /// Positive = HL trading above CEX (local buying pressure).
-    /// Negative = HL trading below CEX (local selling pressure).
+    /// Positive = HL trading above CEX.
+    /// Negative = HL trading below CEX.
     pub hl_premium_pct: f64,
     /// Number of consecutive cycles this divergence has persisted.
     pub persistence:    u32,
-    /// True when persistence >= PERSISTENCE_CYCLES and anomaly exceeds threshold.
+    /// True when the signal is active (persistence gate met, or extreme bypass).
     pub active:         bool,
+    /// How the signal is being interpreted — changes with magnitude.
+    pub mode:           DivergenceMode,
 }
 
 impl CrossExchangeSignal {
@@ -91,32 +131,62 @@ impl CrossExchangeSignal {
     ///
     /// Returns `(bull_add, bear_add)`.  Only non-zero when `active == true`.
     ///
-    /// Positive premium (HL > CEX) → local buying → weak bull.
-    /// Negative premium (HL < CEX) → local selling → weak bear.
+    /// # Signal logic
     ///
-    /// Magnitude scales with divergence up to MAX_SIGNAL_WEIGHT.
+    /// **Momentum mode** (divergence 0.25 – 1.5%):
+    ///   HL > CEX → HL is leading price discovery → mild BULL
+    ///   HL < CEX → local sell pressure building  → mild BEAR
+    ///   Weight: scales 0→MAX_MOMENTUM_WEIGHT (0.03) linearly with divergence.
+    ///
+    /// **Mean-reversion mode** (divergence ≥ 1.5%):
+    ///   HL > CEX → HL has overshot; arb closes it by selling HL → BEAR
+    ///   HL < CEX → HL has undershot; buying pressure restores parity → BULL
+    ///   Weight: scales toward MAX_REVERSION_WEIGHT (0.12) with divergence.
+    ///   A 3% anomaly gets the full cap; a 1.5% anomaly gets ~half.
     pub fn score_contribution(&self) -> (f64, f64) {
         if !self.active { return (0.0, 0.0); }
 
-        // Scale 0.25%→0.03, 0.50%→0.03 (capped), 1.0%→0.03 (capped).
-        // Anything above 0.5% gets the full cap — larger divergences are
-        // likely fat-finger / stale feed rather than meaningful signal.
         let abs_pct = self.hl_premium_pct.abs();
-        let raw_w   = (abs_pct / 0.50) * MAX_SIGNAL_WEIGHT;
-        let w       = raw_w.min(MAX_SIGNAL_WEIGHT);
 
-        if self.hl_premium_pct > 0.0 {
-            (w, 0.0) // HL above CEX → local buy pressure → bull
-        } else {
-            (0.0, w) // HL below CEX → local sell pressure → bear
+        match self.mode {
+            DivergenceMode::Inactive => (0.0, 0.0),
+
+            DivergenceMode::Momentum => {
+                // Linear scale up to the momentum cap.
+                let w = ((abs_pct / 0.50) * MAX_MOMENTUM_WEIGHT).min(MAX_MOMENTUM_WEIGHT);
+                if self.hl_premium_pct > 0.0 { (w, 0.0) } else { (0.0, w) }
+            }
+
+            DivergenceMode::MeanReversion => {
+                // Scale toward reversion cap; 3% = full weight, 1.5% = ~half.
+                // Direction is FLIPPED vs momentum — HL above CEX is now bearish.
+                let w = ((abs_pct / 3.0) * MAX_REVERSION_WEIGHT).min(MAX_REVERSION_WEIGHT);
+                if self.hl_premium_pct > 0.0 {
+                    (0.0, w) // HL above CEX → will snap down → BEAR
+                } else {
+                    (w, 0.0) // HL below CEX → will snap up  → BULL
+                }
+            }
         }
     }
 
-    /// Direction as emoji string for dashboard/log display.
+    /// Direction emoji for rationale / dashboard.
     pub fn emoji(&self) -> &'static str {
-        if !self.active          { "⚪" }
-        else if self.hl_premium_pct > 0.0 { "🟢" }
-        else                     { "🔴" }
+        match self.mode {
+            DivergenceMode::Inactive    => "⚪",
+            DivergenceMode::Momentum    => if self.hl_premium_pct > 0.0 { "🟢" } else { "🔴" },
+            // Reversion: direction of the expected MOVE, not the current premium.
+            DivergenceMode::MeanReversion => if self.hl_premium_pct > 0.0 { "🔴⟳" } else { "🟢⟳" },
+        }
+    }
+
+    /// Short mode label for rationale string.
+    pub fn mode_label(&self) -> &'static str {
+        match self.mode {
+            DivergenceMode::Inactive      => "",
+            DivergenceMode::Momentum      => "MOM",
+            DivergenceMode::MeanReversion => "REV",
+        }
     }
 }
 
@@ -224,14 +294,44 @@ impl CrossExchangeMonitor {
         if snap.ref_price <= 0.0 { return None; }
 
         let premium_pct = (hl_mid - snap.ref_price) / snap.ref_price * 100.0;
-        let persistence  = r.persistence.get(symbol).cloned().unwrap_or_default();
+        let abs_pct     = premium_pct.abs();
+        let persistence = r.persistence.get(symbol).cloned().unwrap_or_default();
+
+        // Determine activation.
+        // Normal path: anomaly must exceed threshold AND persist ≥3 cycles.
+        // Extreme bypass: divergence ≥2% activates immediately (no persistence wait)
+        // because the arb window may close before 3 cycles have elapsed.
+        let normal_active  = persistence.cycles >= PERSISTENCE_CYCLES
+                             && abs_pct >= ANOMALY_THRESHOLD_PCT;
+        let extreme_bypass = abs_pct >= EXTREME_THRESHOLD_PCT;
+        let active = normal_active || extreme_bypass;
+
+        // Choose interpretation mode based on magnitude.
+        let mode = if !active || abs_pct < ANOMALY_THRESHOLD_PCT {
+            DivergenceMode::Inactive
+        } else if abs_pct >= REVERSION_THRESHOLD_PCT {
+            DivergenceMode::MeanReversion
+        } else {
+            DivergenceMode::Momentum
+        };
+
+        // Emit a prominent warning for extreme anomalies so the operator
+        // sees it in logs / monitoring even if no trade fires immediately.
+        if extreme_bypass {
+            log::warn!(
+                "🚨 CrossExchange EXTREME anomaly: {} HL{:+.2}% vs CEX \
+                 (sources: {}) — {} signal activated immediately",
+                symbol, premium_pct, snap.source_count,
+                if premium_pct > 0.0 { "BEAR/reversion" } else { "BULL/reversion" }
+            );
+        }
 
         Some(CrossExchangeSignal {
             symbol:         symbol.to_string(),
             hl_premium_pct: premium_pct,
             persistence:    persistence.cycles,
-            active:         persistence.cycles >= PERSISTENCE_CYCLES
-                            && premium_pct.abs() >= ANOMALY_THRESHOLD_PCT,
+            active,
+            mode,
         })
     }
 
@@ -534,53 +634,121 @@ mod tests {
     fn signal_inactive_below_threshold() {
         let sig = CrossExchangeSignal {
             symbol:         "BTC".into(),
-            hl_premium_pct: 0.10,   // below 0.25% threshold
+            hl_premium_pct: 0.10,
             persistence:    5,
-            active:         false,  // not active even though persistent
+            active:         false,
+            mode:           DivergenceMode::Inactive,
         };
         let (bull, bear) = sig.score_contribution();
         assert_eq!(bull, 0.0);
         assert_eq!(bear, 0.0);
     }
 
+    /// Small positive premium → momentum → bull signal
     #[test]
-    fn signal_positive_premium_gives_bull() {
+    fn signal_momentum_positive_premium_gives_bull() {
         let sig = CrossExchangeSignal {
             symbol:         "ETH".into(),
             hl_premium_pct: 0.50,
             persistence:    3,
             active:         true,
+            mode:           DivergenceMode::Momentum,
         };
         let (bull, bear) = sig.score_contribution();
-        assert!(bull  > 0.0, "positive premium should give bull score");
+        assert!(bull  > 0.0, "positive momentum premium should give bull score");
         assert_eq!(bear, 0.0);
-        assert!(bull <= MAX_SIGNAL_WEIGHT + 1e-9, "bull score should not exceed cap");
+        assert!(bull <= MAX_MOMENTUM_WEIGHT + 1e-9, "momentum bull must not exceed cap");
     }
 
+    /// Small negative premium → momentum → bear signal
     #[test]
-    fn signal_negative_premium_gives_bear() {
+    fn signal_momentum_negative_premium_gives_bear() {
         let sig = CrossExchangeSignal {
             symbol:         "SOL".into(),
             hl_premium_pct: -0.50,
             persistence:    4,
             active:         true,
+            mode:           DivergenceMode::Momentum,
         };
         let (bull, bear) = sig.score_contribution();
         assert_eq!(bull, 0.0);
-        assert!(bear > 0.0, "negative premium should give bear score");
-        assert!(bear <= MAX_SIGNAL_WEIGHT + 1e-9, "bear score should not exceed cap");
+        assert!(bear > 0.0, "negative momentum premium should give bear score");
+        assert!(bear <= MAX_MOMENTUM_WEIGHT + 1e-9, "momentum bear must not exceed cap");
     }
 
+    /// Large positive premium (HL overshot) → mean-reversion → BEAR signal (direction flipped)
     #[test]
-    fn signal_large_premium_capped_at_max_weight() {
+    fn signal_reversion_large_positive_premium_gives_bear() {
         let sig = CrossExchangeSignal {
             symbol:         "BTC".into(),
-            hl_premium_pct: 5.0,   // 5% divergence — still capped
-            persistence:    10,
+            hl_premium_pct: 3.0,   // HL 3% above CEX — will snap down
+            persistence:    1,     // extreme bypass — only 1 cycle
             active:         true,
+            mode:           DivergenceMode::MeanReversion,
         };
-        let (bull, _) = sig.score_contribution();
-        assert!((bull - MAX_SIGNAL_WEIGHT).abs() < 1e-9, "large premium capped at MAX_SIGNAL_WEIGHT");
+        let (bull, bear) = sig.score_contribution();
+        assert_eq!(bull, 0.0, "HL overshooting CEX should be BEAR in reversion mode");
+        assert!(bear > 0.0, "HL overshooting should give bear reversion signal");
+        assert!(bear <= MAX_REVERSION_WEIGHT + 1e-9, "reversion bear must not exceed cap");
+    }
+
+    /// Large negative premium (HL undershot) → mean-reversion → BULL signal (direction flipped)
+    #[test]
+    fn signal_reversion_large_negative_premium_gives_bull() {
+        let sig = CrossExchangeSignal {
+            symbol:         "ETH".into(),
+            hl_premium_pct: -3.0,  // HL 3% below CEX — will snap up
+            persistence:    1,
+            active:         true,
+            mode:           DivergenceMode::MeanReversion,
+        };
+        let (bull, bear) = sig.score_contribution();
+        assert!(bull > 0.0, "HL undershooting CEX should be BULL in reversion mode");
+        assert_eq!(bear, 0.0);
+        assert!(bull <= MAX_REVERSION_WEIGHT + 1e-9, "reversion bull must not exceed cap");
+    }
+
+    /// Reversion weight grows with magnitude up to the cap
+    #[test]
+    fn signal_reversion_weight_scales_with_magnitude_and_caps() {
+        let make = |pct: f64| CrossExchangeSignal {
+            symbol:         "BTC".into(),
+            hl_premium_pct: -pct,
+            persistence:    1,
+            active:         true,
+            mode:           DivergenceMode::MeanReversion,
+        };
+
+        let (bull_15, _) = make(1.5).score_contribution();
+        let (bull_30, _) = make(3.0).score_contribution();
+        let (bull_50, _) = make(5.0).score_contribution();
+
+        assert!(bull_15 < bull_30, "larger divergence should have larger reversion signal");
+        assert!((bull_30 - MAX_REVERSION_WEIGHT).abs() < 1e-9, "3% divergence should reach full cap");
+        assert!((bull_50 - MAX_REVERSION_WEIGHT).abs() < 1e-9, "5% divergence should still be capped");
+    }
+
+    /// Reversion signal is always larger than momentum signal for same magnitude
+    #[test]
+    fn reversion_weight_exceeds_momentum_weight_for_same_magnitude() {
+        let momentum_sig = CrossExchangeSignal {
+            symbol:         "SOL".into(),
+            hl_premium_pct: -0.50,
+            persistence:    3,
+            active:         true,
+            mode:           DivergenceMode::Momentum,
+        };
+        let reversion_sig = CrossExchangeSignal {
+            symbol:         "SOL".into(),
+            hl_premium_pct: -2.0,
+            persistence:    1,
+            active:         true,
+            mode:           DivergenceMode::MeanReversion,
+        };
+        let (mom_bull, _) = momentum_sig.score_contribution();
+        let (rev_bull, _) = reversion_sig.score_contribution();
+        assert!(rev_bull > mom_bull,
+            "reversion signal ({:.4}) should be larger than momentum ({:.4})", rev_bull, mom_bull);
     }
 
     #[test]

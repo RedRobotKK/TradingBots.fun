@@ -853,9 +853,12 @@ pub fn make_decision(
     }).unwrap_or_default();
 
     // Cross-exchange divergence tag — only shown when anomaly is active
+    // Cross-exchange tag shows mode (MOM = momentum, REV = mean-reversion) + magnitude + persistence.
+    // Example: "🔴⟳CEX[REV]:-3.21%(2cy)" means HL is 3.2% below CEX for 2 cycles → BULL reversion.
     let cex_tag = cex_signal
         .filter(|s| s.active)
-        .map(|s| format!(" {}CEX:{:+.2}%({}cy)", s.emoji(), s.hl_premium_pct, s.persistence))
+        .map(|s| format!(" {}CEX[{}]:{:+.2}%({}cy)",
+            s.emoji(), s.mode_label(), s.hl_premium_pct, s.persistence))
         .unwrap_or_default();
 
     let rationale = format!(
