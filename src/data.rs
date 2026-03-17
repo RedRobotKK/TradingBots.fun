@@ -237,6 +237,15 @@ impl MarketClient {
     /// value recorded at fetch time.  Until then every 30-second cycle reuses
     /// the in-memory copy — saving ~800 HL weight units per hour for 40 coins.
     ///
+    /// **Staggered refresh (thundering-herd prevention):**
+    /// All 40 coins would otherwise miss their cache simultaneously at every
+    /// bar boundary, producing a burst of ~80 HL API calls in the same 30-second
+    /// window.  To spread these across the minute, each `(coin, interval)` pair
+    /// has a deterministic jitter `hash(coin) % 60` seconds applied to `now_ms`
+    /// before the epoch comparison.  A coin with jitter=45 sees the new bar 45
+    /// seconds *later* than a coin with jitter=0, spreading 40 fetches evenly
+    /// across a full 60-second window.
+    ///
     /// An unconditional HTTP fetch is always made on the first call for a
     /// `(coin, interval)` pair (cold start / bot restart).
     async fn fetch_hl_candles_cached(
@@ -247,10 +256,23 @@ impl MarketClient {
     ) -> Result<Vec<PriceData>> {
         let ivl_ms  = interval_ms(interval)?;
         let now_ms  = chrono::Utc::now().timestamp_millis();
-        let cur_epoch = now_ms / ivl_ms;    // integer bar index for "now"
+
+        // Per-coin jitter: deterministic hash-based offset in [0, 59] seconds.
+        // We subtract this from now_ms before computing the epoch, which delays
+        // when this (coin, interval) pair "notices" a new bar has opened.
+        // Using a simple djb2-style hash over the coin bytes is fast and stable.
+        let jitter_ms: i64 = {
+            let hash: u64 = coin.bytes().fold(5381u64, |acc, b| {
+                acc.wrapping_mul(33).wrapping_add(b as u64)
+            });
+            (hash % 60) as i64 * 1_000   // 0..=59 seconds in milliseconds
+        };
+        let jittered_ms = now_ms - jitter_ms;
+        let cur_epoch   = jittered_ms / ivl_ms;   // integer bar index for this coin
+
         let cache_key = format!("{}:{}", coin, interval);
 
-        // Fast path: cache hit — same bar epoch, nothing new has closed.
+        // Fast path: cache hit — same bar epoch for this coin's jitter slot.
         {
             let r = self.candle_cache.read().await;
             if let Some(entry) = r.get(&cache_key) {
@@ -261,8 +283,9 @@ impl MarketClient {
             }
         }
 
-        // Slow path: fetch from HL (first call, or new bar has opened).
-        log::debug!("candle_cache MISS {}:{} epoch={} — fetching", coin, interval, cur_epoch);
+        // Slow path: fetch from HL (first call, or new bar has opened for this coin).
+        log::debug!("candle_cache MISS {}:{} epoch={} jitter={}ms — fetching",
+                    coin, interval, cur_epoch, jitter_ms);
         let candles = self.fetch_hl_candles_raw(coin, interval, limit).await?;
 
         // Write back; grab write lock only after the HTTP round trip.
@@ -549,5 +572,46 @@ mod tests {
         let market   = MarketClient::new();
         let result   = market.filter_candidates(&current, &previous);
         assert!(result.contains(&"BTC".to_string()));
+    }
+
+    // ── Candle cache jitter ───────────────────────────────────────────────────
+
+    /// The jitter function must produce values in [0, 59] seconds (inclusive).
+    #[test]
+    fn candle_jitter_in_range() {
+        let symbols = &["BTC", "ETH", "SOL", "AVAX", "kBONK", "kPEPE", "DOGE",
+                        "WIF", "ARB", "OP", "LINK", "AAVE", "UNI", "MKR"];
+        for sym in symbols {
+            let jitter_ms: i64 = {
+                let hash: u64 = sym.bytes().fold(5381u64, |acc, b| {
+                    acc.wrapping_mul(33).wrapping_add(b as u64)
+                });
+                (hash % 60) as i64 * 1_000
+            };
+            assert!(jitter_ms >= 0, "jitter must be non-negative for {sym}");
+            assert!(jitter_ms < 60_000, "jitter must be < 60s for {sym}");
+        }
+    }
+
+    /// Different coins must produce different jitter values (avoid everyone
+    /// mapping to the same slot — a degenerate hash would defeat the purpose).
+    #[test]
+    fn candle_jitter_distributes_across_coins() {
+        let symbols = &["BTC", "ETH", "SOL", "AVAX", "kBONK", "DOGE", "WIF",
+                        "ARB", "OP", "LINK", "AAVE", "UNI", "MKR", "CRV",
+                        "INJ", "TIA", "SEI", "SUI", "APT", "NEAR"];
+        let jitters: std::collections::HashSet<i64> = symbols.iter().map(|sym| {
+            let hash: u64 = sym.bytes().fold(5381u64, |acc, b| {
+                acc.wrapping_mul(33).wrapping_add(b as u64)
+            });
+            (hash % 60) as i64
+        }).collect();
+        // With 20 coins mapped into 60 slots the collision probability is
+        // non-trivial, but we should see at least 10 distinct values.
+        assert!(
+            jitters.len() >= 10,
+            "jitter values should spread across multiple slots, got {} unique: {:?}",
+            jitters.len(), jitters
+        );
     }
 }
