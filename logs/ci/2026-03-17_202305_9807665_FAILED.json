@@ -1,0 +1,98 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-03-17T20:22:43Z",
+    "commit": "9807665",
+    "commit_full": "9807665be747de52e3952f6e69b4d694824cbe8d",
+    "commit_message": "fix: use db.pool() method (pool field is private)",
+    "branch": "master",
+    "overall_status": "FAILED",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
+    "cargo": "cargo 1.93.1 (083ac5135 2025-12-15)",
+    "os_kernel": "6.8.0-106-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 9,
+      "total_passed": 0,
+      "total_failed": 0,
+      "total_ignored": 0,
+      "failures": []
+    },
+    "clippy": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 9,
+      "error_count": 4,
+      "errors": [
+        {
+          "code": "E0277",
+          "message": "the trait bound `&&sqlx::Pool<sqlx::Postgres>: sqlx::Executor<'_>` is not satisfied",
+          "file": "src/web_dashboard.rs",
+          "line": 3861,
+          "col": 18
+        },
+        {
+          "code": "E0277",
+          "message": "the trait bound `&&sqlx::Pool<sqlx::Postgres>: sqlx::Executor<'_>` is not satisfied",
+          "file": "src/web_dashboard.rs",
+          "line": 3853,
+          "col": 17
+        },
+        {
+          "code": "E0277",
+          "message": "the trait bound `&&sqlx::Pool<sqlx::Postgres>: sqlx::Executor<'_>` is not satisfied",
+          "file": "src/web_dashboard.rs",
+          "line": 3862,
+          "col": 10
+        },
+        {
+          "code": "E",
+          "message": "could not compile `tradingbots-fun` (lib) due to 3 previous errors"
+        }
+      ]
+    },
+    "audit": {
+      "status": "ADVISORY",
+      "exit_code": 1,
+      "duration_seconds": 3,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2023-0071",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2023-0071",
+          "severity": "5.9 (medium)",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "tradingbots",
+    "status": "active",
+    "active_since": "Tue 2026-03-17 20:22:37 UTC",
+    "recent_logs": [
+      "Mar 17 20:22:37 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: tradingbots.service: Deactivated successfully.",
+      "Mar 17 20:22:37 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Stopped tradingbots.service - TradingBots.fun.",
+      "Mar 17 20:22:37 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: tradingbots.service: Consumed 1.343s CPU time, 14.7M memory peak, 0B memory swap peak.",
+      "Mar 17 20:22:37 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Starting tradingbots.service - TradingBots.fun...",
+      "Mar 17 20:22:37 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Started tradingbots.service - TradingBots.fun."
+    ]
+  }
+}
