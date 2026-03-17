@@ -1177,9 +1177,8 @@ async fn analyse_symbol(
     // We apply up to ±4% confidence adjustment on active (non-SKIP) decisions.
     // Max impact is intentionally small — this is a supplementary signal, not primary.
     if dec.action != "SKIP" {
-        let oc_strength = onchain_cache.get(symbol).await
-            .map(|od| od.signal_strength())
-            .unwrap_or(0.0);
+        // get() always returns OnchainData (neutral 0.0 if key absent or symbol unknown).
+        let oc_strength = onchain_cache.get(symbol).await.signal_strength();
         if oc_strength.abs() > 0.05 {
             // Aligned = netflow confirms trade direction → boost; opposed → penalty
             let aligned = (dec.action == "BUY"  && oc_strength > 0.0)
