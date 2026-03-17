@@ -1,0 +1,213 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-03-17T22:51:14Z",
+    "commit": "e19bf4b",
+    "commit_full": "e19bf4b61587a851f502e13e13c6ccb09d3d30ae",
+    "commit_message": "fix: resolve all 3 CI failures (test + 2 clippy lints)",
+    "branch": "master",
+    "overall_status": "FAILED",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
+    "cargo": "cargo 1.93.1 (083ac5135 2025-12-15)",
+    "os_kernel": "6.8.0-106-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 20,
+      "total_passed": 0,
+      "total_failed": 0,
+      "total_ignored": 0,
+      "failures": []
+    },
+    "clippy": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 14,
+      "error_count": 20,
+      "errors": [
+        {
+          "code": "E0433",
+          "message": "failed to resolve: use of undeclared type `Error`",
+          "file": "tests/integration_test.rs",
+          "line": 236,
+          "col": 9
+        },
+        {
+          "code": "E0433",
+          "message": "failed to resolve: use of undeclared type `Error`",
+          "file": "tests/integration_test.rs",
+          "line": 242,
+          "col": 9
+        },
+        {
+          "code": "E",
+          "message": "unused import: `tradingbots_fun::*`",
+          "file": "tests/integration_test.rs",
+          "line": 2,
+          "col": 5
+        },
+        {
+          "code": "E0433",
+          "message": "failed to resolve: use of undeclared type `AccountManager`",
+          "file": "tests/integration_test.rs",
+          "line": 6,
+          "col": 23
+        },
+        {
+          "code": "E0433",
+          "message": "failed to resolve: use of undeclared type `TradingAccount`",
+          "file": "tests/integration_test.rs",
+          "line": 9,
+          "col": 23
+        },
+        {
+          "code": "E0433",
+          "message": "failed to resolve: use of undeclared type `Protocol`",
+          "file": "tests/integration_test.rs",
+          "line": 11,
+          "col": 9
+        },
+        {
+          "code": "E0433",
+          "message": "failed to resolve: use of undeclared type `AccountPurpose`",
+          "file": "tests/integration_test.rs",
+          "line": 13,
+          "col": 9
+        },
+        {
+          "code": "E0433",
+          "message": "failed to resolve: use of undeclared type `AccountPurpose`",
+          "file": "tests/integration_test.rs",
+          "line": 24,
+          "col": 35
+        },
+        {
+          "code": "E0433",
+          "message": "failed to resolve: use of undeclared type `AccountManager`",
+          "file": "tests/integration_test.rs",
+          "line": 53,
+          "col": 23
+        },
+        {
+          "code": "E0433",
+          "message": "failed to resolve: use of undeclared type `TradingAccount`",
+          "file": "tests/integration_test.rs",
+          "line": 56,
+          "col": 23
+        },
+        {
+          "code": "E0433",
+          "message": "failed to resolve: use of undeclared type `Protocol`",
+          "file": "tests/integration_test.rs",
+          "line": 58,
+          "col": 9
+        },
+        {
+          "code": "E0433",
+          "message": "failed to resolve: use of undeclared type `AccountPurpose`",
+          "file": "tests/integration_test.rs",
+          "line": 60,
+          "col": 9
+        },
+        {
+          "code": "E0433",
+          "message": "failed to resolve: use of undeclared type `TradingAccount`",
+          "file": "tests/integration_test.rs",
+          "line": 63,
+          "col": 23
+        },
+        {
+          "code": "E0433",
+          "message": "failed to resolve: use of undeclared type `Protocol`",
+          "file": "tests/integration_test.rs",
+          "line": 65,
+          "col": 9
+        },
+        {
+          "code": "E0433",
+          "message": "failed to resolve: use of undeclared type `AccountPurpose`",
+          "file": "tests/integration_test.rs",
+          "line": 67,
+          "col": 9
+        },
+        {
+          "code": "E0433",
+          "message": "failed to resolve: use of undeclared type `TradingAccount`",
+          "file": "tests/integration_test.rs",
+          "line": 71,
+          "col": 23
+        },
+        {
+          "code": "E0433",
+          "message": "failed to resolve: use of undeclared type `Protocol`",
+          "file": "tests/integration_test.rs",
+          "line": 73,
+          "col": 9
+        },
+        {
+          "code": "E0433",
+          "message": "failed to resolve: use of undeclared type `AccountPurpose`",
+          "file": "tests/integration_test.rs",
+          "line": 75,
+          "col": 9
+        },
+        {
+          "code": "E0433",
+          "message": "failed to resolve: use of undeclared type `Protocol`",
+          "file": "tests/integration_test.rs",
+          "line": 86,
+          "col": 42
+        },
+        {
+          "code": "E0433",
+          "message": "failed to resolve: use of undeclared type `Protocol`",
+          "file": "tests/integration_test.rs",
+          "line": 90,
+          "col": 42
+        }
+      ]
+    },
+    "audit": {
+      "status": "ADVISORY",
+      "exit_code": 1,
+      "duration_seconds": 3,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2023-0071",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2023-0071",
+          "severity": "5.9 (medium)",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "tradingbots",
+    "status": "active",
+    "active_since": "Tue 2026-03-17 20:56:33 UTC",
+    "recent_logs": [
+      "Mar 17 20:56:33 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: tradingbots.service: Deactivated successfully.",
+      "Mar 17 20:56:33 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Stopped tradingbots.service - TradingBots.fun.",
+      "Mar 17 20:56:33 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: tradingbots.service: Consumed 2.932s CPU time, 19.6M memory peak, 9.2M memory swap peak.",
+      "Mar 17 20:56:33 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Starting tradingbots.service - TradingBots.fun...",
+      "Mar 17 20:56:33 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Started tradingbots.service - TradingBots.fun."
+    ]
+  }
+}
