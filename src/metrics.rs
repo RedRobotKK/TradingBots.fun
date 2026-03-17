@@ -156,4 +156,29 @@ impl PerformanceMetrics {
             _             => "negative",
         }
     }
+
+    /// Dynamic confidence floor based on performance metrics.
+    ///
+    /// Starts with `min_confidence` and adds penalties if metrics are weak:
+    /// - If profit_factor < 1.2: +0.07 (not enough upside per downside)
+    /// - If expectancy < 0.003: +0.05 (expected return too small)
+    /// - If sortino < 0.5: +0.03 (poor downside-adjusted return)
+    ///
+    /// Total adjustment capped at 0.12, final result capped at 0.92.
+    pub fn confidence_floor(&self, min_confidence: f64) -> f64 {
+        let mut adjustment = 0.0;
+
+        if self.profit_factor < 1.2 {
+            adjustment += 0.07;
+        }
+        if self.expectancy < 0.003 {
+            adjustment += 0.05;
+        }
+        if self.sortino < 0.5 {
+            adjustment += 0.03;
+        }
+
+        adjustment = adjustment.min(0.12);
+        (min_confidence + adjustment).min(0.92)
+    }
 }

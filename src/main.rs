@@ -1341,9 +1341,11 @@ async fn execute_paper_trade(
 
             // ── Opposite side: ONLY reverse on high-confidence signal ──
             // Require ≥MIN_CONFIDENCE to avoid noise flipping existing positions.
-            if dec.confidence < MIN_CONFIDENCE {
+            // Use dynamic floor based on performance metrics.
+            let effective_floor = s.metrics.confidence_floor(MIN_CONFIDENCE);
+            if dec.confidence < effective_floor {
                 info!("⏸  {} opposing signal ignored (conf {:.0}% < {:.0}%) — holding {} position",
-                      symbol, dec.confidence * 100.0, MIN_CONFIDENCE * 100.0, pos.side);
+                      symbol, dec.confidence * 100.0, effective_floor * 100.0, pos.side);
                 return;
             }
             // Minimum hold guard — do not flip a position that opened < 30 min ago.
@@ -1364,15 +1366,6 @@ async fn execute_paper_trade(
             close_paper_position(symbol, dec.entry_price, "SignalExit", bot_state, weights, trade_logger).await;
         }
         // No existing: fall through to new entry
-    }
-
-    // ── Minimum confidence gate ────────────────────────────────────────────
-    // Only enter trades where the signal is genuinely strong.
-    // Signals below MIN_CONFIDENCE generated 0W/14L in choppy markets.
-    if dec.confidence < MIN_CONFIDENCE {
-        info!("⚠ {} skipped — confidence {:.0}% below {:.0}% minimum",
-              symbol, dec.confidence * 100.0, MIN_CONFIDENCE * 100.0);
-        return;
     }
 
     // ── Open new position ─────────────────────────────────────────────────
@@ -1396,6 +1389,20 @@ async fn execute_paper_trade(
         0.0
     };
     let in_cb = drawdown > CB_DRAWDOWN_THRESHOLD;
+
+    // ── Minimum confidence gate ────────────────────────────────────────────
+    // Only enter trades where the signal is genuinely strong.
+    // Signals below MIN_CONFIDENCE generated 0W/14L in choppy markets.
+    // Use dynamic floor based on performance metrics; add extra 0.10 if circuit breaker active.
+    let mut effective_floor = metrics.confidence_floor(MIN_CONFIDENCE);
+    if in_cb {
+        effective_floor = (effective_floor + 0.10).min(0.92);
+    }
+    if dec.confidence < effective_floor {
+        info!("⚠ {} skipped — confidence {:.0}% below {:.0}% minimum",
+              symbol, dec.confidence * 100.0, effective_floor * 100.0);
+        return;
+    }
     s.cb_active = in_cb; // keep dashboard in sync with actual sizing CB
     if in_cb {
         info!("🔴 CB ACTIVE — 7d drawdown {:.1}% (>{:.0}%), sizing ×{:.2}",

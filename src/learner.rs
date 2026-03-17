@@ -55,6 +55,13 @@ pub struct SignalWeights {
     /// 0 when Binance futures data is unavailable.
     #[serde(default = "default_funding_rate_weight")]
     pub funding_rate:  f64,   // 0.07 — contrarian leverage signal
+    // ── Pattern signals ───────────────────────────────────────────────────────
+    /// Candlestick pattern weight (single/double/triple bar formations).
+    #[serde(default = "default_candle_pattern_weight")]
+    pub candle_pattern: f64,  // learned weight for candle patterns
+    /// Chart pattern weight (10–60 bar structural patterns).
+    #[serde(default = "default_chart_pattern_weight")]
+    pub chart_pattern:  f64,  // learned weight for chart patterns
     // ── Legacy ────────────────────────────────────────────────────────────────
     /// 10-bar % change — kept for backwards compatibility with old weight files.
     /// Functionally absorbed into ema_cross; weight held at min floor.
@@ -67,6 +74,8 @@ fn default_z_score_weight()      -> f64 { 0.17 }
 fn default_volume_weight()       -> f64 { 0.03 }
 fn default_sentiment_weight()    -> f64 { 0.10 }
 fn default_funding_rate_weight() -> f64 { 0.08 }
+fn default_candle_pattern_weight() -> f64 { 0.04 }
+fn default_chart_pattern_weight()  -> f64 { 0.04 }
 fn default_trend_weight()        -> f64 { 0.03 }
 
 impl Default for SignalWeights {
@@ -90,15 +99,17 @@ impl Default for SignalWeights {
         // * EMA Cross F grade was partly due to "always-on" backtest implementation.
         //   Real bot uses ema_cross_pct threshold.  Weight reduced but not eliminated.
         SignalWeights {
-            rsi:          0.17,   // +0.02 — mean-reversion works
-            bollinger:    0.14,   // +0.02 — regime-aware, marginal boost
+            rsi:          0.16,   // +0.02 — mean-reversion works
+            bollinger:    0.13,   // +0.02 — regime-aware, marginal boost
             macd:         0.07,   // -0.05 — harmful at 15m, significantly reduced
             ema_cross:    0.07,   // -0.06 — reduced; gap filter added in decision.rs
             order_flow:   0.14,   // +0.03 — real order-book data outperforms candle proxy
-            z_score:      0.17,   // +0.09 — highest T-stat, significantly boosted
+            z_score:      0.16,   // +0.09 — highest T-stat, significantly boosted
             volume:       0.03,   // -0.03 — directional removed; amplifier role kept
             sentiment:    0.10,   // +0.01 — orthogonal signal, slight boost
             funding_rate: 0.08,   // +0.01 — contrarian edge, slight boost
+            candle_pattern: 0.04, // — pattern recognition weight
+            chart_pattern:  0.04, // — structural pattern weight
             trend:        0.03,   // -0.04 — near-eliminated; threshold raised in decision.rs
         }
     }
@@ -175,6 +186,14 @@ impl SignalWeights {
             nudge(&mut self.funding_rate, contrib.funding_bullish, was_long, profitable);
         }
 
+        // Pattern learning: only update pattern weights when pattern was present
+        if contrib.candle_pattern_present {
+            nudge(&mut self.candle_pattern, contrib.candle_pattern_bullish, was_long, profitable);
+        }
+        if contrib.chart_pattern_present {
+            nudge(&mut self.chart_pattern, contrib.chart_pattern_bullish, was_long, profitable);
+        }
+
         self.clamp_and_normalise();
         self.save();
     }
@@ -197,10 +216,14 @@ impl SignalWeights {
         self.volume       = self.volume.clamp(0.0, 0.40);
         self.sentiment    = self.sentiment.clamp(0.0, 0.40);
         self.funding_rate = self.funding_rate.clamp(0.0, 0.40);
+        // Pattern signals: optional, floor 0.0, ceiling 0.40
+        self.candle_pattern = self.candle_pattern.clamp(0.0, 0.40);
+        self.chart_pattern  = self.chart_pattern.clamp(0.0, 0.40);
 
         let total = self.rsi + self.bollinger + self.macd + self.ema_cross
                   + self.order_flow + self.trend + self.z_score
-                  + self.volume + self.sentiment + self.funding_rate;
+                  + self.volume + self.sentiment + self.funding_rate
+                  + self.candle_pattern + self.chart_pattern;
 
         if total > 0.0 {
             self.rsi          /= total;
@@ -213,6 +236,8 @@ impl SignalWeights {
             self.volume       /= total;
             self.sentiment    /= total;
             self.funding_rate /= total;
+            self.candle_pattern /= total;
+            self.chart_pattern  /= total;
         }
     }
 }
@@ -297,7 +322,8 @@ mod tests {
     fn default_weights_sum_to_one() {
         let w = SignalWeights::default();
         let total = w.rsi + w.bollinger + w.macd + w.ema_cross + w.order_flow
-                  + w.trend + w.z_score + w.volume + w.sentiment + w.funding_rate;
+                  + w.trend + w.z_score + w.volume + w.sentiment + w.funding_rate
+                  + w.candle_pattern + w.chart_pattern;
         assert!((total - 1.0).abs() < 1e-6, "default weights sum={total:.8} ≠ 1.0");
     }
 
@@ -307,10 +333,12 @@ mod tests {
             rsi: 0.5, bollinger: 0.5, macd: 0.5,
             ema_cross: 0.5, order_flow: 0.5, z_score: 0.5,
             volume: 0.5, sentiment: 0.5, funding_rate: 0.5, trend: 0.5,
+            candle_pattern: 0.5, chart_pattern: 0.5,
         };
         w.clamp_and_normalise();
         let total = w.rsi + w.bollinger + w.macd + w.ema_cross + w.order_flow
-                  + w.trend + w.z_score + w.volume + w.sentiment + w.funding_rate;
+                  + w.trend + w.z_score + w.volume + w.sentiment + w.funding_rate
+                  + w.candle_pattern + w.chart_pattern;
         assert!((total - 1.0).abs() < 1e-6,
             "after normalise weights should sum to 1.0, got {total:.8}");
     }
@@ -321,6 +349,7 @@ mod tests {
             rsi: 0.0001, bollinger: 0.0001, macd: 0.0001,
             ema_cross: 0.0001, order_flow: 0.0001, z_score: 0.0,
             volume: 0.0, sentiment: 0.0, funding_rate: 0.0, trend: 0.0001,
+            candle_pattern: 0.0, chart_pattern: 0.0,
         };
         w.clamp_and_normalise();
         // Core signals have floor 0.04 before normalisation
@@ -351,7 +380,8 @@ mod tests {
         let contrib = all_bullish_contrib();
         w.update(&contrib, true, true);  // was_long=true, profitable=true
         let total_after = w.rsi + w.bollinger + w.macd + w.ema_cross + w.order_flow
-                        + w.trend + w.z_score + w.volume + w.sentiment + w.funding_rate;
+                        + w.trend + w.z_score + w.volume + w.sentiment + w.funding_rate
+                        + w.candle_pattern + w.chart_pattern;
         assert!((total_after - 1.0).abs() < 1e-6,
             "weights must still sum to 1.0 after update, got {total_after:.8}");
     }
@@ -408,7 +438,8 @@ mod tests {
         // After renormalise, all others grew proportionally — sentiment shrank.
         // Just verify the invariant holds.
         let total = w.rsi + w.bollinger + w.macd + w.ema_cross + w.order_flow
-                  + w.trend + w.z_score + w.volume + w.sentiment + w.funding_rate;
+                  + w.trend + w.z_score + w.volume + w.sentiment + w.funding_rate
+                  + w.candle_pattern + w.chart_pattern;
         assert!((total - 1.0).abs() < 1e-6,
             "weights must still sum to 1.0: {total:.8}");
     }
