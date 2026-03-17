@@ -3846,18 +3846,18 @@ async fn trade_note_handler(
     }
 
     // Persist to DB (best-effort — don't fail the request if DB is down).
+    // Uses sqlx::query() (not macro) so migration 007 need not exist at compile time.
     if let Some(db) = &app.db {
-        let db = db.lock().await;
-        let idx = payload.index as i64;
+        let idx  = payload.index as i64;
         let note = payload.note.clone();
-        let _ = sqlx::query!(
-            "INSERT INTO closed_trade_notes (trade_index, note, updated_at)
-             VALUES ($1, $2, NOW())
-             ON CONFLICT (trade_index) DO UPDATE
-               SET note = EXCLUDED.note, updated_at = NOW()",
-            idx,
-            note,
+        let _ = sqlx::query(
+            "INSERT INTO closed_trade_notes (trade_index, note, updated_at) \
+             VALUES ($1, $2, NOW()) \
+             ON CONFLICT (trade_index) DO UPDATE \
+               SET note = EXCLUDED.note, updated_at = NOW()"
         )
+        .bind(idx)
+        .bind(note)
         .execute(&db.pool)
         .await;
     }

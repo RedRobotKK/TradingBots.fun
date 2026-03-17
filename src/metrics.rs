@@ -166,7 +166,7 @@ impl PerformanceMetrics {
     ///
     /// Total adjustment capped at 0.12, final result capped at 0.92.
     pub fn confidence_floor(&self, min_confidence: f64) -> f64 {
-        let mut adjustment = 0.0;
+        let mut adjustment: f64 = 0.0;
 
         if self.profit_factor < 1.2 {
             adjustment += 0.07;
