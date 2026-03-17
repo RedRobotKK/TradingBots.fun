@@ -55,6 +55,9 @@ use crate::chart_patterns;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Decision {
     pub action:             String,  // "BUY" | "SELL" | "SKIP"
+    /// When action == "SKIP", this holds the dominant lean ("BUY" or "SELL")
+    /// so the signal watchlist can track near-misses in the right direction.
+    pub skipped_direction:  String,  // "BUY" | "SELL" | "NONE"
     pub confidence:         f64,
     pub position_size:      f64,
     pub leverage:           f64,
@@ -841,8 +844,17 @@ pub fn make_decision(
         mtf_tag,
     );
 
+    // For SKIP decisions, capture the dominant lean so the watchlist can
+    // track near-misses in the correct direction.
+    let skipped_direction = if action == "SKIP" {
+        if bull >= bear { "BUY".to_string() } else { "SELL".to_string() }
+    } else {
+        "NONE".to_string()
+    };
+
     Ok(Decision {
         action,
+        skipped_direction,
         confidence,
         position_size: 0.0,
         leverage:      calc_leverage(confidence, regime),

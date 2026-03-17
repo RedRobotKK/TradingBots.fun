@@ -36,6 +36,7 @@ const MIN_POSITION_PCT: f64 = 0.01;
 
 mod config;
 mod data;
+mod signal_watchlist;
 mod indicators;
 mod signals;
 mod risk;
@@ -81,6 +82,7 @@ use sentiment::{SentimentCache, SharedSentiment};
 use funding::{FundingCache, SharedFunding};
 use notifier::SharedNotifier;
 use onchain::SharedOnchain;
+use signal_watchlist::{SharedWatchlist, SignalWatchlist, SkipReason};
 use trade_log::{SharedTradeLogger, TradeEvent, TradeLogger, ts_now, date_today};
 use db::{AumSnapshot, Database, SharedDb};
 
@@ -239,6 +241,9 @@ async fn main() -> Result<()> {
     }
 
     info!("✓ Clients ready (LunarCrush sentiment + HL funding rates + on-chain active)");
+
+    // Signal watchlist — tracks near-miss SKIPs across cycles for re-evaluation
+    let signal_watchlist: SharedWatchlist = SignalWatchlist::new();
 
     let weights: SharedWeights = Arc::new(RwLock::new(SignalWeights::load()));
 
@@ -414,7 +419,7 @@ async fn main() -> Result<()> {
         match run_cycle(&config, &market, &hl, &shared_db, &bot_state, &weights,
                         &sentiment_cache, &funding_cache, &mut prev_mids, &btc_dominance,
                         &trade_logger, config.builder_fee_bps,
-                        &notifier, &onchain_cache).await
+                        &notifier, &onchain_cache, &signal_watchlist).await
         {
             Ok(_) => {
                 // Persist state every N cycles (cheap; atomic rename)
@@ -489,8 +494,9 @@ async fn run_cycle(
     btc_dominance:   &SharedBtcDominance,
     trade_logger:    &SharedTradeLogger,
     fee_bps:         u32,                       // builder fee bps
-    notifier:        &Option<SharedNotifier>,   // webhook / Telegram alerts
-    onchain_cache:   &SharedOnchain,            // exchange netflow signal
+    notifier:         &Option<SharedNotifier>,   // webhook / Telegram alerts
+    onchain_cache:    &SharedOnchain,            // exchange netflow signal
+    signal_watchlist: &SharedWatchlist,          // near-miss SKIP re-evaluator
 ) -> Result<()> {
     { bot_state.write().await.cycle_count += 1; }
 
@@ -827,9 +833,41 @@ async fn run_cycle(
 
         match analyse_symbol(sym, market, hl, db, config, bot_state, weights, sent_cache, fund_cache, btc_dom, btc_ret_24h, btc_ret_4h, trade_logger, fee_bps, notifier, onchain_cache).await {
             Ok(Some((dec, ind))) => {
+                let price = ind.close_price;
+
                 if dec.action != "SKIP" {
                     info!("💡 {} → {} conf={:.0}%", sym, dec.action, dec.confidence * 100.0);
+                    // Trade fired — remove from watchlist (entry taken or opportunity resolved).
+                    signal_watchlist.remove(sym).await;
+                } else {
+                    // ── Watchlist: re-evaluate if symbol was already being watched ──
+                    // Use skipped_direction (the lean even on SKIP) so "SKIP with BUY lean"
+                    // is correctly evaluated as "still pointing BUY".
+                    let reeval_action = if dec.skipped_direction != "NONE" {
+                        &dec.skipped_direction
+                    } else {
+                        &dec.action
+                    };
+                    signal_watchlist.re_evaluate(
+                        sym, reeval_action, dec.confidence, price,
+                    ).await;
+
+                    // ── Watchlist: enqueue near-miss SKIPs ────────────────────────
+                    // Distinguish between a gated skip and a low-confidence skip.
+                    let skip_reason = if dec.rationale.contains("Funding gate")
+                        || dec.rationale.contains("circuit breaker")
+                    {
+                        SkipReason::Gated(
+                            dec.rationale.chars().take(60).collect()
+                        )
+                    } else {
+                        SkipReason::LowConfidence
+                    };
+                    signal_watchlist.maybe_watch(
+                        sym, &dec.skipped_direction, dec.confidence, price, skip_reason,
+                    ).await;
                 }
+
                 cand_indicators.push((sym.clone(), ind.rsi, ind.regime, ind.atr_pct, dec.confidence));
                 // Push ALL decisions (including SKIPs) so the signal feed always shows activity.
                 // SKIPs are rendered dimmed in the dashboard; BUY/SELL get the coloured treatment.
@@ -847,6 +885,9 @@ async fn run_cycle(
         }
         tokio::time::sleep(std::time::Duration::from_millis(150)).await;
     }
+
+    // Evict expired watchlist entries once per cycle (keeps the map tidy).
+    signal_watchlist.gc().await;
 
     {
         let mut s = bot_state.write().await;
@@ -1121,9 +1162,10 @@ async fn apply_ai_review(
 /// Indicator snapshot returned alongside a Decision so the candidates table
 /// can display live RSI / regime / ATR% without a second lock cycle.
 struct SymbolIndicators {
-    rsi:     f64,
-    regime:  &'static str,   // "Trending" | "Neutral" | "Ranging"
-    atr_pct: f64,            // ATR(14) as % of price
+    rsi:         f64,
+    regime:      &'static str,   // "Trending" | "Neutral" | "Ranging"
+    atr_pct:     f64,            // ATR(14) as % of price
+    close_price: f64,            // last candle close — used by signal watchlist
 }
 
 /// Returns `Ok(Some((Decision, SymbolIndicators)))` even for SKIP decisions so
@@ -1294,9 +1336,10 @@ async fn analyse_symbol(
 
     let current_price = candles.last().map_or(1.0, |c| c.close);
     let ind_snapshot = SymbolIndicators {
-        rsi:     ind.rsi,
-        regime:  regime_str,
-        atr_pct: if ind.atr > 0.0 && current_price > 0.0 { ind.atr / current_price * 100.0 } else { 0.0 },
+        rsi:         ind.rsi,
+        regime:      regime_str,
+        atr_pct:     if ind.atr > 0.0 && current_price > 0.0 { ind.atr / current_price * 100.0 } else { 0.0 },
+        close_price: current_price,
     };
 
     Ok(Some((dec, ind_snapshot)))
