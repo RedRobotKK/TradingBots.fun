@@ -41,6 +41,8 @@ pub mod decision;
 pub mod persistence;
 pub mod sentiment;
 pub mod funding;
+pub mod cross_exchange;
+pub mod signal_watchlist;
 pub mod trade_log;
 pub mod daily_analyst;
 pub mod ledger;

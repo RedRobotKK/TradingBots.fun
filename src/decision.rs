@@ -47,6 +47,7 @@ use crate::signals::OrderFlowSignal;
 use crate::learner::{SignalWeights, SignalContribution};
 use crate::sentiment::SentimentData;
 use crate::funding::FundingData;
+use crate::cross_exchange::CrossExchangeSignal;
 use crate::candlestick_patterns;
 use crate::chart_patterns;
 
@@ -227,16 +228,18 @@ impl BtcMarketContext {
 /// `sentiment` is `None` when LunarCrush data is not available.
 /// `btc_ctx` is `None` for BTC itself (no self-referential filter).
 /// `htf` is `None` when 4-hour candles are unavailable (MTF filter skipped).
+/// `cex_signal` is `None` when the cross-exchange monitor has no data for the symbol.
 #[allow(clippy::too_many_arguments)]
 pub fn make_decision(
-    candles:   &[PriceData],
-    ind:       &TechnicalIndicators,
-    of:        &OrderFlowSignal,
-    weights:   &SignalWeights,
-    sentiment: Option<&SentimentData>,
-    funding:   Option<&FundingData>,
-    btc_ctx:   Option<&BtcMarketContext>,
-    htf:       Option<&HtfIndicators>,
+    candles:    &[PriceData],
+    ind:        &TechnicalIndicators,
+    of:         &OrderFlowSignal,
+    weights:    &SignalWeights,
+    sentiment:  Option<&SentimentData>,
+    funding:    Option<&FundingData>,
+    btc_ctx:    Option<&BtcMarketContext>,
+    htf:        Option<&HtfIndicators>,
+    cex_signal: Option<&CrossExchangeSignal>,
 ) -> Result<Decision> {
     let last  = candles.last().ok_or_else(|| anyhow::anyhow!("Empty candle slice"))?;
     let close = last.close;
@@ -715,6 +718,31 @@ pub fn make_decision(
     }
 
     // ═════════════════════════════════════════════════════════════════════════
+    //  14. Cross-exchange price divergence  (HL vs Binance/ByBit/OKX)
+    // ═════════════════════════════════════════════════════════════════════════
+    // When HL trades above major CEXes by ≥0.25% for ≥3 consecutive cycles,
+    // there is local buying pressure not yet reflected on CEXes.  This adds
+    // a tiny bull signal (max 0.03) — smaller than any core signal weight.
+    // The gate requires both a minimum divergence AND persistence because
+    // single-tick price differences are exchange-spread noise, not signal.
+    //
+    // Signal direction:
+    //   HL > CEX  (positive premium)  →  local buy pressure  →  mild bull
+    //   HL < CEX  (negative premium)  →  local sell pressure →  mild bear
+    if let Some(cex) = cex_signal {
+        let (cex_bull, cex_bear) = cex.score_contribution();
+        if cex_bull > 0.0 || cex_bear > 0.0 {
+            log::debug!(
+                "📡 CEX divergence {} {}{:.3}% (persist {}) → bull+{:.4} bear+{:.4}",
+                cex.symbol, if cex.hl_premium_pct > 0.0 { "+" } else { "" },
+                cex.hl_premium_pct, cex.persistence, cex_bull, cex_bear
+            );
+        }
+        bull += cex_bull;
+        bear += cex_bear;
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
     //  Final decision — regime-dependent thresholds with session adjustment
     // ═════════════════════════════════════════════════════════════════════════
     // session_mult raises the entry bar during low-quality trading hours
@@ -824,8 +852,14 @@ pub fn make_decision(
         format!(" 4H:RSI{:.0}/Z{:.1}", h.rsi_4h, h.z_score_4h)
     }).unwrap_or_default();
 
+    // Cross-exchange divergence tag — only shown when anomaly is active
+    let cex_tag = cex_signal
+        .filter(|s| s.active)
+        .map(|s| format!(" {}CEX:{:+.2}%({}cy)", s.emoji(), s.hl_premium_pct, s.persistence))
+        .unwrap_or_default();
+
     let rationale = format!(
-        "[{}/{}] RSI:{:.0} Z:{:.1} EMA:{:+.2}% MACD-H:{:.5} VOL:{:.1}× ADX:{:.0} VWAP:{:+.1}%{}{}{}{}{}{}{}",
+        "[{}/{}] RSI:{:.0} Z:{:.1} EMA:{:+.2}% MACD-H:{:.5} VOL:{:.1}× ADX:{:.0} VWAP:{:+.1}%{}{}{}{}{}{}{}{}",
         regime.label(),
         session_label,
         ind.rsi,
@@ -842,6 +876,7 @@ pub fn make_decision(
         chp_tag,
         atr_tag,
         mtf_tag,
+        cex_tag,
     );
 
     // For SKIP decisions, capture the dominant lean so the watchlist can
@@ -1120,7 +1155,7 @@ mod tests {
         let of      = neutral_of();
         let weights = SignalWeights::default();
 
-        let dec = make_decision(&candles, &ind, &of, &weights, None, None, None, None).unwrap();
+        let dec = make_decision(&candles, &ind, &of, &weights, None, None, None, None, None).unwrap();
         assert_eq!(dec.action, "SKIP",
             "neutral indicators should produce SKIP, got {}", dec.action);
     }
@@ -1137,7 +1172,7 @@ mod tests {
             imbalance_ratio: 3.0, direction: "LONG".to_string(), confidence: 0.95 };
         let weights = SignalWeights::default();
 
-        let dec = make_decision(&candles, &ind, &of, &weights, None, None, None, None).unwrap();
+        let dec = make_decision(&candles, &ind, &of, &weights, None, None, None, None, None).unwrap();
         if dec.action == "BUY" {
             assert!(dec.stop_loss < dec.entry_price,
                 "BUY stop_loss ({:.2}) should be below entry ({:.2})",
@@ -1159,7 +1194,7 @@ mod tests {
             imbalance_ratio: 0.33, direction: "SHORT".to_string(), confidence: 0.95 };
         let weights = SignalWeights::default();
 
-        let dec = make_decision(&candles, &ind, &of, &weights, None, None, None, None).unwrap();
+        let dec = make_decision(&candles, &ind, &of, &weights, None, None, None, None, None).unwrap();
         if dec.action == "SELL" {
             assert!(dec.stop_loss > dec.entry_price,
                 "SELL stop_loss ({:.2}) should be above entry ({:.2})",
@@ -1176,7 +1211,7 @@ mod tests {
         let ind     = neutral_ind(100.0);
         let of      = neutral_of();
         let weights = SignalWeights::default();
-        assert!(make_decision(&candles, &ind, &of, &weights, None, None, None, None).is_err(),
+        assert!(make_decision(&candles, &ind, &of, &weights, None, None, None, None, None).is_err(),
             "empty candle slice should return Err");
     }
 
@@ -1186,7 +1221,7 @@ mod tests {
         let ind = crate::indicators::calculate_all(&candles).unwrap();
         let of  = neutral_of();
         let weights = SignalWeights::default();
-        let dec = make_decision(&candles, &ind, &of, &weights, None, None, None, None).unwrap();
+        let dec = make_decision(&candles, &ind, &of, &weights, None, None, None, None, None).unwrap();
         assert!(dec.confidence >= 0.0 && dec.confidence <= 1.0,
             "confidence out of [0,1]: {}", dec.confidence);
     }
@@ -1197,7 +1232,7 @@ mod tests {
         let ind = neutral_ind(100.0);
         let of  = neutral_of();
         let weights = SignalWeights::default();
-        let dec = make_decision(&candles, &ind, &of, &weights, None, None, None, None).unwrap();
+        let dec = make_decision(&candles, &ind, &of, &weights, None, None, None, None, None).unwrap();
         assert!(dec.leverage >= 1.0 && dec.leverage <= 3.0,
             "leverage out of valid range [1.0, 3.0]: {}", dec.leverage);
     }
@@ -1208,7 +1243,7 @@ mod tests {
         let ind = neutral_ind(100.0);
         let of  = neutral_of();
         let weights = SignalWeights::default();
-        let dec = make_decision(&candles, &ind, &of, &weights, None, None, None, None).unwrap();
+        let dec = make_decision(&candles, &ind, &of, &weights, None, None, None, None, None).unwrap();
         let has_regime = dec.rationale.contains("Trending")
             || dec.rationale.contains("Ranging")
             || dec.rationale.contains("Neutral");

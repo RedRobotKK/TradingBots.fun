@@ -37,6 +37,7 @@ const MIN_POSITION_PCT: f64 = 0.01;
 mod config;
 mod data;
 mod signal_watchlist;
+mod cross_exchange;
 mod indicators;
 mod signals;
 mod risk;
@@ -83,6 +84,7 @@ use funding::{FundingCache, SharedFunding};
 use notifier::SharedNotifier;
 use onchain::SharedOnchain;
 use signal_watchlist::{SharedWatchlist, SignalWatchlist, SkipReason};
+use cross_exchange::{CrossExchangeMonitor, SharedCrossExchange};
 use trade_log::{SharedTradeLogger, TradeEvent, TradeLogger, ts_now, date_today};
 use db::{AumSnapshot, Database, SharedDb};
 
@@ -241,6 +243,12 @@ async fn main() -> Result<()> {
     }
 
     info!("✓ Clients ready (LunarCrush sentiment + HL funding rates + on-chain active)");
+
+    // Cross-exchange monitor — Binance/ByBit/OKX vs HL price divergence (every 5 min)
+    // Fires a tiny bull/bear signal when HL diverges from CEX peers by ≥0.25% for ≥3 cycles.
+    // No-op in dev when CEX APIs are unreachable; never blocks trade decisions.
+    let cex_monitor: SharedCrossExchange = CrossExchangeMonitor::new();
+    cex_monitor.warm().await;
 
     // Signal watchlist — tracks near-miss SKIPs across cycles for re-evaluation
     let signal_watchlist: SharedWatchlist = SignalWatchlist::new();
@@ -419,7 +427,7 @@ async fn main() -> Result<()> {
         match run_cycle(&config, &market, &hl, &shared_db, &bot_state, &weights,
                         &sentiment_cache, &funding_cache, &mut prev_mids, &btc_dominance,
                         &trade_logger, config.builder_fee_bps,
-                        &notifier, &onchain_cache, &signal_watchlist).await
+                        &notifier, &onchain_cache, &signal_watchlist, &cex_monitor).await
         {
             Ok(_) => {
                 // Persist state every N cycles (cheap; atomic rename)
@@ -497,6 +505,7 @@ async fn run_cycle(
     notifier:         &Option<SharedNotifier>,   // webhook / Telegram alerts
     onchain_cache:    &SharedOnchain,            // exchange netflow signal
     signal_watchlist: &SharedWatchlist,          // near-miss SKIP re-evaluator
+    cex_monitor:      &SharedCrossExchange,      // cross-exchange price divergence
 ) -> Result<()> {
     { bot_state.write().await.cycle_count += 1; }
 
@@ -831,7 +840,7 @@ async fn run_cycle(
         set_status(bot_state,
             &format!("🔬 Analysing {}/{}: {}…", i + 1, total, sym)).await;
 
-        match analyse_symbol(sym, market, hl, db, config, bot_state, weights, sent_cache, fund_cache, btc_dom, btc_ret_24h, btc_ret_4h, trade_logger, fee_bps, notifier, onchain_cache).await {
+        match analyse_symbol(sym, market, hl, db, config, bot_state, weights, sent_cache, fund_cache, btc_dom, btc_ret_24h, btc_ret_4h, trade_logger, fee_bps, notifier, onchain_cache, cex_monitor).await {
             Ok(Some((dec, ind))) => {
                 let price = ind.close_price;
 
@@ -1188,6 +1197,7 @@ async fn analyse_symbol(
     fee_bps:      u32,   // builder fee bps for this tenant (1 = Pro, 3 = Free)
     notifier:     &Option<SharedNotifier>,   // webhook / Telegram notifier
     onchain_cache: &SharedOnchain,           // exchange netflow signal
+    cex_monitor:   &SharedCrossExchange,     // cross-exchange price divergence
 ) -> Result<Option<(decision::Decision, SymbolIndicators)>> {
     let candles = market.fetch_market_data(symbol).await?;
     if candles.len() < 26 { return Ok(None); }
@@ -1214,6 +1224,15 @@ async fn analyse_symbol(
     let sent = sent_cache.get(symbol).await;
     let fund = fund_cache.get(symbol).await;
 
+    // Cross-exchange divergence signal: compare HL mid vs Binance/ByBit/OKX.
+    // `current_price` is the HL allMids price already fetched in the outer loop.
+    let current_price = candles.last().map(|c| c.close).unwrap_or(0.0);
+    let cex_sig = cex_monitor.evaluate(symbol, current_price).await;
+    // Advance persistence counter regardless of whether signal is active.
+    if let Some(ref s) = cex_sig {
+        cex_monitor.tick_persistence(symbol, s.hl_premium_pct).await;
+    }
+
     // BTC dominance context not applied to BTC itself (no self-reference).
     let ctx = if symbol == "BTC" {
         None
@@ -1230,6 +1249,7 @@ async fn analyse_symbol(
         &candles, &ind, &of, &w,
         sent.as_ref(), fund.as_ref(),
         ctx.as_ref(), htf.as_ref(),
+        cex_sig.as_ref(),
     )?;
 
     // ── On-chain exchange netflow signal ──────────────────────────────────
