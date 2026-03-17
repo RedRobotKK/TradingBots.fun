@@ -899,6 +899,11 @@ async fn run_cycle(
     if cycle_count % 10 == 0 && open_count > 0 {
         if let Some(api_key) = &config.anthropic_api_key {
             set_status(bot_state, "🤖 Claude AI reviewing positions…").await;
+            // Surface AI activity in the dashboard before the (slow) API call.
+            {
+                let mut s = bot_state.write().await;
+                s.ai_status = format!("🤖 Querying Claude for {} open position(s)…", open_count);
+            }
             let (positions_snap, metrics_snap, capital_snap) = {
                 let s = bot_state.read().await;
                 (s.positions.clone(), s.metrics.clone(), s.capital)
@@ -906,6 +911,20 @@ async fn run_cycle(
             let review = ai_reviewer::review_positions(
                 &positions_snap, &metrics_snap, capital_snap, api_key,
             ).await;
+            // Update ai_status with a summary of what Claude recommended.
+            {
+                let now = chrono::Utc::now().format("%H:%M UTC").to_string();
+                let summary = if review.recommendations.is_empty() {
+                    format!("🤖 AI reviewed {} position(s) — all HOLD · {}", open_count, now)
+                } else {
+                    let actions: Vec<String> = review.recommendations.iter()
+                        .map(|r| format!("{} → {}", r.symbol, r.action.replace('_', " ").to_uppercase()))
+                        .collect();
+                    format!("🤖 {} · {} · {}", open_count, actions.join(" · "), now)
+                };
+                let mut s = bot_state.write().await;
+                s.ai_status = summary;
+            }
             apply_ai_review(&review, bot_state, weights, &current_mids, trade_logger, notifier).await;
         }
     }
@@ -1347,7 +1366,7 @@ fn portfolio_heat(positions: &[PaperPosition], equity: f64) -> f64 {
 ///
 /// Decision tree for an existing position on `symbol`:
 ///   - **Same side, profitable (≥ 1R)**: pyramid (+50% of current size).
-///   - **Same side, mild loss (-0.15R to -0.75R) + confidence ≥ DCA_MIN_CONFIDENCE**:
+///   - **Same side, mild loss (-0.15R to -0.85R) + confidence ≥ DCA_MIN_CONFIDENCE**:
 ///     DCA (add 50%, recompute average entry and stop).
 ///   - **Same side, other**: skip (hold position).
 ///   - **Opposite side, confidence < MIN_CONFIDENCE**: ignore (no flip).

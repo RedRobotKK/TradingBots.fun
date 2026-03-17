@@ -209,6 +209,11 @@ pub struct BotState {
     /// Displayed in the consumer /app page so new signups use the referral link.
     #[serde(default)]
     pub referral_code:    Option<String>,
+    /// Last AI review summary string — set by run_cycle() when Claude reviews positions.
+    /// Empty = no review run yet (API key absent or no open positions).
+    /// Example: "🤖 3 reviewed · SOL hold · ETH scale_down"
+    #[serde(default)]
+    pub ai_status:        String,
 }
 
 impl Default for BotState {
@@ -226,6 +231,7 @@ impl Default for BotState {
             status: String::new(), last_update: String::new(), next_cycle_at: 0,
             equity_history: vec![],
             referral_code:  None,
+            ai_status:      String::new(),
         }
     }
 }
@@ -276,6 +282,36 @@ async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
         format!("Risk Normal · 7d DD {:.1}%", rolling_dd_pct)
     };
     let pf_str    = if m.profit_factor.is_infinite() { "∞".to_string() } else { format!("{:.2}", m.profit_factor) };
+
+    // ── Equity hero P&L class (drives colour glow) ────────────────────────
+    // CB active overrides colour → flashing red border.
+    // Otherwise green when profitable, red when losing, neutral near break-even.
+    let hero_class = if cb_active {
+        "equity-hero pnl-cb"
+    } else if total_pnl > 0.0 {
+        "equity-hero pnl-pos"
+    } else if total_pnl_pct < -1.5 {
+        "equity-hero pnl-neg"
+    } else {
+        "equity-hero"   // neutral — near break-even
+    };
+
+    // ── AI status bar HTML ─────────────────────────────────────────────────
+    // Non-empty ai_status = a Claude review has run (or is running).
+    let ai_status_html = if s.ai_status.is_empty() {
+        String::new()
+    } else {
+        let is_active = s.ai_status.contains("Querying");
+        let extra_class = if is_active { " ai-active" } else { "" };
+        format!(
+            r#"<div id="ai-status-bar" class="ai-status-bar{cls}"><span id="ai-status-text">{txt}</span></div>"#,
+            cls = extra_class,
+            txt = s.ai_status,
+        )
+    };
+
+    // ── CB metric card extra class ─────────────────────────────────────────
+    let cb_card_class = if cb_active { " metric-cb-active" } else { "" };
 
     // ── Position cards ────────────────────────────────────────────────────
     let pos_cards: String = if s.positions.is_empty() {
@@ -798,6 +834,8 @@ body{{background:var(--bg);color:var(--text);
 @keyframes radar{{0%{{transform:rotate(0deg)}}100%{{transform:rotate(360deg)}}}}
 @keyframes shimmer{{0%{{background-position:-200% 0}}100%{{background-position:200% 0}}}}
 @keyframes liveDot{{0%,100%{{box-shadow:0 0 0 0 rgba(63,185,80,.6)}}70%{{box-shadow:0 0 0 5px rgba(63,185,80,0)}}}}
+@keyframes aiPulse{{0%,100%{{opacity:1}}50%{{opacity:.55}}}}
+@keyframes cbFlash{{0%,100%{{border-color:rgba(248,81,73,.55)}}50%{{border-color:rgba(248,81,73,1)}}}}
 /* ── Header ── */
 .header{{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:6px;
          padding-bottom:12px;border-bottom:1px solid var(--border)}}
@@ -834,13 +872,29 @@ body{{background:var(--bg);color:var(--text);
 .metric .ml{{font-size:.62em;color:var(--muted);margin-top:3px;white-space:nowrap;letter-spacing:.3px;text-transform:uppercase}}
 /* ── Status bar ── */
 .status-bar{{background:var(--surface2);border:1px solid var(--border);border-radius:9px;
-             padding:0;margin-bottom:12px;font-size:.78em;color:var(--muted);overflow:hidden}}
+             padding:0;margin-bottom:6px;font-size:.78em;color:var(--muted);overflow:hidden}}
 .status-inner{{display:flex;justify-content:space-between;align-items:center;
                gap:8px;flex-wrap:wrap;padding:8px 12px}}
 .status-bar .st-text{{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
 .prog-track{{height:2px;background:var(--border);position:relative;overflow:hidden}}
 .prog-fill{{height:2px;background:linear-gradient(90deg,var(--blue),var(--purple),var(--green));
             animation:progFill 30s linear forwards}}
+/* ── AI status bar ── */
+.ai-status-bar{{background:rgba(188,140,255,.07);border:1px solid rgba(188,140,255,.22);
+                border-radius:9px;padding:6px 12px;margin-bottom:12px;
+                font-size:.76em;color:#bc8cff;display:flex;align-items:center;gap:6px;
+                animation:fadeSlide .4s ease}}
+.ai-status-bar.ai-active{{animation:aiPulse 2s ease infinite}}
+/* ── Equity hero profit / loss glow ── */
+.equity-hero.pnl-pos{{border-color:rgba(63,185,80,.35);
+                       box-shadow:0 0 0 1px rgba(63,185,80,.08),0 8px 32px rgba(0,0,0,.4),
+                                  inset 0 1px 0 rgba(63,185,80,.08)}}
+.equity-hero.pnl-neg{{border-color:rgba(248,81,73,.35);
+                       box-shadow:0 0 0 1px rgba(248,81,73,.08),0 8px 32px rgba(0,0,0,.4),
+                                  inset 0 1px 0 rgba(248,81,73,.06)}}
+.equity-hero.pnl-cb{{border-color:rgba(248,81,73,.6);animation:cbFlash 1.5s ease infinite}}
+/* ── CB metric card flash ── */
+.metric-cb-active{{border-color:rgba(248,81,73,.7)!important;animation:cbFlash 1.5s ease infinite}}
 /* ── Sections ── */
 .section{{background:var(--surface2);border:1px solid var(--border);border-radius:11px;
           padding:14px;margin-bottom:12px;border-top:1px solid rgba(255,255,255,.04)}}
@@ -972,7 +1026,7 @@ tr:hover td{{background:rgba(255,255,255,.025)}}
   </div>
 </div>
 
-<div class="equity-hero">
+<div id="equity-hero" class="{hero_class}">
   <div class="eq-left">
     <div class="eq-label">Total Equity</div>
     <div id="equity-val" class="eq-val">${equity:.2}</div>
@@ -995,7 +1049,7 @@ tr:hover td{{background:rgba(255,255,255,.025)}}
   <div class="metric" title="7-day rolling drawdown (drives circuit breaker). All-time: -{atdd:.1}%">
     <div class="mv r">-{dd:.1}%</div><div class="ml">7d Drawdown</div></div>
   <div class="metric"><div class="mv b">{kelly_str}</div><div class="ml">Half-Kelly</div></div>
-  <div class="metric"><div class="mv" style="color:{cbc}">{cb_label}</div><div class="ml">{cb_desc}</div></div>
+  <div class="metric{cbcc}"><div class="mv" style="color:{cbc}">{cb_label}</div><div class="ml">{cb_desc}</div></div>
   <div class="metric"><div class="mv">{open_n} / {total_closed}</div><div class="ml">Open / Closed</div></div>
   <div class="metric"><div class="mv">{cycles}</div><div class="ml">Cycles</div></div>
   <div class="metric"><div class="mv">{cand_n}</div><div class="ml">Scanning</div></div>
@@ -1004,13 +1058,14 @@ tr:hover td{{background:rgba(255,255,255,.025)}}
 
 <div class="status-bar">
   <div class="status-inner">
-    <span class="st-text">{status}</span>
+    <span class="st-text" id="bot-status">{status}</span>
     <span style="font-size:.75em;color:var(--muted);white-space:nowrap">
       {open_n} pos · ${committed:.0} · Sharpe {sharpe:.2}
     </span>
   </div>
   <div class="prog-track"><div class="prog-fill"></div></div>
 </div>
+{ai_status_html}
 
 <div class="section section-positions">
   <div class="section-title">
@@ -1159,8 +1214,43 @@ function toggleDetail(id){{
     }});
 
     /* Status bar text */
-    var stEl=document.querySelector('.st-text');
+    var stEl=document.getElementById('bot-status');
     if(stEl&&s.status)stEl.textContent=s.status;
+
+    /* Equity hero P&L glow class */
+    var hero=document.getElementById('equity-hero');
+    if(hero){{
+      hero.classList.remove('pnl-pos','pnl-neg','pnl-cb');
+      if(s.cb_active)hero.classList.add('pnl-cb');
+      else if(total_pnl>0)hero.classList.add('pnl-pos');
+      else if(s.initial_capital>0&&(total_pnl/s.initial_capital*100)<-1.5)hero.classList.add('pnl-neg');
+    }}
+
+    /* AI status bar */
+    var aiStatus=s.ai_status||'';
+    var aiBar=document.getElementById('ai-status-bar');
+    if(aiStatus){{
+      if(!aiBar){{
+        /* inject it after the status bar if it doesn't exist yet */
+        var sb=document.querySelector('.status-bar');
+        if(sb){{
+          aiBar=document.createElement('div');
+          aiBar.id='ai-status-bar';
+          aiBar.className='ai-status-bar';
+          aiBar.innerHTML='<span id="ai-status-text"></span>';
+          sb.parentNode.insertBefore(aiBar,sb.nextSibling);
+        }}
+      }}
+      if(aiBar){{
+        var txt=document.getElementById('ai-status-text');
+        if(txt)txt.textContent=aiStatus;
+        aiBar.style.display='flex';
+        if(aiStatus.indexOf('Querying')>=0)aiBar.classList.add('ai-active');
+        else aiBar.classList.remove('ai-active');
+      }}
+    }} else if(aiBar){{
+      aiBar.style.display='none';
+    }}
 
     /* ── Shared helpers ─────────────────────────────────────────────────── */
     /* Brief opacity flash on a cell whose value just changed */
@@ -1315,6 +1405,7 @@ function toggleDetail(id){{
         atdd         = dd_pct.max(0.0),   // all-time drawdown (tooltip only)
         kelly_str    = kelly_str,
         cbc          = cb_colour,
+        cbcc         = cb_card_class,
         cb_label     = cb_label,
         cb_desc      = cb_desc,
         open_n       = s.positions.len(),
@@ -1330,6 +1421,8 @@ function toggleDetail(id){{
         dec_rows          = dec_rows,
         next_cycle_at_ms  = s.next_cycle_at,
         sparkline_svg     = sparkline_svg,
+        hero_class        = hero_class,
+        ai_status_html    = ai_status_html,
         tracking_js       = crate::funnel::client_tracking_script(),
     ))
 }
