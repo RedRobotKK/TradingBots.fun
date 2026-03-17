@@ -63,6 +63,9 @@ mod funnel;
 mod invite;
 mod leaderboard;
 mod mailer;
+mod correlation;
+mod notifier;
+mod onchain;
 
 use anyhow::Result;
 use log::{error, info, warn};
@@ -76,6 +79,8 @@ use learner::{SharedWeights, SignalWeights};
 use metrics::PerformanceMetrics;
 use sentiment::{SentimentCache, SharedSentiment};
 use funding::{FundingCache, SharedFunding};
+use notifier::SharedNotifier;
+use onchain::SharedOnchain;
 use trade_log::{SharedTradeLogger, TradeEvent, TradeLogger, ts_now, date_today};
 use db::{AumSnapshot, Database, SharedDb};
 
@@ -218,7 +223,22 @@ async fn main() -> Result<()> {
     let funding_cache: SharedFunding = FundingCache::new();
     funding_cache.warm().await;
 
-    info!("✓ Clients ready (LunarCrush sentiment + Binance funding rates active)");
+    // On-chain exchange netflow — Coinglass API (graceful no-op if key absent)
+    // COINGLASS_API_KEY read directly from env inside OnchainCache::new().
+    let onchain_cache: SharedOnchain = onchain::OnchainCache::new();
+    onchain_cache.warm().await;
+
+    // Webhook / Telegram notifier — fires on position open/close/CB/AI events.
+    // Auto-detected from WEBHOOK_URL and/or TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID.
+    let notifier: Option<SharedNotifier> = notifier::Notifier::from_env()
+        .map(std::sync::Arc::new);
+    if notifier.is_some() {
+        info!("✓ Notifier ready (webhook/Telegram configured)");
+    } else {
+        info!("ℹ️  No WEBHOOK_URL or TELEGRAM_* env set — notifications disabled");
+    }
+
+    info!("✓ Clients ready (LunarCrush sentiment + Binance funding rates + on-chain active)");
 
     let weights: SharedWeights = Arc::new(RwLock::new(SignalWeights::load()));
 
@@ -393,7 +413,8 @@ async fn main() -> Result<()> {
 
         match run_cycle(&config, &market, &hl, &shared_db, &bot_state, &weights,
                         &sentiment_cache, &funding_cache, &mut prev_mids, &btc_dominance,
-                        &trade_logger, config.builder_fee_bps).await
+                        &trade_logger, config.builder_fee_bps,
+                        &notifier, &onchain_cache).await
         {
             Ok(_) => {
                 // Persist state every N cycles (cheap; atomic rename)
@@ -467,7 +488,9 @@ async fn run_cycle(
     prev_mids:       &mut HashMap<String, f64>,
     btc_dominance:   &SharedBtcDominance,
     trade_logger:    &SharedTradeLogger,
-    fee_bps:         u32,   // builder fee bps — passed through to every place_order call
+    fee_bps:         u32,                       // builder fee bps
+    notifier:        &Option<SharedNotifier>,   // webhook / Telegram alerts
+    onchain_cache:   &SharedOnchain,            // exchange netflow signal
 ) -> Result<()> {
     { bot_state.write().await.cycle_count += 1; }
 
@@ -699,7 +722,7 @@ async fn run_cycle(
 
     // Execute full closes
     for (sym, price, reason) in to_close {
-        close_paper_position(&sym, price, &reason, bot_state, weights, trade_logger).await;
+        close_paper_position(&sym, price, &reason, bot_state, weights, trade_logger, notifier).await;
         info!("🚨 {} closed → {} @ ${:.4}", sym, reason, price);
     }
 
@@ -802,7 +825,7 @@ async fn run_cycle(
         set_status(bot_state,
             &format!("🔬 Analysing {}/{}: {}…", i + 1, total, sym)).await;
 
-        match analyse_symbol(sym, market, hl, db, config, bot_state, weights, sent_cache, fund_cache, btc_dom, btc_ret_24h, btc_ret_4h, trade_logger, fee_bps).await {
+        match analyse_symbol(sym, market, hl, db, config, bot_state, weights, sent_cache, fund_cache, btc_dom, btc_ret_24h, btc_ret_4h, trade_logger, fee_bps, notifier, onchain_cache).await {
             Ok(Some((dec, ind))) => {
                 if dec.action != "SKIP" {
                     info!("💡 {} → {} conf={:.0}%", sym, dec.action, dec.confidence * 100.0);
@@ -883,7 +906,7 @@ async fn run_cycle(
             let review = ai_reviewer::review_positions(
                 &positions_snap, &metrics_snap, capital_snap, api_key,
             ).await;
-            apply_ai_review(&review, bot_state, weights, &current_mids, trade_logger).await;
+            apply_ai_review(&review, bot_state, weights, &current_mids, trade_logger, notifier).await;
         }
     }
 
@@ -900,6 +923,7 @@ async fn apply_ai_review(
     weights:      &SharedWeights,
     current_mids: &HashMap<String, f64>,
     trade_logger: &SharedTradeLogger,
+    notifier:     &Option<SharedNotifier>,
 ) {
     for rec in &review.recommendations {
         let cur_price = match current_mids.get(rec.symbol.as_str()) {
@@ -940,7 +964,25 @@ async fn apply_ai_review(
                 };
                 if should_close {
                     info!("🤖 AI close: {} — {}", rec.symbol, rec.reason);
-                    close_paper_position(&rec.symbol, cur_price, "AI-Close", bot_state, weights, trade_logger).await;
+                    // Snapshot r_mult before the close for the ai_action notification
+                    let r_for_notify = {
+                        let s = bot_state.read().await;
+                        s.positions.iter().find(|p| p.symbol == rec.symbol)
+                            .map(|p| if p.r_dollars_risked > 1e-8 {
+                                p.unrealised_pnl / p.r_dollars_risked
+                            } else { 0.0 })
+                            .unwrap_or(0.0)
+                    };
+                    close_paper_position(&rec.symbol, cur_price, "AI-Close", bot_state, weights, trade_logger, notifier).await;
+                    // Fire ai_action notification
+                    if let Some(n) = notifier {
+                        let n = n.clone();
+                        let sym = rec.symbol.clone();
+                        let reason = rec.reason.chars().take(120).collect::<String>();
+                        tokio::spawn(async move {
+                            n.ai_action(&sym, "close_now", &reason, r_for_notify).await;
+                        });
+                    }
                 } else {
                     info!("🤖 AI close {} SKIPPED — guardrail (need 45min hold + R<-0.25 + DCA exhausted/deep loss)", rec.symbol);
                 }
@@ -1083,6 +1125,8 @@ async fn analyse_symbol(
     btc_ret_4h:   f64,   // BTC 4h return % (for relative performance signal)
     trade_logger: &SharedTradeLogger,
     fee_bps:      u32,   // builder fee bps for this tenant (1 = Pro, 3 = Free)
+    notifier:     &Option<SharedNotifier>,   // webhook / Telegram notifier
+    onchain_cache: &SharedOnchain,           // exchange netflow signal
 ) -> Result<Option<(decision::Decision, SymbolIndicators)>> {
     let candles = market.fetch_market_data(symbol).await?;
     if candles.len() < 26 { return Ok(None); }
@@ -1121,11 +1165,33 @@ async fn analyse_symbol(
         })
     };
 
-    let dec = decision::make_decision(
+    let mut dec = decision::make_decision(
         &candles, &ind, &of, &w,
         sent.as_ref(), fund.as_ref(),
         ctx.as_ref(), htf.as_ref(),
     )?;
+
+    // ── On-chain exchange netflow signal ──────────────────────────────────
+    // Coinglass netflow: net USD flowing INTO exchanges = selling pressure (bearish).
+    // Flowing OUT = accumulation (bullish).  signal_strength() returns [-1, +1].
+    // We apply up to ±4% confidence adjustment on active (non-SKIP) decisions.
+    // Max impact is intentionally small — this is a supplementary signal, not primary.
+    if dec.action != "SKIP" {
+        let oc_strength = onchain_cache.get(symbol).await
+            .map(|od| od.signal_strength())
+            .unwrap_or(0.0);
+        if oc_strength.abs() > 0.05 {
+            // Aligned = netflow confirms trade direction → boost; opposed → penalty
+            let aligned = (dec.action == "BUY"  && oc_strength > 0.0)
+                       || (dec.action == "SELL" && oc_strength < 0.0);
+            let adj = oc_strength.abs() * 0.04 * if aligned { 1.0 } else { -1.0 };
+            dec.confidence = (dec.confidence + adj).clamp(0.0, 1.0);
+            log::debug!("{}: on-chain adj {:+.3} ({}) → conf={:.0}%",
+                symbol, adj,
+                if aligned { "aligned" } else { "opposed" },
+                dec.confidence * 100.0);
+        }
+    }
 
     log::debug!("{}: RSI={:.1} trend={:.2}% MACD={:.5} ATR={:.4} → {}",
         symbol, ind.rsi, ind.trend, ind.macd, ind.atr, dec.action);
@@ -1174,7 +1240,7 @@ async fn analyse_symbol(
     }
 
     if config.paper_trading && dec.action != "SKIP" {
-        execute_paper_trade(symbol, &dec, &ind, bot_state, weights, trade_logger).await;
+        execute_paper_trade(symbol, &dec, &ind, bot_state, weights, trade_logger, notifier).await;
     } else if !config.paper_trading && dec.action != "SKIP" {
         let account = hl.get_account().await?;
         if risk::should_trade(&dec, &account)? {
@@ -1305,6 +1371,7 @@ async fn execute_paper_trade(
     bot_state:    &SharedState,
     weights:      &SharedWeights,
     trade_logger: &SharedTradeLogger,
+    notifier:     &Option<SharedNotifier>,
 ) {
     let target_side = if dec.action == "BUY" { "LONG" } else { "SHORT" };
 
@@ -1363,9 +1430,33 @@ async fn execute_paper_trade(
             drop(s);
             info!("🔄 {} signal reversal: {} at {:.2}R  held={}  conf={:.0}%",
                   symbol, pos_side, r_mult_snap, cycles_snap, dec.confidence * 100.0);
-            close_paper_position(symbol, dec.entry_price, "SignalExit", bot_state, weights, trade_logger).await;
+            close_paper_position(symbol, dec.entry_price, "SignalExit", bot_state, weights, trade_logger, notifier).await;
         }
         // No existing: fall through to new entry
+    }
+
+    // ── Correlation filter ────────────────────────────────────────────────
+    // Prevents stacking highly-correlated same-direction positions (e.g. BTC+ETH LONG
+    // when corr=0.85 doubles macro exposure, not diversification).
+    // Uses 30-day rolling Pearson correlation from correlation.rs.
+    {
+        let s = bot_state.read().await;
+        match correlation::correlation_block(symbol, target_side, dec.confidence, &s.positions) {
+            correlation::CorrBlock::Blocked { existing, corr, existing_conf } => {
+                info!("⚡ {} {} blocked by correlation — {:.2} corr with {} \
+                       (conf {:.0}% ≤ existing {:.0}% + {:.0}% edge required)",
+                      symbol, target_side, corr, existing,
+                      dec.confidence * 100.0, existing_conf * 100.0,
+                      correlation::CONF_EDGE * 100.0);
+                return;
+            }
+            correlation::CorrBlock::Override { existing, corr } => {
+                info!("⚡ {} {} corr-override approved — {:.2} corr with {} \
+                       (confidence edge sufficient)",
+                      symbol, target_side, corr, existing);
+            }
+            correlation::CorrBlock::Clear => {}
+        }
     }
 
     // ── Open new position ─────────────────────────────────────────────────
@@ -1416,6 +1507,14 @@ async fn execute_paper_trade(
             peak_equity:    rolling_peak,
             current_equity: equity,
         });
+        // Fire circuit-breaker webhook notification
+        if let Some(n) = notifier {
+            let n = n.clone();
+            let dd = drawdown * 100.0;
+            tokio::spawn(async move {
+                n.circuit_breaker(dd, CB_SIZE_MULT).await;
+            });
+        }
     }
 
     let pct          = position_size_pct(dec.confidence, &metrics, in_cb);
@@ -1496,6 +1595,7 @@ async fn execute_paper_trade(
         contrib:          dec.signal_contribution.clone(),
         ai_action:        None,
         ai_reason:        None,
+        entry_confidence: dec.confidence,
     });
 
     let kelly_str = if metrics.kelly_fraction() > 0.0 {
@@ -1526,6 +1626,21 @@ async fn execute_paper_trade(
         portfolio_heat_pct: p_heat * 100.0,
         kelly_pct:          metrics.kelly_fraction() * 100.0,
     });
+
+    // ── Fire position-opened webhook / Telegram notification ──────────────
+    if let Some(n) = notifier {
+        let n       = n.clone();
+        let sym     = symbol.to_string();
+        let side    = target_side.to_string();
+        let entry   = dec.entry_price;
+        let sz      = size_usd;
+        let conf    = dec.confidence;
+        let sl      = dec.stop_loss;
+        let lev     = leverage;
+        tokio::spawn(async move {
+            n.position_opened(&sym, &side, entry, sz, conf, sl, lev).await;
+        });
+    }
 }
 
 /// Add 50% of original entry size to an existing winning position (pyramid).
@@ -1774,6 +1889,7 @@ async fn close_paper_position(
     bot_state:    &SharedState,
     weights:      &SharedWeights,
     trade_logger: &SharedTradeLogger,
+    notifier:     &Option<SharedNotifier>,
 ) {
     let mut s = bot_state.write().await;
 
@@ -1864,6 +1980,7 @@ async fn close_paper_position(
             leverage:   pos.leverage,
             fees_est:   fees_full,
             breakdown,
+            note:       None,   // operator can add note via POST /api/trade-note
         };
         ledger::append(&full_trade);
         s.closed_trades.push(full_trade);
@@ -1895,6 +2012,20 @@ async fn close_paper_position(
             dca_count:        pos.dca_count,
             tranches_closed:  pos.tranches_closed,
         });
+
+        // ── Fire position-closed webhook / Telegram notification ─────────────
+        if let Some(n) = notifier {
+            let n        = n.clone();
+            let sym      = symbol.to_string();
+            let side     = pos.side.clone();
+            let pnl      = trade_pnl;
+            let pct      = pnl_pct;
+            let why      = reason.to_string();
+            let r        = r_at_close;
+            tokio::spawn(async move {
+                n.position_closed(&sym, &side, pnl, pct, &why, r).await;
+            });
+        }
 
         // ── Online signal weight learning ─────────────────────────────────
         drop(s);
@@ -1952,8 +2083,9 @@ mod tests {
             entry_time:      "00:00:00 UTC".to_string(),
             unrealised_pnl:  0.0,
             contrib:         SignalContribution::default(),
-            ai_action:       None,
-            ai_reason:       None,
+            ai_action:        None,
+            ai_reason:        None,
+            entry_confidence: 0.68,
         }
     }
 

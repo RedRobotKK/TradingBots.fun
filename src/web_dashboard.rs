@@ -105,7 +105,13 @@ pub struct PaperPosition {
     pub ai_action: Option<String>,   // "scale_up" | "hold" | "scale_down" | "close_now"
     #[serde(default)]
     pub ai_reason: Option<String>,   // Claude's one-line rationale
+    // ── Correlation filter ────────────────────────────────────────────────
+    /// Signal confidence at entry — compared against incoming correlated signals.
+    #[serde(default = "default_min_confidence")]
+    pub entry_confidence: f64,
 }
+
+fn default_min_confidence() -> f64 { 0.68 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClosedTrade {
@@ -136,6 +142,11 @@ pub struct ClosedTrade {
     /// HTML snippet shown when user clicks the row — technicals + AI reasoning.
     #[serde(default)]
     pub breakdown:  Option<String>,
+    // ── Trade journal ─────────────────────────────────────────────────────
+    /// Operator note added after close: "false MACD signal in chop",
+    /// "re-entered too early", etc.  Written via POST /api/trade-note.
+    #[serde(default)]
+    pub note:       Option<String>,
 }
 
 fn default_one() -> f64 { 1.0 }
@@ -3776,6 +3787,111 @@ async fn funnel_event_handler(
     StatusCode::NO_CONTENT
 }
 
+// ─────────────────────────── Trade journal ───────────────────────────────────
+
+/// Payload for `POST /api/trade-note`.
+#[derive(Debug, Deserialize)]
+struct TradeNotePayload {
+    /// Index into `bot_state.closed_trades` (0 = most recent).
+    index: usize,
+    /// Operator's plain-text note — max 500 chars.
+    note:  String,
+}
+
+/// `POST /api/trade-note` — attach an operator note to a closed trade.
+///
+/// The note is written to the in-memory `ClosedTrade` and also persisted to
+/// the PostgreSQL `closed_trade_notes` table so it survives restarts.
+///
+/// Requires a valid admin session (checked via `ADMIN_PASSWORD`).
+/// Returns 204 No Content on success, 400 on bad input, 404 if index OOB.
+async fn trade_note_handler(
+    State(app):  State<AppState>,
+    headers:     HeaderMap,
+    body:        axum::extract::Json<TradeNotePayload>,
+) -> axum::http::StatusCode {
+    use axum::http::StatusCode;
+
+    // Simple admin gate: require the same HTTP-Basic admin password used on /admin.
+    // In production this endpoint is only hit from the admin panel JS.
+    if let Some(pw) = &app.admin_password {
+        let auth = headers
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        // Accept both "Basic <b64(admin:pw)>" and bare bearer token equal to password.
+        let b64 = base64_encode(&format!("admin:{}", pw));
+        let expected_basic = format!("Basic {}", b64);
+        if auth != expected_basic && auth != pw.as_str() {
+            return StatusCode::UNAUTHORIZED;
+        }
+    }
+
+    let payload = body.0;
+
+    // Validate note length.
+    if payload.note.len() > 500 {
+        return StatusCode::BAD_REQUEST;
+    }
+
+    // Write into in-memory state.
+    {
+        let mut state = app.bot_state.write().await;
+        match state.closed_trades.get_mut(payload.index) {
+            Some(trade) => {
+                trade.note = Some(payload.note.clone());
+            }
+            None => return StatusCode::NOT_FOUND,
+        }
+    }
+
+    // Persist to DB (best-effort — don't fail the request if DB is down).
+    if let Some(db) = &app.db {
+        let db = db.lock().await;
+        let idx = payload.index as i64;
+        let note = payload.note.clone();
+        let _ = sqlx::query!(
+            "INSERT INTO closed_trade_notes (trade_index, note, updated_at)
+             VALUES ($1, $2, NOW())
+             ON CONFLICT (trade_index) DO UPDATE
+               SET note = EXCLUDED.note, updated_at = NOW()",
+            idx,
+            note,
+        )
+        .execute(&db.pool)
+        .await;
+    }
+
+    StatusCode::NO_CONTENT
+}
+
+/// Minimal base64 encoder (no external dep) — only used for the Basic-Auth check above.
+fn base64_encode(input: &str) -> String {
+    use std::fmt::Write;
+    const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let bytes = input.as_bytes();
+    let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
+        let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        let _ = write!(out, "{}", TABLE[((n >> 18) & 0x3f) as usize] as char);
+        let _ = write!(out, "{}", TABLE[((n >> 12) & 0x3f) as usize] as char);
+        if chunk.len() > 1 {
+            let _ = write!(out, "{}", TABLE[((n >> 6) & 0x3f) as usize] as char);
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            let _ = write!(out, "{}", TABLE[(n & 0x3f) as usize] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
+}
+
 pub async fn serve(app_state: AppState, port: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let app = Router::new()
         .route("/", get(dashboard_handler))
@@ -3812,6 +3928,8 @@ pub async fn serve(app_state: AppState, port: u16) -> Result<(), Box<dyn std::er
         .route("/api/public/tvl/svg",   get(public_tvl_svg_handler))
         // ── Funnel / analytics (first-party, no third-party scripts) ───────
         .route("/api/funnel",           post(funnel_event_handler))
+        // ── Trade journal ────────────────────────────────────────────────
+        .route("/api/trade-note",       post(trade_note_handler))
         // ── Leaderboard & invite codes ──────────────────────────────────────
         .route("/leaderboard",          get(leaderboard_handler))
         .route("/app/invite",           get(get_invite_handler))
@@ -3859,8 +3977,9 @@ mod tests {
             entry_time:      "00:00:00 UTC".to_string(),
             unrealised_pnl:  upnl,
             contrib:         SignalContribution::default(),
-            ai_action:       None,
-            ai_reason:       None,
+            ai_action:        None,
+            ai_reason:        None,
+            entry_confidence: 0.68,
         }
     }
 

@@ -16,6 +16,40 @@
 
 /// tradingbots.fun — live trading bot crate.
 ///
-/// The live binary lives entirely in `main.rs` (and its `mod` declarations).
-/// This lib crate is reserved for future library consumers or integration tests.
+/// The live binary lives in `main.rs`.  Modules that need to be accessible from
+/// integration tests (`/tests/`) are re-exported here via `pub mod`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+// ── Modules needed by integration tests ──────────────────────────────────────
+pub mod correlation;
+pub mod notifier;
+pub mod onchain;
+pub mod learner;
+pub mod web_dashboard;
+pub mod metrics;
+pub mod db;
+pub mod tenant;
+pub mod privy;
+pub mod stripe;
+pub mod config;
+pub mod data;
+pub mod indicators;
+pub mod signals;
+pub mod risk;
+pub mod exchange;
+pub mod decision;
+pub mod persistence;
+pub mod sentiment;
+pub mod funding;
+pub mod trade_log;
+pub mod daily_analyst;
+pub mod ledger;
+pub mod candlestick_patterns;
+pub mod chart_patterns;
+pub mod ai_reviewer;
+pub mod coins;
+pub mod fund_tracker;
+pub mod funnel;
+pub mod invite;
+pub mod leaderboard;
+pub mod mailer;
