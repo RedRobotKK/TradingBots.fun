@@ -720,15 +720,18 @@ pub fn make_decision(
     // ═════════════════════════════════════════════════════════════════════════
     //  14. Cross-exchange price divergence  (HL vs Binance/ByBit/OKX)
     // ═════════════════════════════════════════════════════════════════════════
-    // When HL trades above major CEXes by ≥0.25% for ≥3 consecutive cycles,
-    // there is local buying pressure not yet reflected on CEXes.  This adds
-    // a tiny bull signal (max 0.03) — smaller than any core signal weight.
-    // The gate requires both a minimum divergence AND persistence because
-    // single-tick price differences are exchange-spread noise, not signal.
+    // CEX prices polled every 60s; HL mid comes from allMids already in hand.
     //
-    // Signal direction:
-    //   HL > CEX  (positive premium)  →  local buy pressure  →  mild bull
-    //   HL < CEX  (negative premium)  →  local sell pressure →  mild bear
+    // MOMENTUM mode  (divergence 0.25 – 1.5%):
+    //   HL > CEX → HL leading price discovery → mild BULL  (max weight 0.03)
+    //   HL < CEX → local sell pressure        → mild BEAR  (max weight 0.03)
+    //
+    // MEAN-REVERSION mode  (divergence ≥ 1.5%, or ≥ 2% extreme bypass):
+    //   HL > CEX → HL overshot; arb will sell HL back down → BEAR
+    //   HL < CEX → HL undershot; buying restores parity   → BULL
+    //   Weight scales to 0.12 at 3% (≈ order_flow weight).
+    //   Direction is FLIPPED vs momentum — intentional contrarian signal.
+    //   Extreme bypass (≥2%): activates immediately, no 3-cycle wait.
     if let Some(cex) = cex_signal {
         let (cex_bull, cex_bear) = cex.score_contribution();
         if cex_bull > 0.0 || cex_bear > 0.0 {

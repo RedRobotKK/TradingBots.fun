@@ -298,11 +298,14 @@ impl CrossExchangeMonitor {
         let persistence = r.persistence.get(symbol).cloned().unwrap_or_default();
 
         // Determine activation.
-        // Normal path: anomaly must exceed threshold AND persist ≥3 cycles.
+        // Note: tick_persistence() is called AFTER evaluate() in main.rs, so
+        // `persistence.cycles` holds the count from PREVIOUS cycles only.
+        // We add +1 to count the current cycle, making PERSISTENCE_CYCLES = 3
+        // activate exactly on the 3rd consecutive cycle (not the 4th).
+        let normal_active  = (persistence.cycles + 1) >= PERSISTENCE_CYCLES
+                             && abs_pct >= ANOMALY_THRESHOLD_PCT;
         // Extreme bypass: divergence ≥2% activates immediately (no persistence wait)
         // because the arb window may close before 3 cycles have elapsed.
-        let normal_active  = persistence.cycles >= PERSISTENCE_CYCLES
-                             && abs_pct >= ANOMALY_THRESHOLD_PCT;
         let extreme_bypass = abs_pct >= EXTREME_THRESHOLD_PCT;
         let active = normal_active || extreme_bypass;
 
@@ -363,10 +366,11 @@ impl CrossExchangeMonitor {
     }
 
     /// Number of symbols with an active (persistent) anomaly.
+    /// Uses the same `+1` offset as `evaluate()` so counts stay in sync.
     pub async fn active_anomaly_count(&self) -> usize {
         let r = self.inner.read().await;
         r.persistence.values()
-            .filter(|e| e.cycles >= PERSISTENCE_CYCLES && e.direction != 0)
+            .filter(|e| (e.cycles + 1) >= PERSISTENCE_CYCLES && e.direction != 0)
             .count()
     }
 
