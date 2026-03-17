@@ -1,0 +1,91 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-03-17T20:29:10Z",
+    "commit": "4a6e38a",
+    "commit_full": "4a6e38ac23db1f9dca84241104b241ee787e6364",
+    "commit_message": "fix: add note: None to ClosedTrade in take_partial",
+    "branch": "master",
+    "overall_status": "FAILED",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
+    "cargo": "cargo 1.93.1 (083ac5135 2025-12-15)",
+    "os_kernel": "6.8.0-106-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 7,
+      "total_passed": 0,
+      "total_failed": 0,
+      "total_ignored": 0,
+      "failures": []
+    },
+    "clippy": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 23,
+      "error_count": 3,
+      "errors": [
+        {
+          "code": "E",
+          "message": "this `map_or` can be simplified",
+          "file": "src/onchain.rs",
+          "line": 140,
+          "col": 13
+        },
+        {
+          "code": "E",
+          "message": "manually reimplementing `div_ceil`",
+          "file": "src/web_dashboard.rs",
+          "line": 3873,
+          "col": 41
+        },
+        {
+          "code": "E",
+          "message": "could not compile `tradingbots-fun` (lib) due to 2 previous errors"
+        }
+      ]
+    },
+    "audit": {
+      "status": "ADVISORY",
+      "exit_code": 1,
+      "duration_seconds": 3,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2023-0071",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2023-0071",
+          "severity": "5.9 (medium)",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "tradingbots",
+    "status": "active",
+    "active_since": "Tue 2026-03-17 20:26:45 UTC",
+    "recent_logs": [
+      "Mar 17 20:26:45 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: tradingbots.service: Deactivated successfully.",
+      "Mar 17 20:26:45 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Stopped tradingbots.service - TradingBots.fun.",
+      "Mar 17 20:26:45 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: tradingbots.service: Consumed 1.413s CPU time, 12.9M memory peak, 0B memory swap peak.",
+      "Mar 17 20:26:45 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Starting tradingbots.service - TradingBots.fun...",
+      "Mar 17 20:26:45 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Started tradingbots.service - TradingBots.fun."
+    ]
+  }
+}
