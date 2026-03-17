@@ -564,29 +564,31 @@ if $DO_PROVISION_DB; then
   done
 
   # ── Get connection details from the cluster ───────────────────────────────
-  # Extract individual fields so we can substitute db.tradingbots.fun as the
-  # canonical, stable hostname instead of the DO-generated one.
+  # doctl databases connection returns the default (defaultdb) URI only.
+  # We substitute the database name to build per-environment URIs.
   DB_CANONICAL_HOST="db.tradingbots.fun"
   DB_PORT=25060
 
-  RAW_STAGING_URI=$(doctl databases connection "$DB_CLUSTER_ID" \
-    --database tradingbots_staging --format URI --no-header)
-  RAW_PROD_URI=$(doctl databases connection "$DB_CLUSTER_ID" \
-    --database tradingbots --format URI --no-header)
+  RAW_BASE_URI=$(doctl databases connection "$DB_CLUSTER_ID" \
+    --format URI --no-header)
 
-  # Pull user+password out of the raw URI (format: postgres://user:pass@host:port/db?sslmode=require)
-  DB_USER=$(echo "$RAW_STAGING_URI" | sed -E 's|postgres://([^:]+):.*|\1|')
-  DB_PASS=$(echo "$RAW_STAGING_URI" | sed -E 's|postgres://[^:]+:([^@]+)@.*|\1|')
+  # Substitute defaultdb → specific logical database names
+  RAW_STAGING_URI="${RAW_BASE_URI/defaultdb/tradingbots_staging}"
+  RAW_PROD_URI="${RAW_BASE_URI/defaultdb/tradingbots}"
 
-  # Extract the real DO hostname so the user can set the CNAME
-  DO_DB_HOST=$(echo "$RAW_STAGING_URI" | sed -E 's|postgres://[^@]+@([^:]+):.*|\1|')
+  # Pull user+password out of the raw URI (format: postgresql://user:pass@host:port/db?sslmode=require)
+  DB_USER=$(echo "$RAW_BASE_URI" | sed -E 's|postgresql://([^:]+):.*|\1|')
+  DB_PASS=$(echo "$RAW_BASE_URI" | sed -E 's|postgresql://[^:]+:([^@]+)@.*|\1|')
+
+  # Extract the real DO hostname so we can create the CNAME record
+  DO_DB_HOST=$(echo "$RAW_BASE_URI" | sed -E 's|postgresql://[^@]+@([^:]+):.*|\1|')
 
   # Build canonical connection URIs using db.tradingbots.fun
-  STAGING_DB_URI="postgres://${DB_USER}:${DB_PASS}@${DB_CANONICAL_HOST}:${DB_PORT}/tradingbots_staging?sslmode=require"
-  PROD_DB_URI="postgres://${DB_USER}:${DB_PASS}@${DB_CANONICAL_HOST}:${DB_PORT}/tradingbots?sslmode=require"
+  STAGING_DB_URI="postgresql://${DB_USER}:${DB_PASS}@${DB_CANONICAL_HOST}:${DB_PORT}/tradingbots_staging?sslmode=require"
+  PROD_DB_URI="postgresql://${DB_USER}:${DB_PASS}@${DB_CANONICAL_HOST}:${DB_PORT}/tradingbots?sslmode=require"
 
   success "Connection strings built using canonical host: ${DB_CANONICAL_HOST}"
-  info  "DO cluster hostname (needed for CNAME): ${DO_DB_HOST}"
+  info  "DO cluster hostname (for CNAME): ${DO_DB_HOST}"
 
   # ── Create db.tradingbots.fun CNAME in DigitalOcean DNS ───────────────────
   APP_DOMAIN="tradingbots.fun"
