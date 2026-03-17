@@ -1,12 +1,10 @@
 [Unit]
 Description=TradingBots.fun
-# Start after both the network AND PostgreSQL are ready.
-# Without this ordering the bot starts before pg is accepting connections
-# and the pool fails silently, never reconnecting.
-After=network-online.target postgresql.service
+# Start after the network is ready.
+# Database is a remote DO managed cluster (db.tradingbots.fun:25060),
+# so there is no local postgresql.service dependency.
+After=network-online.target
 Wants=network-online.target
-# Hard dependency: if PostgreSQL fails to start, don't start the bot.
-Requires=postgresql.service
 # Cap restart attempts: 5 restarts within 2 minutes → service enters
 # failed state so the operator is alerted rather than spinning forever.
 # NOTE: StartLimitIntervalSec/Burst must be in [Unit], not [Service].
