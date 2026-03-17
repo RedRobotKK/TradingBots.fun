@@ -110,6 +110,10 @@ struct PositionContext {
     notional_usd:        f64,
     hold_time_minutes:   u64,
     dca_count:           u8,
+    /// Remaining DCA add-ons available (max 2 minus used).
+    /// IMPORTANT: if dca_remaining > 0 the strategy has a built-in rescue
+    /// mechanism — do NOT recommend close_now just because R is negative.
+    dca_remaining:       u8,
     stop_loss:           f64,
     take_profit:         f64,
     tranches_closed:     u8,
@@ -180,6 +184,7 @@ async fn review_inner(
             notional_usd:       (p.size_usd * p.leverage * 100.0).round() / 100.0,
             hold_time_minutes:  p.cycles_held / 2,
             dca_count:          p.dca_count,
+            dca_remaining:      2u8.saturating_sub(p.dca_count),
             stop_loss:          p.stop_loss,
             take_profit:        p.take_profit,
             tranches_closed:    p.tranches_closed,
@@ -209,17 +214,37 @@ async fn review_inner(
     // ── System prompt ────────────────────────────────────────────────────
     let system_prompt = r#"You are a senior quantitative risk manager for a crypto perpetuals trading bot. Your role: review each open position and decide whether to scale up, hold, scale down, or close — to maximise risk-adjusted returns while protecting capital.
 
-Decision rules:
-- scale_up (factor 1.2–2.0): ONLY when R-multiple > 0.5R AND hold_time < 240 min AND momentum is clearly positive. Never exceed 2× the current notional.
-- hold (factor 1.0): DEFAULT. Let the existing stop/take-profit strategy run.
-- scale_down (factor 0.25–0.75): When position is stagnating (|R| < 0.2 after 60+ min) or risk/reward has deteriorated. Always leave at least 25% of position.
-- close_now (factor 0.0): ONLY when R-multiple < −0.4R with no recovery prospect, OR signal has clearly failed.
+## Decision rules (read every rule before deciding)
 
-Key facts about this bot's strategy:
+**hold (factor 1.0) — THIS IS YOUR DEFAULT**
+Use hold unless you have a strong, specific reason not to. Crypto positions regularly move -0.4R in the first 30–60 min before reversing. Do NOT close or scale down based on short-term noise.
+
+**scale_up (factor 1.2–2.0)**
+ONLY when ALL of: R > 0.5, hold_time > 30 min, momentum clearly positive. Cap at 2×.
+
+**scale_down (factor 0.25–0.75)**
+When position has been GENUINELY stagnant (|R| < 0.15 for 90+ min) AND dca_remaining = 0. Keep at least 25%.
+
+**close_now (factor 0.0) — USE SPARINGLY**
+ONLY when ALL of these are true:
+  1. hold_time_minutes > 45 (position is not in early drawdown)
+  2. r_multiple < -0.40
+  3. dca_remaining = 0 (no rescue mechanism left) OR r_multiple < -0.60
+  4. There is clear evidence the signal has structurally failed — NOT just because price dipped
+Do NOT close_now when: dca_remaining > 0, hold_time < 45 min, or R is between -0.25 and 0.
+
+## Key strategy facts
 - Exits: 1/3 at 2R, 1/3 at 4R, trail final 1/3. Trailing stop activates at 1.5R.
-- DCA: up to 2 adds allowed when position is between −0.15R and −0.75R.
-- Time exits: 2–4 hours minimum (stale flat positions only).
-- Leverage: 1.5× to 5× based on signal confidence and market regime.
+- DCA: up to 2 adds available (see dca_remaining field). If dca_remaining > 0, the strategy has a built-in rescue — a negative R position may recover after a DCA add.
+- Time exits: handled automatically at 2–4 hours. You do NOT need to time-exit positions.
+- Leverage: 1.5× to 5×. Higher leverage = normal drawdown looks large in USD but is small in R.
+- Stop-loss handles catastrophic losses — your role is to protect against slow bleed and capture winners.
+
+## Common mistakes to avoid
+- Closing a 30-min-old position at -0.3R: this is normal early drawdown, NOT a failed signal
+- Closing when dca_remaining > 0: let DCA rescue the trade first
+- Treating a brief dip below entry as "signal failed": crypto is noisy, wait for confirmation
+- Closing profitable or breakeven positions (R ≥ 0): never close_now when R ≥ 0
 
 Respond with ONLY valid JSON (no markdown, no preamble):
 {

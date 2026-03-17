@@ -909,20 +909,40 @@ async fn apply_ai_review(
 
         match rec.action.as_str() {
             "close_now" => {
-                // Execute AI close_now: AI reviewer already applies conservative criteria
-                // (stagnation, failed signal, or genuine loss). Trust it.
-                // Only skip if position is brand-new (< 15 min) to avoid noise.
+                // Hard guardrails before trusting AI close_now.  The AI is
+                // given a single snapshot every 5 min with no trajectory context,
+                // so it can fire prematurely on normal early drawdown or noise.
+                //
+                // All three conditions must hold:
+                //   1. Min hold 45 min (90 cycles) — crypto regularly pulls -0.4R
+                //      in the first 15–30 min before reversing; don't let AI cut
+                //      those trades short.
+                //   2. Position is genuinely losing (R < -0.25) — prevents AI from
+                //      closing breakeven or mildly profitable trades on "signal
+                //      failed" noise.
+                //   3. Either DCA slots are exhausted (dca_count ≥ 2, so there is
+                //      no remaining rescue mechanism) OR loss is deep (R < -0.50).
+                //      If DCA is still available the strategy should try it first.
                 let should_close = {
                     let s = bot_state.read().await;
                     s.positions.iter().find(|p| p.symbol == rec.symbol)
-                        .map(|p| p.cycles_held >= 30) // 30 cycles × 30s = 15 min minimum hold
+                        .map(|p| {
+                            let r = if p.r_dollars_risked > 1e-8 {
+                                p.unrealised_pnl / p.r_dollars_risked
+                            } else { 0.0 };
+                            let min_hold_met     = p.cycles_held >= 90; // 45 min
+                            let genuinely_losing = r < -0.25;
+                            let dca_exhausted    = p.dca_count >= 2;    // no more adds available
+                            let deep_loss        = r < -0.50;           // beyond DCA rescue zone
+                            min_hold_met && genuinely_losing && (dca_exhausted || deep_loss)
+                        })
                         .unwrap_or(false)
                 };
                 if should_close {
                     info!("🤖 AI close: {} — {}", rec.symbol, rec.reason);
                     close_paper_position(&rec.symbol, cur_price, "AI-Close", bot_state, weights, trade_logger).await;
                 } else {
-                    info!("🤖 AI close {} SKIPPED — position too new (< 15 min hold time)", rec.symbol);
+                    info!("🤖 AI close {} SKIPPED — guardrail (need 45min hold + R<-0.25 + DCA exhausted/deep loss)", rec.symbol);
                 }
             }
 
@@ -950,13 +970,19 @@ async fn apply_ai_review(
                             let add_qty   = add_usd * lev / cur_price;
                             let old_qty   = s.positions[idx].quantity;
                             let old_entry = s.positions[idx].entry_price;
+                            let old_stop  = s.positions[idx].stop_loss;
                             let new_qty   = old_qty + add_qty;
                             // Update weighted average entry so unrealised_pnl stays correct
                             let avg_entry = (old_entry * old_qty + cur_price * add_qty) / new_qty;
-                            s.capital                   -= add_usd;
-                            s.positions[idx].quantity    = new_qty;
-                            s.positions[idx].size_usd   += add_usd;
-                            s.positions[idx].entry_price = avg_entry;
+                            s.capital                        -= add_usd;
+                            s.positions[idx].quantity         = new_qty;
+                            s.positions[idx].size_usd        += add_usd;
+                            s.positions[idx].entry_price      = avg_entry;
+                            // FIX: update r_dollars_risked to reflect larger position.
+                            // Without this the AI sees an inflated (falsely negative) R-multiple
+                            // on the next review cycle, increasing the risk of a premature close.
+                            s.positions[idx].r_dollars_risked =
+                                (avg_entry - old_stop).abs() * new_qty;
                             info!("🤖 AI scale-up {} ×{:.2}  +${:.2} — {}", rec.symbol, factor, add_usd, rec.reason);
                         }
                     }
@@ -966,12 +992,15 @@ async fn apply_ai_review(
             }
 
             "scale_down" => {
-                // Guardrail: keep at least 25% of position
+                // Guardrail: keep at least 25% AND enforce minimum hold time.
+                // Early scale_down on a young position sabotages both the DCA
+                // rescue path and the R-multiple exit tranches.
                 let keep_frac = rec.factor.clamp(0.25, 0.99);
                 let close_frac = 1.0 - keep_frac;
                 let (close_usd, close_qty) = {
                     let s = bot_state.read().await;
                     s.positions.iter().find(|p| p.symbol == rec.symbol)
+                        .filter(|p| p.cycles_held >= 60) // 30 min minimum before any scale_down
                         .map(|p| (p.size_usd * close_frac, p.quantity * close_frac))
                         .unwrap_or((0.0, 0.0))
                 };
