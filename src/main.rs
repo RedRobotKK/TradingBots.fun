@@ -1845,6 +1845,7 @@ async fn take_partial(
             leverage:   leverage_partial,
             fees_est:   fees_partial,
             breakdown:  partial_breakdown,
+            note:       None,
         };
         ledger::append(&partial_trade);
         s.closed_trades.push(partial_trade);
