@@ -811,6 +811,251 @@ async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
         total_closed = s.closed_trades.len(),
     );
 
+    // ── New format args for metric modals ──────────────────────────────────
+    // These are injected as raw floats/ints so the JS modal can display them
+    // and compute gauge positions without dealing with formatted strings.
+    let expect_signed = m.expectancy;  // signed (not .abs())
+    let pf_float  = if m.profit_factor.is_infinite() { 999.0f64 } else { m.profit_factor };
+    let kelly_float = m.kelly_fraction();   // -1.0 = sentinel "not enough data"
+    let cb_int    = if cb_active { 1i32 } else { 0i32 };
+    let wr_float  = m.win_rate * 100.0;
+
+    // ── METRIC_INFO: static JS data injected as a raw string (no brace escaping) ──
+    // Injected via {metric_info_js} format arg so real {/} in JS don't need doubling.
+    let metric_info_js = r#"
+var METRIC_INFO={
+  sharpe:{
+    name:'Sharpe Ratio',
+    fmt:function(v){return v.toFixed(2);},
+    gmin:-1.5,gmax:3.0,
+    zones:[{t:0,l:'Losing',c:'#f85149'},{t:0.5,l:'Weak',c:'#e3b341'},{t:1.0,l:'Acceptable',c:'#e3b341'},{t:2.0,l:'Good',c:'#3fb950'},{t:99,l:'Excellent',c:'#3fb950'}],
+    formula:'Avg(trade returns) ÷ StdDev(all returns)',
+    notes:['Returns are P&L as % of margin committed per trade.','StdDev captures both winning and losing swings — all volatility.','Based on every closed trade (and partial close) this session.'],
+    verdict:function(v){
+      if(v>2.5)return['#3fb950','🟢 Exceptional — top funds target >1.5. Strong returns with consistently low noise.'];
+      if(v>1.5)return['#3fb950','🟢 Great — a genuinely good risk-adjusted edge. Earning well per unit of risk taken.'];
+      if(v>0.5)return['#e3b341','🟡 Acceptable — real edge present but somewhat noisy. Tighter exits might improve this.'];
+      if(v>0)return['#e3b341','🟡 Weak — barely above zero. The edge may not survive a rough market patch.'];
+      return['#f85149','🔴 Negative — losses outpacing gains. The Sharpe multiplier is automatically scaling down position sizes.'];
+    }
+  },
+  sortino:{
+    name:'Sortino Ratio',
+    fmt:function(v){return v.toFixed(2);},
+    gmin:-1.5,gmax:4.0,
+    zones:[{t:0,l:'Losing',c:'#f85149'},{t:0.5,l:'Weak',c:'#e3b341'},{t:1.0,l:'OK',c:'#e3b341'},{t:2.0,l:'Good',c:'#3fb950'},{t:99,l:'Excellent',c:'#3fb950'}],
+    formula:'Avg(trade returns) ÷ StdDev(losing returns only)',
+    notes:['Like Sharpe, but the denominator only counts losing trades — upside volatility is not penalised.','Sortino > Sharpe: your losses are well-contained relative to wins (ideal).','Sortino < Sharpe: your losses are disproportionately volatile and dragging the ratio down.'],
+    verdict:function(v){
+      if(v>3.0)return['#3fb950','🟢 Exceptional — downside is extremely well-contained relative to average gain.'];
+      if(v>2.0)return['#3fb950','🟢 Excellent — losses are small and predictable. The hallmark of disciplined risk management.'];
+      if(v>1.0)return['#3fb950','🟢 Good — losing trades are reasonably controlled. A healthy strategy profile.'];
+      if(v>0)return['#e3b341','🟡 Neutral — some downside noise present. Reviewing stop-loss placement may help.'];
+      return['#f85149','🔴 Negative — losing trades are too large or too frequent relative to wins.'];
+    }
+  },
+  expect:{
+    name:'Expectancy',
+    fmt:function(v){return(v>=0?'+':'')+v.toFixed(2)+'%';},
+    gmin:-4.0,gmax:5.0,
+    zones:[{t:-1,l:'Losing',c:'#f85149'},{t:0,l:'Marginal',c:'#e3b341'},{t:0.5,l:'OK',c:'#e3b341'},{t:2.0,l:'Good',c:'#3fb950'},{t:99,l:'Strong',c:'#3fb950'}],
+    formula:'Win Rate × Avg Win% − Loss Rate × Avg Loss%',
+    notes:['The expected P&L per trade, as % of the margin committed.','e.g. +1.5% means: each trade is expected to return 1.5% of its margin on average.','This is the single best indicator of whether the strategy has a sustainable edge.','A negative expectancy means the system loses money over time regardless of luck.'],
+    verdict:function(v){
+      if(v>3.0)return['#3fb950','🟢 Strong edge — each trade is expected to return >3% of its margin on average.'];
+      if(v>1.0)return['#3fb950','🟢 Solid edge — meaningful per-trade return. Sustainable with consistent execution.'];
+      if(v>0)return['#e3b341','🟡 Slim edge — positive but small. Fees could eat this: verify builder fee tier is correct.'];
+      if(v>-1)return['#e3b341','🟡 Marginally negative — just below break-even. Minor exit improvements could flip this positive.'];
+      return['#f85149','🔴 Negative — losing more on losses than winning on winners. Review entry criteria and stop placement.'];
+    }
+  },
+  pf:{
+    name:'Profit Factor',
+    fmt:function(v){return v>=999?'∞ (no losses yet)':v.toFixed(2)+'×';},
+    gmin:0,gmax:3.5,
+    zones:[{t:0.8,l:'Losing',c:'#f85149'},{t:1.0,l:'Marginal',c:'#e3b341'},{t:1.5,l:'OK',c:'#e3b341'},{t:2.5,l:'Good',c:'#3fb950'},{t:99,l:'Excellent',c:'#3fb950'}],
+    formula:'Total $ Won ÷ Total $ Lost  (all closed trades)',
+    notes:['1.0 = exactly break-even before fees.','2.0 = earned $2 for every $1 lost in total.','Works with win rate: a 40% win rate is fine if profit factor is 2.5+.','Unlike win rate, profit factor accounts for the SIZE of wins and losses — not just their count.'],
+    verdict:function(v){
+      if(v>=999)return['#3fb950','🟢 No closed losses yet — a real ratio forms as more trades complete. Enjoy it while it lasts.'];
+      if(v>2.5)return['#3fb950','🟢 Excellent — winning significantly more in dollar terms than losing.'];
+      if(v>1.5)return['#3fb950','🟢 Good — healthy ratio, sustainable even with normal variance in win rate.'];
+      if(v>1.0)return['#e3b341','🟡 Marginal — just above break-even. After fees the real edge is very thin.'];
+      return['#f85149','🔴 Below 1 — gross losses exceed gross wins. Review trade management and exits.'];
+    }
+  },
+  wr:{
+    name:'Win Rate',
+    fmt:function(v){return v.toFixed(1)+'%';},
+    gmin:0,gmax:100,
+    zones:[{t:35,l:'Very Low',c:'#f85149'},{t:45,l:'Low',c:'#e3b341'},{t:55,l:'Neutral',c:'#e3b341'},{t:65,l:'Good',c:'#3fb950'},{t:100,l:'High',c:'#3fb950'}],
+    formula:'Winning Trades ÷ Total Closed Trades × 100',
+    notes:['⚠️ Win rate alone does NOT determine profitability.','A 40% win rate with avg winner 3× avg loser = profitable.','A 70% win rate with tiny wins and huge losses = losing money.','Always read win rate alongside Expectancy and Profit Factor.'],
+    verdict:function(v){
+      if(v>65)return['#3fb950','🟢 High — consistently winning more than losing. Very comfortable profile to manage.'];
+      if(v>55)return['#3fb950','🟢 Above average — more trades are winners than losers. Solid if avg win ≥ avg loss.'];
+      if(v>45)return['#e3b341','🟡 Near 50/50 — profitability entirely depends on avg win being bigger than avg loss.'];
+      if(v>35)return['#e3b341','🟡 Below average — can still be profitable (trend-following often runs 35-45%) if winners are large.'];
+      return['#f85149','🔴 Very low — unless avg wins are 3-4× avg losses, this strategy will bleed over time.'];
+    }
+  },
+  dd:{
+    name:'7-Day Rolling Drawdown',
+    fmt:function(v){return'-'+v.toFixed(1)+'%';},
+    gmin:0,gmax:15,
+    invert:true,
+    zones:[{t:2,l:'Minimal',c:'#3fb950'},{t:4,l:'Normal',c:'#3fb950'},{t:6,l:'Elevated',c:'#e3b341'},{t:8,l:'High — near CB',c:'#e3b341'},{t:99,l:'CB Active',c:'#f85149'}],
+    formula:'(7-day Peak Equity − Current Equity) ÷ 7-day Peak × 100',
+    notes:['Rolling 7-day window — one lucky spike long ago never permanently throttles sizing.','This is what DRIVES the circuit breaker: triggers at 8% (not all-time drawdown).','Open unrealised P&L is included in equity — a position recovering auto-heals this metric.','All-time peak drawdown is visible in the tooltip on hover over this card.'],
+    verdict:function(v){
+      if(v<2)return['#3fb950','🟢 Minimal — equity is near its 7-day peak. Clean, steady performance.'];
+      if(v<4)return['#3fb950','🟢 Normal — small pullback from peak. Within expected variance for this trading style.'];
+      if(v<6)return['#e3b341','🟡 Elevated — noticeable drop from peak. No circuit breaker yet, but the Sharpe multiplier has already softened new sizes.'];
+      if(v<8)return['#e3b341','🟡 High — approaching the 8% circuit breaker threshold. New entries are already using reduced sizes via the Sharpe multiplier.'];
+      return['#f85149','🔴 Circuit Breaker Active — all new position sizes are scaled to 0.35× until equity recovers. This is the self-protection mechanism working exactly as designed.'];
+    }
+  },
+  kelly:{
+    name:'Half-Kelly Position Size',
+    fmt:function(v){return v<0?'learning…':(v*100).toFixed(1)+'%';},
+    gmin:0,gmax:15,
+    zones:[{t:2,l:'Minimal',c:'#8b949e'},{t:5,l:'Conservative',c:'#e3b341'},{t:9,l:'Moderate',c:'#3fb950'},{t:12,l:'Aggressive',c:'#e3b341'},{t:99,l:'Max Cap',c:'#f85149'}],
+    formula:'½ × ( Win Rate − Loss Rate ÷ (Avg Win / Avg Loss) )',
+    notes:['The Kelly Criterion finds the bet size that maximises long-run equity growth.','We use Half-Kelly (50% of full Kelly) to reduce variance while keeping most of the growth advantage.','Requires ≥5 closed trades. Shows "learning…" until then — fixed confidence tiers are used instead.','This is the recommended fraction of FREE CAPITAL to commit per trade (e.g. 7.5% of $1,000 = $75 margin).','Applied AFTER the Sharpe multiplier and circuit-breaker multiplier, so actual size may be lower.'],
+    verdict:function(v){
+      if(v<0)return['#8b949e','⏳ Not enough history yet. The bot needs ≥5 closed trades to calculate Half-Kelly. Fixed confidence tiers (4-8% of capital) are used until then.'];
+      var p=v*100;
+      if(p>12)return['#e3b341','🟠 High Kelly — strong apparent edge, but verify it isn\'t noise from a small sample. Position sizes are capped at 15% regardless.'];
+      if(p>7)return['#3fb950','🟢 Healthy Kelly — the model has meaningful edge data and is sizing proportional to demonstrated performance.'];
+      if(p>3)return['#3fb950','🟢 Conservative Kelly — edge is detected but modest. Small-to-medium positions are appropriate.'];
+      return['#e3b341','🟡 Very small Kelly — either edge is minimal or sample is still small. Fixed tiers are more relevant at this stage.'];
+    }
+  },
+  cb:{
+    name:'Risk Mode / Circuit Breaker',
+    fmt:function(v){return v>0?'⚡ CB ACTIVE':'● Normal';},
+    no_gauge:true,
+    formula:'7-day rolling drawdown > 8%  →  Circuit Breaker fires',
+    notes:['🟢 Normal mode: full Kelly × Sharpe multiplier × confidence = normal position sizes.','🔴 CB Active: ALL new position sizes × 0.35 and confidence floor raised +10%.','Auto-resets when rolling equity recovers to within 8% of the 7-day peak.','This is a hard, automatic rule — not a discretionary override.','The 7-day window prevents a single good week from permanently masking a losing streak.'],
+    verdict:function(v){
+      if(v>0)return['#f85149','🔴 Circuit Breaker is active. The 7-day rolling drawdown has exceeded 8%. All new position sizes are automatically 0.35× of normal and the minimum confidence required to open a trade is raised by 10 percentage points. This continues automatically until equity recovers.'];
+      return['#3fb950','🟢 Normal operating mode. The 7-day equity window shows no significant drawdown from its peak. Full Kelly-based position sizing is in effect across all signals.'];
+    }
+  },
+  openClosed:{
+    name:'Open / Total Closed Trades',
+    fmt:function(v){return String(v);},
+    no_gauge:true,
+    formula:'Live count from current session state',
+    notes:['Open = positions currently held (hard limits: 8 total, 4 per direction).','Closed = completed trades this session — partial closes count as separate entries.','Session resets on restart — the trades_YYYY.csv ledger captures all-time history.','More closed trades → more reliable metrics. Kelly activates at 5; metrics become statistically meaningful at 10+.'],
+    verdict:function(){return['#8b949e','ℹ️ These counts grow as the bot trades. The closed count directly drives the quality of Sharpe, Sortino, Kelly, and Expectancy calculations — the more trades, the more trustworthy the numbers.'];}
+  },
+  cycles:{
+    name:'Bot Cycles Completed',
+    fmt:function(v){return String(Math.round(v));},
+    no_gauge:true,
+    formula:'Incremented every ~30 seconds',
+    notes:['1 cycle = fetch all prices → select top candidates → analyse indicators → manage open positions.','AI review runs every 10 cycles (~5 minutes) when positions are open and ANTHROPIC_API_KEY is set.','Cycle time can stretch slightly when many positions are open or external APIs are slow.','The countdown timer in the header shows seconds until the next cycle fires.'],
+    verdict:function(v){
+      var mins=Math.round(v*0.5);
+      var t=mins>=60?(mins/60).toFixed(1)+' hours':mins+' minutes';
+      return['#8b949e','ℹ️ The bot has been running for approximately '+t+'. Each 30-second cycle analyses the candidate list and updates all open position trailing stops.'];
+    }
+  },
+  scanning:{
+    name:'Coins in Deep Scan This Cycle',
+    fmt:function(v){return String(Math.round(v));},
+    no_gauge:true,
+    formula:'BTC + ETH + SOL (always) + top movers by |% change| since last cycle',
+    notes:['Hyperliquid has 150+ perpetuals — scanning all would exceed the 30-second cycle budget.','Tier 1 (free): one allMids call fetches every price in the entire HL universe.','Tier 2 (per-coin): Binance klines (2 calls per coin) fetched only for the top 18 most active.','The 18 slots rotate every cycle — the most actively moving coins get full indicator analysis.','All other HL perps are still price-tracked but skip RSI/MACD/ATR/BB/order-flow analysis.'],
+    verdict:function(v){return['#8b949e','ℹ️ '+v+' coins are getting full indicator analysis this cycle. The remaining ~'+Math.max(0,150-v)+' Hyperliquid perps are price-monitored via allMids but only become deep-scan candidates if they move significantly.'];}
+  },
+  deployed:{
+    name:'Capital Deployed (Margin)',
+    fmt:function(v){return'$'+parseFloat(v).toFixed(0);},
+    no_gauge:true,
+    formula:'Σ margin committed across all open positions',
+    notes:['This is MARGIN committed, not notional market exposure.','Example: $100 margin at 3× leverage controls $300 notional.','Free capital = Total equity − deployed margin.','The bot always maintains free capital to take new entries and DCA opportunities.','Multiply each position\'s margin by its leverage to get total notional exposure.'],
+    verdict:function(v){return['#8b949e','ℹ️ $'+parseFloat(v).toFixed(0)+' of margin is currently working in active trades. Check individual position cards to see leverage and notional exposure per coin.'];}
+  }
+};
+
+function _metricZone(zones,v){
+  for(var i=0;i<zones.length;i++){if(v<=zones[i].t)return zones[i];}
+  return zones[zones.length-1];
+}
+
+function showMetric(id,value){
+  var info=METRIC_INFO[id];
+  if(!info)return;
+  var v=parseFloat(value);
+  var disp=info.fmt?info.fmt(v):String(value);
+  var zone=info.zones?_metricZone(info.zones,v):{c:'#8b949e',l:''};
+  var verdict=info.verdict?info.verdict(v):['#8b949e',''];
+  var vColor=verdict[0],vText=verdict[1];
+
+  /* ── Gauge ── */
+  var gaugeHtml='';
+  if(!info.no_gauge&&info.zones){
+    var gmin=info.gmin||0,gmax=info.gmax||100,range=gmax-gmin;
+    var prev=gmin,zHtml='';
+    info.zones.forEach(function(z){
+      var cap=Math.min(z.t,gmax);
+      var w=Math.max(0,(cap-prev)/range*100);
+      if(w>0){
+        zHtml+='<div style="flex:'+w.toFixed(1)+';background:'+z.c+'22;border:1px solid '+z.c+'55;display:flex;align-items:center;justify-content:center;font-size:.58em;color:'+z.c+';padding:2px 0;border-radius:3px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">'+z.l+'</div>';
+      }
+      prev=cap;
+    });
+    var clamp=Math.max(gmin,Math.min(gmax,v));
+    var pos=((clamp-gmin)/range*100).toFixed(1);
+    gaugeHtml='<div style="margin:14px 0 2px"><div style="display:flex;gap:2px;height:26px">'+zHtml+'</div>'
+      +'<div style="position:relative;height:18px">'
+      +'<div style="position:absolute;left:'+pos+'%;transform:translateX(-50%);top:0;font-size:.9em;color:'+zone.c+'">▲</div>'
+      +'</div>'
+      +'<div style="text-align:center;font-size:.75em;color:'+zone.c+';font-weight:700">'+disp+(zone.l?' · '+zone.l:'')+'</div>'
+      +'</div>';
+  }
+
+  /* ── Notes ── */
+  var notesHtml='';
+  if(info.notes&&info.notes.length){
+    notesHtml='<ul style="margin:10px 0 0;padding-left:16px;color:#8b949e;font-size:.78em;line-height:1.9">';
+    info.notes.forEach(function(n){notesHtml+='<li>'+n+'</li>';});
+    notesHtml+='</ul>';
+  }
+
+  /* ── Build content ── */
+  var content=document.getElementById('metric-modal-content');
+  if(!content)return;
+  content.innerHTML=
+    '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px">'
+    +'<div>'
+    +'<div style="font-size:.65em;color:#8b949e;text-transform:uppercase;letter-spacing:1.1px;margin-bottom:4px">'+info.name+'</div>'
+    +'<div style="font-size:2.3em;font-weight:800;color:'+vColor+';line-height:1;letter-spacing:-.02em">'+disp+'</div>'
+    +(zone.l&&!info.no_gauge?'<div style="font-size:.73em;color:'+zone.c+';margin-top:3px;font-weight:600">'+zone.l+'</div>':'')
+    +'</div>'
+    +'<button onclick="closeMetricModal()" style="background:none;border:1px solid #30363d;color:#6e7681;width:28px;height:28px;border-radius:7px;cursor:pointer;font-size:.9em;flex-shrink:0;display:flex;align-items:center;justify-content:center">✕</button>'
+    +'</div>'
+    +gaugeHtml
+    +'<div style="background:#1c2026;border-radius:8px;padding:10px 13px;margin-top:12px;font-size:.82em;line-height:1.65;color:#c9d1d9">'+vText+'</div>'
+    +'<div style="margin-top:14px;border-top:1px solid #21262d;padding-top:12px">'
+    +'<div style="font-size:.62em;color:#8b949e;text-transform:uppercase;letter-spacing:.9px;margin-bottom:5px">Formula</div>'
+    +'<code style="font-size:.8em;color:#bc8cff;background:#21262d;padding:5px 10px;border-radius:5px;display:block;line-height:1.5">'+info.formula+'</code>'
+    +notesHtml
+    +'</div>';
+
+  var modal=document.getElementById('metric-modal');
+  if(modal){modal.style.display='flex';document.body.style.overflow='hidden';}
+}
+
+function closeMetricModal(){
+  var m=document.getElementById('metric-modal');
+  if(m)m.style.display='none';
+  document.body.style.overflow='';
+}
+"#;
+
     Html(format!(r#"<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8">
@@ -865,11 +1110,21 @@ body{{background:var(--bg);color:var(--text);
 @media(min-width:500px){{.metrics{{grid-template-columns:repeat(3,1fr)}}}}
 @media(min-width:700px){{.metrics{{grid-template-columns:repeat(6,1fr)}}}}
 .metric{{background:var(--surface2);border:1px solid var(--border);border-radius:9px;
-         padding:9px 11px;text-align:center;
-         transition:border-color .2s,box-shadow .2s}}
-.metric:hover{{border-color:var(--border2);box-shadow:0 2px 8px rgba(0,0,0,.3)}}
+         padding:9px 11px;text-align:center;cursor:pointer;
+         transition:border-color .2s,box-shadow .2s,background .2s}}
+.metric:hover{{border-color:var(--border2);box-shadow:0 2px 8px rgba(0,0,0,.3);background:#1a1f28}}
 .metric .mv{{font-size:1.05em;font-weight:700;letter-spacing:-.01em}}
 .metric .ml{{font-size:.62em;color:var(--muted);margin-top:3px;white-space:nowrap;letter-spacing:.3px;text-transform:uppercase}}
+.metric .ml-hint{{font-size:.58em;color:#444c56;display:block;margin-top:1px}}
+/* ── Metric modal ── */
+@keyframes modalIn{{from{{opacity:0;transform:scale(.95)}}to{{opacity:1;transform:scale(1)}}}}
+#metric-modal{{position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:9999;
+               display:none;align-items:center;justify-content:center;padding:16px}}
+#metric-modal-content{{background:#0d1117;border:1px solid #30363d;border-radius:14px;
+                        padding:22px;max-width:440px;width:100%;max-height:88vh;
+                        overflow-y:auto;animation:modalIn .22s ease}}
+#metric-modal-content::-webkit-scrollbar{{width:4px}}
+#metric-modal-content::-webkit-scrollbar-thumb{{background:#30363d;border-radius:2px}}
 /* ── Status bar ── */
 .status-bar{{background:var(--surface2);border:1px solid var(--border);border-radius:9px;
              padding:0;margin-bottom:6px;font-size:.78em;color:var(--muted);overflow:hidden}}
@@ -1041,19 +1296,42 @@ tr:hover td{{background:rgba(255,255,255,.025)}}
 </div>
 
 <div class="metrics">
-  <div class="metric"><div class="mv" style="color:{sc}">{sharpe:.2}</div><div class="ml">Sharpe</div></div>
-  <div class="metric"><div class="mv" style="color:{sortc}">{sortino:.2}</div><div class="ml">Sortino</div></div>
-  <div class="metric"><div class="mv" style="color:{expc}">{exps}{expectancy:.1}%</div><div class="ml">Expectancy</div></div>
-  <div class="metric"><div class="mv">{pf}</div><div class="ml">Profit Factor</div></div>
-  <div class="metric"><div class="mv">{wr:.0}% <span style="font-size:.65em;color:var(--muted)">({wins}W/{losses}L)</span></div><div class="ml">Win Rate</div></div>
-  <div class="metric" title="7-day rolling drawdown (drives circuit breaker). All-time: -{atdd:.1}%">
-    <div class="mv r">-{dd:.1}%</div><div class="ml">7d Drawdown</div></div>
-  <div class="metric"><div class="mv b">{kelly_str}</div><div class="ml">Half-Kelly</div></div>
-  <div class="metric{cbcc}"><div class="mv" style="color:{cbc}">{cb_label}</div><div class="ml">{cb_desc}</div></div>
-  <div class="metric"><div class="mv">{open_n} / {total_closed}</div><div class="ml">Open / Closed</div></div>
-  <div class="metric"><div class="mv">{cycles}</div><div class="ml">Cycles</div></div>
-  <div class="metric"><div class="mv">{cand_n}</div><div class="ml">Scanning</div></div>
-  <div class="metric"><div class="mv y">${committed:.0}</div><div class="ml">Deployed</div></div>
+  <div class="metric" onclick="showMetric('sharpe',{sharpe:.6})">
+    <div class="mv" style="color:{sc}">{sharpe:.2}</div>
+    <div class="ml">Sharpe <span class="ml-hint">tap to explain</span></div></div>
+  <div class="metric" onclick="showMetric('sortino',{sortino:.6})">
+    <div class="mv" style="color:{sortc}">{sortino:.2}</div>
+    <div class="ml">Sortino <span class="ml-hint">tap to explain</span></div></div>
+  <div class="metric" onclick="showMetric('expect',{expect_signed:.6})">
+    <div class="mv" style="color:{expc}">{exps}{expectancy:.1}%</div>
+    <div class="ml">Expectancy <span class="ml-hint">tap to explain</span></div></div>
+  <div class="metric" onclick="showMetric('pf',{pf_float:.6})">
+    <div class="mv">{pf}</div>
+    <div class="ml">Profit Factor <span class="ml-hint">tap to explain</span></div></div>
+  <div class="metric" onclick="showMetric('wr',{wr_float:.4})">
+    <div class="mv">{wr:.0}% <span style="font-size:.65em;color:var(--muted)">({wins}W/{losses}L)</span></div>
+    <div class="ml">Win Rate <span class="ml-hint">tap to explain</span></div></div>
+  <div class="metric" onclick="showMetric('dd',{dd:.4})" title="7-day rolling drawdown (drives circuit breaker). All-time: -{atdd:.1}%">
+    <div class="mv r">-{dd:.1}%</div>
+    <div class="ml">7d Drawdown <span class="ml-hint">tap to explain</span></div></div>
+  <div class="metric" onclick="showMetric('kelly',{kelly_float:.6})">
+    <div class="mv b">{kelly_str}</div>
+    <div class="ml">Half-Kelly <span class="ml-hint">tap to explain</span></div></div>
+  <div class="metric{cbcc}" onclick="showMetric('cb',{cb_int})">
+    <div class="mv" style="color:{cbc}">{cb_label}</div>
+    <div class="ml">{cb_desc} <span class="ml-hint">tap to explain</span></div></div>
+  <div class="metric" onclick="showMetric('openClosed',{open_n})">
+    <div class="mv">{open_n} / {total_closed}</div>
+    <div class="ml">Open / Closed <span class="ml-hint">tap to explain</span></div></div>
+  <div class="metric" onclick="showMetric('cycles',{cycles})">
+    <div class="mv">{cycles}</div>
+    <div class="ml">Cycles <span class="ml-hint">tap to explain</span></div></div>
+  <div class="metric" onclick="showMetric('scanning',{cand_n})">
+    <div class="mv">{cand_n}</div>
+    <div class="ml">Scanning <span class="ml-hint">tap to explain</span></div></div>
+  <div class="metric" onclick="showMetric('deployed',{committed:.2})">
+    <div class="mv y">${committed:.0}</div>
+    <div class="ml">Deployed <span class="ml-hint">tap to explain</span></div></div>
 </div>
 
 <div class="status-bar">
@@ -1115,6 +1393,15 @@ tr:hover td{{background:rgba(255,255,255,.025)}}
     {closed_rows}</table>
   </div>
 </div>
+
+<!-- ── Metric explanation modal ───────────────────────────────────────── -->
+<div id="metric-modal" onclick="if(event.target===this)closeMetricModal()">
+  <div id="metric-modal-content"></div>
+</div>
+
+<script>
+{metric_info_js}
+</script>
 
 <script>
 /* ── Position card 3-D flip — one chart visible at a time ──────────────── */
@@ -1423,6 +1710,12 @@ function toggleDetail(id){{
         sparkline_svg     = sparkline_svg,
         hero_class        = hero_class,
         ai_status_html    = ai_status_html,
+        metric_info_js    = metric_info_js,
+        expect_signed     = expect_signed,
+        pf_float          = pf_float,
+        kelly_float       = kelly_float,
+        cb_int            = cb_int,
+        wr_float          = wr_float,
         tracking_js       = crate::funnel::client_tracking_script(),
     ))
 }
