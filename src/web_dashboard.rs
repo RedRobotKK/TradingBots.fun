@@ -3858,7 +3858,7 @@ async fn trade_note_handler(
         )
         .bind(idx)
         .bind(note)
-        .execute(&db.pool())
+        .execute(db.pool())
         .await;
     }
 
