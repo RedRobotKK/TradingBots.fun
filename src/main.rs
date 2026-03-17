@@ -1326,8 +1326,10 @@ async fn execute_paper_trade(
                 }
 
                 // ── Same direction: DCA DOWN on moderate loser with conviction ──
-                // Conditions: between -0.15R and -0.75R, ≤2 DCA add-ons, signal confidence ≥ DCA_MIN_CONFIDENCE
-                if r_mult < -0.15 && r_mult > -0.75 && pos.dca_count < 2 && dec.confidence >= DCA_MIN_CONFIDENCE {
+                // Conditions: between -0.15R and -0.85R, ≤2 DCA add-ons, signal confidence ≥ DCA_MIN_CONFIDENCE
+                // Upper bound extended to -0.85R (-0.75 was too tight; minor overshoots
+                // permanently blocked DCA even when slots remained.)
+                if r_mult < -0.15 && r_mult > -0.85 && pos.dca_count < 2 && dec.confidence >= DCA_MIN_CONFIDENCE {
                     drop(s);
                     dca_position(symbol, dec, ind, bot_state).await;
                     return;
@@ -1344,12 +1346,21 @@ async fn execute_paper_trade(
                       symbol, dec.confidence * 100.0, MIN_CONFIDENCE * 100.0, pos.side);
                 return;
             }
+            // Minimum hold guard — do not flip a position that opened < 30 min ago.
+            // Early noise can easily generate a 1-bar counter-signal; the original
+            // signal needs time to play out before we admit it has reversed.
+            if pos.cycles_held < 60 {
+                info!("⏸  {} reversal blocked — position only {} cycles old (need 60 / 30 min)",
+                      symbol, pos.cycles_held);
+                return;
+            }
             // Clone values before dropping the read guard to satisfy the borrow checker
             let pos_side    = pos.side.clone();
             let r_mult_snap = r_mult;
+            let cycles_snap = pos.cycles_held;
             drop(s);
-            info!("🔄 {} signal reversal: {} at {:.2}R  conf={:.0}%",
-                  symbol, pos_side, r_mult_snap, dec.confidence * 100.0);
+            info!("🔄 {} signal reversal: {} at {:.2}R  held={}  conf={:.0}%",
+                  symbol, pos_side, r_mult_snap, cycles_snap, dec.confidence * 100.0);
             close_paper_position(symbol, dec.entry_price, "SignalExit", bot_state, weights, trade_logger).await;
         }
         // No existing: fall through to new entry
