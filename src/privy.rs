@@ -258,7 +258,7 @@ pub fn clear_session_header() -> &'static str {
 /// from request headers, returning the `TenantId` or an error.
 ///
 /// Usage:
-/// ```rust
+/// ```ignore
 /// let tenant_id = crate::privy::require_tenant_id(&headers, &app.session_secret)?;
 /// ```
 pub fn require_tenant_id(

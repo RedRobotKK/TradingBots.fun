@@ -7,7 +7,7 @@
 //! balance reported by HL.  Any meaningful delta (>$0.01) is recorded as a
 //! `FundEvent` in a per-tenant CSV file:
 //!
-//! ```
+//! ```text
 //! data/funds/{tenant_id}.csv
 //! ```
 //!
