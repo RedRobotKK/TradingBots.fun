@@ -219,7 +219,7 @@ async fn main() -> Result<()> {
     let sentiment_cache: SharedSentiment = SentimentCache::new(config.lunarcrush_api_key.clone());
     sentiment_cache.warm().await;
 
-    // Binance funding rate cache (pre-warm; refreshes every 3 min automatically)
+    // HL funding rate cache via metaAndAssetCtxs (all perps, native symbols, refreshes every 3 min)
     let funding_cache: SharedFunding = FundingCache::new();
     funding_cache.warm().await;
 
@@ -238,7 +238,7 @@ async fn main() -> Result<()> {
         info!("ℹ️  No WEBHOOK_URL or TELEGRAM_* env set — notifications disabled");
     }
 
-    info!("✓ Clients ready (LunarCrush sentiment + Binance funding rates + on-chain active)");
+    info!("✓ Clients ready (LunarCrush sentiment + HL funding rates + on-chain active)");
 
     let weights: SharedWeights = Arc::new(RwLock::new(SignalWeights::load()));
 
@@ -1209,6 +1209,28 @@ async fn analyse_symbol(
                 if aligned { "aligned" } else { "opposed" },
                 dec.confidence * 100.0);
         }
+    }
+
+    // ── Funding-staleness gate (new entries only) ─────────────────────────
+    // If the funding cache hasn't refreshed in >10 minutes we have no reliable
+    // crowd-positioning data.  Block new entries (BUY/SELL) so we don't open
+    // positions blind.  Position management (exits, trailing stops) already
+    // ran earlier in run_cycle and is unaffected — this only gates new orders.
+    if dec.action != "SKIP" && fund_cache.is_stale().await {
+        let age = fund_cache.age_secs().await
+            .map(|s| format!("{}s ago", s))
+            .unwrap_or_else(|| "never fetched".to_string());
+        log::warn!(
+            "⚠️  {} → {} gated: funding data stale ({}) — skipping new entry",
+            symbol, dec.action, age
+        );
+        dec.action     = "SKIP".to_string();
+        dec.rationale  = format!(
+            "Funding gate: crowd-positioning data is stale (last refresh: {}). \
+             New entries blocked until HL funding cache refreshes.",
+            age
+        );
+        dec.confidence = 0.0;
     }
 
     log::debug!("{}: RSI={:.1} trend={:.2}% MACD={:.5} ATR={:.4} → {}",

@@ -1,6 +1,7 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use tokio::sync::RwLock;
 
 // ─────────────────────────── Retry configuration ─────────────────────────────
 /// Maximum number of HTTP request attempts before giving up.
@@ -34,6 +35,21 @@ pub struct OrderBook {
     pub asks: Vec<(f64, f64)>,
 }
 
+// ─────────────────────────── Candle cache ────────────────────────────────────
+
+/// One cached interval's worth of candles for a single coin.
+///
+/// `bar_epoch` = `floor(fetch_time_ms / interval_ms)` — the integer index of
+/// the 1h (or 4h) bar that was current when we last fetched.  When the next
+/// cycle runs we compare the current bar epoch; if it's advanced we know a new
+/// bar has closed and the candles need refreshing.
+struct CachedCandles {
+    candles:   Vec<PriceData>,
+    bar_epoch: i64,   // floor(fetch_time_ms / interval_ms)
+}
+
+// ─────────────────────────── Helpers ─────────────────────────────────────────
+
 /// Returns `true` for vanilla Hyperliquid perp symbols that have native candle data.
 ///
 /// Excludes two HL-specific instrument types the candle API cannot serve:
@@ -44,14 +60,41 @@ pub fn is_hl_perp(sym: &str) -> bool {
     !sym.starts_with('@') && !sym.contains('/')
 }
 
+/// Convert an interval string to its duration in milliseconds.
+#[inline]
+fn interval_ms(interval: &str) -> Result<i64> {
+    match interval {
+        "1m"  => Ok(       60_000),
+        "5m"  => Ok(      300_000),
+        "15m" => Ok(      900_000),
+        "1h"  => Ok(    3_600_000),
+        "4h"  => Ok(   14_400_000),
+        "1d"  => Ok(   86_400_000),
+        other => anyhow::bail!("Unknown interval: {}", other),
+    }
+}
+
+// ─────────────────────────── Market client ───────────────────────────────────
+
 /// Single-source market data client — Hyperliquid only.
 ///
-/// Tier 1: `allMids`        — one POST returns ALL ~150+ perp prices
-/// Tier 2: `candleSnapshot` — one POST per coin, no Binance rate-limit concern
-/// Tier 3: `l2Book`         — one POST per coin for order book depth
+/// # Rate budget (HL REST, 1 200 weight/min aggregate)
+///
+/// | Call              | Weight | Frequency          |
+/// |-------------------|--------|--------------------|
+/// | `allMids`         |      2 | every cycle (30 s) |
+/// | `l2Book` × 40    |     80 | every cycle (30 s) |
+/// | `candleSnapshot`  |     20 | once per new bar   |
+///
+/// Per-cycle budget: allMids(2) + 40×l2Book(80) = **82 weight** ≈ 164/min
+/// Candle refreshes: 40×1h = 800 weight once/hour, 40×4h = 800 weight once/4h
+/// Both well within the 1 200/min ceiling.
 pub struct MarketClient {
-    client:  reqwest::Client,
-    hl_base: String,
+    client:       reqwest::Client,
+    hl_base:      String,
+    /// Candle cache keyed by `"COIN:interval"` (e.g. `"BTC:1h"`).
+    /// Interior-mutable so `&self` methods can update it.
+    candle_cache: RwLock<HashMap<String, CachedCandles>>,
 }
 
 impl MarketClient {
@@ -61,15 +104,17 @@ impl MarketClient {
                 .timeout(std::time::Duration::from_secs(10))
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new()),
-            hl_base: "https://api.hyperliquid.xyz".to_string(),
+            hl_base:      "https://api.hyperliquid.xyz".to_string(),
+            candle_cache: RwLock::new(HashMap::new()),
         }
     }
 
-    /// Internal helper: execute an async closure with exponential back-off retry.
+    // ── Retry helper ──────────────────────────────────────────────────────────
+
+    /// Execute an async closure with exponential back-off retry.
     ///
     /// Retries up to `MAX_RETRIES` times on any `Err`, with delays of
-    /// `RETRY_BASE_MS`, `2×RETRY_BASE_MS`, `4×RETRY_BASE_MS` (etc.) between
-    /// attempts.  Returns the last error if all attempts fail.
+    /// `RETRY_BASE_MS × 2^attempt` between attempts.
     async fn with_retry<F, Fut, T>(op: F) -> Result<T>
     where
         F: Fn() -> Fut,
@@ -93,10 +138,11 @@ impl MarketClient {
         Err(last_err)
     }
 
+    // ── Tier 1: allMids ───────────────────────────────────────────────────────
+
     /// Fetch all mid-prices from Hyperliquid in a single API call (weight = 2).
     ///
     /// Returns symbol → price map for every perp traded on the exchange.
-    /// Retries up to `MAX_RETRIES` times with exponential back-off on failure.
     pub async fn fetch_all_mids(&self) -> Result<HashMap<String, f64>> {
         let url    = format!("{}/info", self.hl_base);
         let body   = serde_json::json!({ "type": "allMids" });
@@ -138,6 +184,8 @@ impl MarketClient {
         }).await
     }
 
+    // ── Candidate selection ───────────────────────────────────────────────────
+
     /// Select trading candidates from the full mid-price universe.
     ///
     /// Always includes BTC/ETH/SOL anchors, then fills to `MAX_CANDIDATES` with
@@ -150,7 +198,6 @@ impl MarketClient {
     ) -> Vec<String> {
         let anchors = ["BTC", "ETH", "SOL"];
 
-        // Score each valid HL perp by absolute % change since last cycle
         let mut movers: Vec<(String, f64)> = current
             .iter()
             .filter(|(sym, _)| is_hl_perp(sym))
@@ -164,14 +211,12 @@ impl MarketClient {
 
         movers.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
-        // Start with anchors (always included regardless of move size)
         let mut candidates: Vec<String> = anchors
             .iter()
             .filter(|&&s| current.contains_key(s))
             .map(|&s| s.to_string())
             .collect();
 
-        // Fill to MAX_CANDIDATES with top movers
         for (sym, _) in &movers {
             if candidates.len() >= MAX_CANDIDATES { break; }
             if !candidates.contains(sym) {
@@ -182,29 +227,63 @@ impl MarketClient {
         candidates
     }
 
-    /// Fetch OHLCV candles from Hyperliquid's native `candleSnapshot` endpoint.
+    // ── Tier 2: candles (cached) ──────────────────────────────────────────────
+
+    /// Fetch OHLCV candles, returning cached data when the current bar has not
+    /// yet closed since the last HTTP fetch.
+    ///
+    /// # Cache logic
+    /// A new bar closes when `floor(now_ms / interval_ms)` advances past the
+    /// value recorded at fetch time.  Until then every 30-second cycle reuses
+    /// the in-memory copy — saving ~800 HL weight units per hour for 40 coins.
+    ///
+    /// An unconditional HTTP fetch is always made on the first call for a
+    /// `(coin, interval)` pair (cold start / bot restart).
+    async fn fetch_hl_candles_cached(
+        &self,
+        coin:     &str,
+        interval: &str,
+        limit:    u32,
+    ) -> Result<Vec<PriceData>> {
+        let ivl_ms  = interval_ms(interval)?;
+        let now_ms  = chrono::Utc::now().timestamp_millis();
+        let cur_epoch = now_ms / ivl_ms;    // integer bar index for "now"
+        let cache_key = format!("{}:{}", coin, interval);
+
+        // Fast path: cache hit — same bar epoch, nothing new has closed.
+        {
+            let r = self.candle_cache.read().await;
+            if let Some(entry) = r.get(&cache_key) {
+                if entry.bar_epoch == cur_epoch {
+                    log::debug!("candle_cache HIT  {}:{} epoch={}", coin, interval, cur_epoch);
+                    return Ok(entry.candles.clone());
+                }
+            }
+        }
+
+        // Slow path: fetch from HL (first call, or new bar has opened).
+        log::debug!("candle_cache MISS {}:{} epoch={} — fetching", coin, interval, cur_epoch);
+        let candles = self.fetch_hl_candles_raw(coin, interval, limit).await?;
+
+        // Write back; grab write lock only after the HTTP round trip.
+        {
+            let mut w = self.candle_cache.write().await;
+            w.insert(cache_key, CachedCandles { candles: candles.clone(), bar_epoch: cur_epoch });
+        }
+
+        Ok(candles)
+    }
+
+    /// Raw HTTP fetch from Hyperliquid `candleSnapshot` — no caching.
     ///
     /// - `coin`     — Hyperliquid ticker (e.g. `"BTC"`, `"kBONK"`)
     /// - `interval` — HL interval string: `"1h"`, `"4h"`, `"15m"`, etc.
     /// - `limit`    — Number of candles to return (newest last)
-    ///
-    /// `startTime` is derived as `now − limit × interval_ms` so we always get
-    /// exactly `limit` closed candles regardless of the current time-of-day.
-    /// History on HL goes back to ~2023 — sufficient for 14-period RSI / 20-period MACD.
-    async fn fetch_hl_candles(&self, coin: &str, interval: &str, limit: u32) -> Result<Vec<PriceData>> {
-        let interval_ms: i64 = match interval {
-            "1m"  =>       60_000,
-            "5m"  =>      300_000,
-            "15m" =>      900_000,
-            "1h"  =>    3_600_000,
-            "4h"  =>   14_400_000,
-            "1d"  =>   86_400_000,
-            other => anyhow::bail!("Unknown interval: {}", other),
-        };
-
-        let now_ms    = chrono::Utc::now().timestamp_millis();
-        // Extra +2 candles of buffer so the window always contains `limit` closed bars
-        let start_ms  = now_ms - (limit as i64 + 2) * interval_ms;
+    async fn fetch_hl_candles_raw(&self, coin: &str, interval: &str, limit: u32) -> Result<Vec<PriceData>> {
+        let ivl_ms   = interval_ms(interval)?;
+        let now_ms   = chrono::Utc::now().timestamp_millis();
+        // +2 bar buffer so the window always contains `limit` fully-closed bars.
+        let start_ms = now_ms - (limit as i64 + 2) * ivl_ms;
 
         let url    = format!("{}/info", self.hl_base);
         let body   = serde_json::json!({
@@ -227,9 +306,12 @@ impl MarketClient {
             async move {
                 let resp = client.post(&url).json(&body).send().await?;
                 if !resp.status().is_success() {
-                    anyhow::bail!("HL candleSnapshot {} {} → HTTP {}", coin_str, interval, resp.status());
+                    anyhow::bail!(
+                        "HL candleSnapshot {} {} → HTTP {}",
+                        coin_str, interval, resp.status()
+                    );
                 }
-                // HL returns an array of candle objects:
+                // HL candle shape:
                 // {"t":<open_ms>,"T":<close_ms>,"s":"BTC","i":"1h",
                 //  "o":"50000","h":"51000","l":"49500","c":"50800","v":"1234","n":500}
                 let raw: Vec<serde_json::Value> = resp.json().await?;
@@ -244,23 +326,19 @@ impl MarketClient {
                         .unwrap_or(0.0)
                 };
 
-                let mut candles: Vec<PriceData> = raw
-                    .iter()
-                    .map(|c| PriceData {
-                        symbol:    coin_str.clone(),
-                        timestamp: c["t"].as_i64().unwrap_or(0),
-                        open:      parse(c, "o"),
-                        high:      parse(c, "h"),
-                        low:       parse(c, "l"),
-                        close:     parse(c, "c"),
-                        volume:    parse(c, "v"),
-                    })
-                    .collect();
+                let mut candles: Vec<PriceData> = raw.iter().map(|c| PriceData {
+                    symbol:    coin_str.clone(),
+                    timestamp: c["t"].as_i64().unwrap_or(0),
+                    open:      parse(c, "o"),
+                    high:      parse(c, "h"),
+                    low:       parse(c, "l"),
+                    close:     parse(c, "c"),
+                    volume:    parse(c, "v"),
+                }).collect();
 
-                // Trim to exactly `limit` (drop the oldest if buffer over-fetched)
+                // Trim to exactly `limit` (the buffer may return a few extra).
                 if candles.len() > limit as usize {
-                    let drop = candles.len() - limit as usize;
-                    candles.drain(..drop);
+                    candles.drain(..candles.len() - limit as usize);
                 }
 
                 Ok(candles)
@@ -268,23 +346,22 @@ impl MarketClient {
         }).await
     }
 
-    /// Fetch 50 hourly candles from Hyperliquid for the given symbol.
-    /// 50 × 1h = ~2 days of 1h context (sufficient for RSI-14, MACD-26).
+    /// Fetch 50 hourly candles (cached — refetches at most once per 1h bar close).
     pub async fn fetch_market_data(&self, coin: &str) -> Result<Vec<PriceData>> {
-        self.fetch_hl_candles(coin, "1h", 50).await
+        self.fetch_hl_candles_cached(coin, "1h", 50).await
     }
 
-    /// Fetch 50 four-hour candles from Hyperliquid for the given symbol.
-    /// Used for multi-timeframe confirmation (HTF indicators).
-    /// 50 × 4h = 200 hours ≈ 8 days of context.
+    /// Fetch 50 four-hour candles (cached — refetches at most once per 4h bar close).
     pub async fn fetch_market_data_4h(&self, coin: &str) -> Result<Vec<PriceData>> {
-        self.fetch_hl_candles(coin, "4h", 50).await
+        self.fetch_hl_candles_cached(coin, "4h", 50).await
     }
 
-    /// Fetch order book depth from Hyperliquid's `l2Book` endpoint.
+    // ── Tier 3: order book (per-cycle, not cached) ────────────────────────────
+
+    /// Fetch order book depth from Hyperliquid's `l2Book` endpoint (weight = 2).
     ///
     /// Returns top-20 bids and asks as `(price, quantity)` pairs, sorted best-first.
-    /// Retries up to `MAX_RETRIES` times with exponential back-off on failure.
+    /// Not cached — order books change on every tick.
     pub async fn fetch_order_book(&self, coin: &str) -> Result<OrderBook> {
         let url     = format!("{}/info", self.hl_base);
         let body    = serde_json::json!({ "type": "l2Book", "coin": coin });
@@ -301,7 +378,7 @@ impl MarketClient {
                 if !resp.status().is_success() {
                     anyhow::bail!("HL l2Book {} → HTTP {}", sym_str, resp.status());
                 }
-                // HL l2Book response:
+                // HL l2Book:
                 // {"coin":"BTC","levels":[[bids…],[asks…]],"time":…}
                 // Each entry: {"n":<orders>,"px":"price","sz":"size"}
                 let book: serde_json::Value = resp.json().await?;
@@ -326,6 +403,13 @@ impl MarketClient {
             }
         }).await
     }
+
+    /// Evict all cached candles (e.g. after a bot restart or manual reset).
+    /// Normal operation never needs to call this.
+    #[allow(dead_code)]
+    pub async fn clear_candle_cache(&self) {
+        self.candle_cache.write().await.clear();
+    }
 }
 
 // =============================================================================
@@ -340,23 +424,39 @@ mod tests {
 
     #[test]
     fn is_hl_perp_accepts_standard_perps() {
-        assert!(is_hl_perp("BTC"),   "BTC should be a valid HL perp");
-        assert!(is_hl_perp("ETH"),   "ETH should be a valid HL perp");
-        assert!(is_hl_perp("kBONK"),"kBONK should be a valid HL perp");
-        assert!(is_hl_perp("AVAX"), "AVAX should be a valid HL perp");
+        assert!(is_hl_perp("BTC"),    "BTC should be a valid HL perp");
+        assert!(is_hl_perp("ETH"),    "ETH should be a valid HL perp");
+        assert!(is_hl_perp("kBONK"), "kBONK should be a valid HL perp");
+        assert!(is_hl_perp("AVAX"),  "AVAX should be a valid HL perp");
     }
 
     #[test]
     fn is_hl_perp_rejects_at_symbols() {
-        assert!(!is_hl_perp("@232"),  "@232 is a price-level derivative");
-        assert!(!is_hl_perp("@7"),    "@7 is a price-level derivative");
-        assert!(!is_hl_perp("@1000"),"@1000 is a price-level derivative");
+        assert!(!is_hl_perp("@232"),   "@232 is a price-level derivative");
+        assert!(!is_hl_perp("@7"),     "@7 is a price-level derivative");
+        assert!(!is_hl_perp("@1000"), "@1000 is a price-level derivative");
     }
 
     #[test]
     fn is_hl_perp_rejects_spot_pairs() {
         assert!(!is_hl_perp("PURR/USDC"), "PURR/USDC is a spot pair");
         assert!(!is_hl_perp("BTC/USDC"),  "BTC/USDC is a spot pair");
+    }
+
+    // ── interval_ms ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn interval_ms_known_intervals() {
+        assert_eq!(interval_ms("1m").unwrap(),        60_000);
+        assert_eq!(interval_ms("1h").unwrap(),     3_600_000);
+        assert_eq!(interval_ms("4h").unwrap(),    14_400_000);
+        assert_eq!(interval_ms("1d").unwrap(),    86_400_000);
+    }
+
+    #[test]
+    fn interval_ms_unknown_returns_err() {
+        assert!(interval_ms("3h").is_err());
+        assert!(interval_ms("").is_err());
     }
 
     // ── filter_candidates ─────────────────────────────────────────────────────
@@ -369,10 +469,9 @@ mod tests {
     fn filter_candidates_always_includes_anchors() {
         let current  = make_mids(&[("BTC", 50000.0), ("ETH", 3000.0), ("SOL", 100.0),
                                     ("DOGE", 0.1), ("AVAX", 30.0)]);
-        let previous = make_mids(&[("BTC", 50000.0), ("ETH", 3000.0), ("SOL", 100.0),
-                                    ("DOGE", 0.1), ("AVAX", 30.0)]);
-        let market = MarketClient::new();
-        let result = market.filter_candidates(&current, &previous);
+        let previous = current.clone();
+        let market   = MarketClient::new();
+        let result   = market.filter_candidates(&current, &previous);
         assert!(result.contains(&"BTC".to_string()), "BTC must always be a candidate");
         assert!(result.contains(&"ETH".to_string()), "ETH must always be a candidate");
         assert!(result.contains(&"SOL".to_string()), "SOL must always be a candidate");
@@ -380,7 +479,6 @@ mod tests {
 
     #[test]
     fn filter_candidates_caps_at_max() {
-        // Build 60 symbols all with different % moves — should be capped at MAX_CANDIDATES
         let current: HashMap<String, f64> = (0..60)
             .map(|i| (format!("COIN{i}"), 100.0 + i as f64))
             .chain([("BTC".to_string(), 50000.0), ("ETH".to_string(), 3000.0),
@@ -402,11 +500,10 @@ mod tests {
 
     #[test]
     fn filter_candidates_top_movers_are_included() {
-        // MOON has 100% move — should be picked up over stable coins
         let current  = make_mids(&[("BTC", 50000.0), ("ETH", 3000.0), ("SOL", 100.0),
                                     ("MOON", 2.0), ("STABLE", 1.0)]);
         let previous = make_mids(&[("BTC", 50000.0), ("ETH", 3000.0), ("SOL", 100.0),
-                                    ("MOON", 1.0), ("STABLE", 1.0)]);  // MOON +100%
+                                    ("MOON", 1.0), ("STABLE", 1.0)]);
         let market = MarketClient::new();
         let result = market.filter_candidates(&current, &previous);
         assert!(result.contains(&"MOON".to_string()), "Top mover MOON should be included");
@@ -414,11 +511,10 @@ mod tests {
 
     #[test]
     fn filter_candidates_rejects_at_symbols() {
-        // @-symbols are HL price-level derivatives — must be excluded
         let current  = make_mids(&[("BTC", 50000.0), ("ETH", 3000.0), ("SOL", 100.0),
                                     ("@232", 232.0), ("@7", 7.0)]);
         let previous = make_mids(&[("BTC", 50000.0), ("ETH", 3000.0), ("SOL", 100.0),
-                                    ("@232", 100.0), ("@7", 1.0)]);  // big moves but invalid
+                                    ("@232", 100.0), ("@7", 1.0)]);
         let market = MarketClient::new();
         let result = market.filter_candidates(&current, &previous);
         assert!(!result.contains(&"@232".to_string()), "@232 must be filtered out");
@@ -427,34 +523,31 @@ mod tests {
 
     #[test]
     fn filter_candidates_rejects_spot_pairs() {
-        // Spot pairs have a "/" — must be excluded even with large moves
         let current  = make_mids(&[("BTC", 50000.0), ("ETH", 3000.0), ("SOL", 100.0),
                                     ("PURR/USDC", 2.0)]);
         let previous = make_mids(&[("BTC", 50000.0), ("ETH", 3000.0), ("SOL", 100.0),
-                                    ("PURR/USDC", 0.01)]);  // 200× move but spot pair
+                                    ("PURR/USDC", 0.01)]);
         let market = MarketClient::new();
         let result = market.filter_candidates(&current, &previous);
         assert!(!result.contains(&"PURR/USDC".to_string()), "Spot pairs must be filtered out");
     }
 
     #[test]
-    fn filter_candidates_empty_previous_gives_zero_change() {
-        // Cycle 1: no previous prices — anchors still returned
-        let current  = make_mids(&[("BTC", 50000.0), ("ETH", 3000.0), ("SOL", 100.0)]);
-        let previous: HashMap<String, f64> = HashMap::new();
-        let market = MarketClient::new();
-        let result = market.filter_candidates(&current, &previous);
-        assert!(result.contains(&"BTC".to_string()));
+    fn filter_candidates_no_duplicates() {
+        let current  = make_mids(&[("BTC", 60000.0), ("ETH", 3000.0), ("SOL", 100.0)]);
+        let previous = make_mids(&[("BTC", 50000.0), ("ETH", 3000.0), ("SOL", 100.0)]);
+        let market   = MarketClient::new();
+        let result   = market.filter_candidates(&current, &previous);
+        let btc_count = result.iter().filter(|s| s.as_str() == "BTC").count();
+        assert_eq!(btc_count, 1, "BTC must appear exactly once, got {}", btc_count);
     }
 
     #[test]
-    fn filter_candidates_no_duplicates() {
-        // BTC is both an anchor and a top mover — should appear exactly once
-        let current  = make_mids(&[("BTC", 60000.0), ("ETH", 3000.0), ("SOL", 100.0)]);
-        let previous = make_mids(&[("BTC", 50000.0), ("ETH", 3000.0), ("SOL", 100.0)]);
-        let market = MarketClient::new();
-        let result = market.filter_candidates(&current, &previous);
-        let btc_count = result.iter().filter(|s| s.as_str() == "BTC").count();
-        assert_eq!(btc_count, 1, "BTC must appear exactly once, got {}", btc_count);
+    fn filter_candidates_empty_previous_gives_zero_change() {
+        let current  = make_mids(&[("BTC", 50000.0), ("ETH", 3000.0), ("SOL", 100.0)]);
+        let previous = HashMap::new();
+        let market   = MarketClient::new();
+        let result   = market.filter_candidates(&current, &previous);
+        assert!(result.contains(&"BTC".to_string()));
     }
 }
