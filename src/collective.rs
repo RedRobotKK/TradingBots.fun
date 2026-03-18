@@ -14,7 +14,7 @@
 //! If multiple users are losing on the same side, confidence is nudged down
 //! (crowd got trapped — caution).
 //!
-//! ```
+//! ```no_run
 //! let crowd = collective::get_crowd_signal(&db, "SOL").await;
 //! let mult  = crowd.as_ref().map(|c| c.confidence_multiplier("LONG")).unwrap_or(1.0);
 //! dec.confidence *= mult;

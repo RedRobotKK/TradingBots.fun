@@ -447,8 +447,10 @@ mod tests {
 
     #[test]
     fn whitelist_allows_only_listed_symbols() {
-        let mut c = ThesisConstraints::default();
-        c.symbol_whitelist = Some(vec!["BTC".into(), "ETH".into()]);
+        let c = ThesisConstraints {
+            symbol_whitelist: Some(vec!["BTC".into(), "ETH".into()]),
+            ..Default::default()
+        };
         assert!(c.allows("BTC"));
         assert!(c.allows("ETH"));
         assert!(!c.allows("SOL"));
@@ -457,8 +459,10 @@ mod tests {
 
     #[test]
     fn sector_filter_allows_only_sector_symbols() {
-        let mut c = ThesisConstraints::default();
-        c.sector_filter = Some("meme".into());
+        let c = ThesisConstraints {
+            sector_filter: Some("meme".into()),
+            ..Default::default()
+        };
         assert!(c.allows("PEPE"));
         assert!(c.allows("WIF"));
         assert!(!c.allows("BTC"));
