@@ -34,6 +34,6 @@ CREATE INDEX IF NOT EXISTS idx_lb_snap_tenant_campaign_date
     ON leaderboard_snapshots (tenant_id, campaign_id, snapshot_date ASC);
 
 -- ─── aum_snapshots ────────────────────────────────────────────────────────────
--- Most queries read the most-recent snapshot first; ensure DESC index exists
-CREATE INDEX IF NOT EXISTS idx_aum_snap_tenant_ts_desc
-    ON aum_snapshots (tenant_id, recorded_at DESC);
+-- NOTE: aum_snapshots is a system-wide aggregate table with no tenant_id column.
+-- The existing idx_aum_time on (recorded_at DESC) already covers most-recent-first
+-- reads.  No additional index is needed; this entry is intentionally a no-op.
