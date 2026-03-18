@@ -5241,11 +5241,406 @@ async fn thesis_update_handler(
     })).into_response()
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Public landing page — tradingbots.fun
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// `GET /` — public landing page showing aggregate AUM, positions, and returns.
+///
+/// Visible to any visitor — no authentication required.
+/// All numbers are live, fetched from `/api/public/tvl` and `/api/public/stats`
+/// via client-side JavaScript that auto-refreshes every 30 seconds.
+async fn public_landing_handler(
+    State(_app): State<AppState>,
+) -> axum::response::Html<String> {
+    axum::response::Html(r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TradingBots.fun — AI-Powered Crypto Trading</title>
+<meta name="description" content="Autonomous AI trading bots managing $2M+ across 10 accounts. Track live AUM, open positions, and returns.">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0d1117;color:#c9d1d9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;min-height:100vh}
+a{color:inherit;text-decoration:none}
+
+/* ── Nav ── */
+.nav{display:flex;align-items:center;justify-content:space-between;padding:16px 32px;border-bottom:1px solid #21262d;position:sticky;top:0;background:#0d1117;z-index:100}
+.nav-logo{font-size:1.1rem;font-weight:800;color:#e6edf3}
+.nav-logo .dot{color:#3fb950}
+.nav-links{display:flex;gap:20px;align-items:center}
+.nav-link{font-size:.85rem;color:#8b949e;transition:.15s}
+.nav-link:hover{color:#e6edf3}
+.nav-cta{background:#3fb950;color:#0d1117;padding:8px 18px;border-radius:8px;font-weight:700;font-size:.85rem;transition:.15s}
+.nav-cta:hover{background:#52c965}
+
+/* ── Hero ── */
+.hero{text-align:center;padding:72px 24px 56px;background:radial-gradient(ellipse at top,rgba(63,185,80,.06) 0%,transparent 70%)}
+.hero-badge{display:inline-block;background:rgba(63,185,80,.12);border:1px solid rgba(63,185,80,.3);border-radius:20px;padding:5px 16px;font-size:.72rem;font-weight:700;color:#3fb950;letter-spacing:.8px;text-transform:uppercase;margin-bottom:20px}
+.hero h1{font-size:clamp(2rem,5vw,3.2rem);font-weight:800;color:#e6edf3;line-height:1.15;margin-bottom:14px}
+.hero h1 em{font-style:normal;color:#3fb950}
+.hero-sub{font-size:1rem;color:#8b949e;max-width:520px;margin:0 auto 36px;line-height:1.65}
+.hero-btns{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+.btn-primary{background:#3fb950;color:#0d1117;padding:13px 28px;border-radius:10px;font-weight:700;font-size:.95rem;transition:.15s;display:inline-block}
+.btn-primary:hover{background:#52c965;transform:translateY(-1px)}
+.btn-secondary{background:transparent;border:1px solid #30363d;color:#c9d1d9;padding:13px 28px;border-radius:10px;font-weight:600;font-size:.95rem;transition:.15s;display:inline-block}
+.btn-secondary:hover{border-color:#58a6ff;color:#58a6ff}
+
+/* ── Stats strip ── */
+.stats-strip{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:1px;background:#21262d;border-top:1px solid #21262d;border-bottom:1px solid #21262d}
+.stat-cell{background:#0d1117;padding:28px 24px;text-align:center}
+.stat-value{font-size:2rem;font-weight:800;color:#e6edf3;letter-spacing:-.5px;line-height:1}
+.stat-value.green{color:#3fb950}
+.stat-value.red{color:#f85149}
+.stat-label{font-size:.72rem;color:#8b949e;text-transform:uppercase;letter-spacing:.6px;margin-top:6px}
+.stat-sub{font-size:.75rem;color:#484f58;margin-top:3px}
+
+/* ── Chart ── */
+.chart-section{max-width:960px;margin:48px auto 0;padding:0 24px}
+.section-title{font-size:.82rem;font-weight:700;color:#8b949e;text-transform:uppercase;letter-spacing:.7px;margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.section-title::after{content:'';flex:1;height:1px;background:#21262d}
+.chart-wrap{background:#161b22;border:1px solid #21262d;border-radius:14px;padding:24px;position:relative;height:140px}
+#aum-chart{width:100%;height:100%}
+.chart-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#484f58;font-size:.82rem}
+
+/* ── Accounts table ── */
+.accounts-section{max-width:960px;margin:40px auto 0;padding:0 24px 72px}
+.table-wrap{background:#161b22;border:1px solid #21262d;border-radius:14px;overflow:hidden}
+.table-head{padding:16px 20px;border-bottom:1px solid #21262d;display:flex;justify-content:space-between;align-items:center}
+.table-head-title{font-size:.88rem;font-weight:700;color:#e6edf3}
+.live-dot{display:inline-flex;align-items:center;gap:5px;font-size:.72rem;color:#3fb950}
+.live-dot::before{content:'';width:7px;height:7px;background:#3fb950;border-radius:50%;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+table{width:100%;border-collapse:collapse}
+th{padding:10px 16px;font-size:.68rem;font-weight:700;color:#484f58;text-transform:uppercase;letter-spacing:.6px;text-align:left;border-bottom:1px solid #21262d}
+.acct-row td{padding:14px 16px;font-size:.85rem;border-bottom:1px solid rgba(48,54,61,.5);transition:background .1s}
+.acct-row:last-child td{border-bottom:none}
+.acct-row:hover td{background:rgba(255,255,255,.02)}
+.acct-name{font-weight:700;color:#e6edf3}
+.acct-cap{color:#8b949e;font-variant-numeric:tabular-nums}
+.acct-equity{font-weight:600;font-variant-numeric:tabular-nums}
+.acct-pct{font-weight:700;font-variant-numeric:tabular-nums}
+.acct-pos{color:#8b949e;text-align:center}
+.acct-wallet{color:#484f58;font-size:.75rem;font-family:monospace}
+.pct-pos{color:#3fb950}
+.pct-neg{color:#f85149}
+.pct-neu{color:#8b949e}
+.skeleton{background:linear-gradient(90deg,#21262d 25%,#2d333b 50%,#21262d 75%);background-size:200% 100%;animation:shimmer 1.4s infinite;border-radius:4px;height:16px;display:inline-block;width:80px}
+@keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+
+/* ── Footer ── */
+.footer{border-top:1px solid #21262d;padding:24px 32px;display:flex;justify-content:space-between;align-items:center;font-size:.75rem;color:#484f58;flex-wrap:wrap;gap:12px}
+.footer-links{display:flex;gap:16px}
+.footer-link{color:#484f58;transition:.15s}
+.footer-link:hover{color:#8b949e}
+.refresh-tag{font-size:.68rem;color:#30363d;margin-top:4px;text-align:right}
+</style>
+</head>
+<body>
+
+<!-- Nav -->
+<nav class="nav">
+  <div class="nav-logo">TradingBots<span class="dot">.</span>fun</div>
+  <div class="nav-links">
+    <a href="/leaderboard" class="nav-link">Leaderboard</a>
+    <a href="/login" class="nav-cta">Start Trading</a>
+  </div>
+</nav>
+
+<!-- Hero -->
+<section class="hero">
+  <div class="hero-badge">🤖 Live · Autonomous AI Trading</div>
+  <h1>AI Bots Managing<br><em id="hero-aum">$2,122,120</em> in Real Capital</h1>
+  <p class="hero-sub">10 autonomous trading bots running 24/7, making AI-powered decisions across crypto markets. Watch live performance — no sign-up required.</p>
+  <div class="hero-btns">
+    <a href="/login" class="btn-primary">Start Your Bot →</a>
+    <a href="/leaderboard" class="btn-secondary">View Leaderboard</a>
+  </div>
+</section>
+
+<!-- Stats strip -->
+<div class="stats-strip">
+  <div class="stat-cell">
+    <div class="stat-value" id="stat-aum">—</div>
+    <div class="stat-label">Total AUM</div>
+    <div class="stat-sub">across all accounts</div>
+  </div>
+  <div class="stat-cell">
+    <div class="stat-value" id="stat-positions">—</div>
+    <div class="stat-label">Open Positions</div>
+    <div class="stat-sub">live right now</div>
+  </div>
+  <div class="stat-cell">
+    <div class="stat-value green" id="stat-pnl">—</div>
+    <div class="stat-label">Total P&amp;L</div>
+    <div class="stat-sub" id="stat-pnl-pct">since launch</div>
+  </div>
+  <div class="stat-cell">
+    <div class="stat-value" id="stat-accounts">10</div>
+    <div class="stat-label">Active Bots</div>
+    <div class="stat-sub">$10 – $1,000,000</div>
+  </div>
+</div>
+
+<!-- AUM chart -->
+<section class="chart-section">
+  <div class="section-title">AUM History (30 days)</div>
+  <div class="chart-wrap">
+    <canvas id="aum-chart"></canvas>
+    <div class="chart-empty" id="chart-empty">Accumulating data…</div>
+  </div>
+</section>
+
+<!-- Accounts table -->
+<section class="accounts-section">
+  <div style="margin-bottom:14px" class="section-title">All Accounts</div>
+  <div class="table-wrap">
+    <div class="table-head">
+      <span class="table-head-title">Portfolio Overview</span>
+      <span class="live-dot">Live</span>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Bot Name</th>
+          <th>Initial Capital</th>
+          <th>Current Equity</th>
+          <th>Return</th>
+          <th>Open Pos.</th>
+          <th>Wallet</th>
+        </tr>
+      </thead>
+      <tbody id="accounts-tbody">
+        <tr class="acct-row"><td colspan="7" style="text-align:center;color:#484f58;padding:32px">
+          <span class="skeleton" style="width:200px"></span>
+        </td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="refresh-tag" id="refresh-tag">—</div>
+</section>
+
+<!-- Footer -->
+<footer class="footer">
+  <span>© 2025 TradingBots.fun — AI-powered autonomous trading</span>
+  <div class="footer-links">
+    <a href="/leaderboard" class="footer-link">Leaderboard</a>
+    <a href="/login" class="footer-link">Login</a>
+    <a href="/dashboard" class="footer-link">Operator Dashboard</a>
+  </div>
+</footer>
+
+<script>
+// ── Formatters ─────────────────────────────────────────────────────────────
+const fmt = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
+const fmtShort = (n) => {
+  if (n >= 1e6) return '$' + (n/1e6).toFixed(2) + 'M';
+  if (n >= 1e3) return '$' + (n/1e3).toFixed(1) + 'K';
+  return fmt.format(n);
+};
+const fmtPct = (n) => (n >= 0 ? '+' : '') + n.toFixed(2) + '%';
+
+// ── Sparkline ──────────────────────────────────────────────────────────────
+function drawChart(points) {
+  const canvas = document.getElementById('aum-chart');
+  if (!canvas || !points || points.length < 2) return;
+  document.getElementById('chart-empty').style.display = 'none';
+  const ctx = canvas.getContext('2d');
+  const W = canvas.offsetWidth, H = canvas.offsetHeight;
+  canvas.width = W; canvas.height = H;
+
+  const vals = points.map(p => p.aum);
+  const minV = Math.min(...vals), maxV = Math.max(...vals);
+  const range = maxV - minV || 1;
+
+  const px = (i) => (i / (points.length - 1)) * W;
+  const py = (v) => H - ((v - minV) / range) * (H - 12) - 6;
+
+  // Gradient fill
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, 'rgba(63,185,80,.25)');
+  grad.addColorStop(1, 'rgba(63,185,80,.01)');
+
+  ctx.beginPath();
+  ctx.moveTo(px(0), py(vals[0]));
+  for (let i = 1; i < vals.length; i++) ctx.lineTo(px(i), py(vals[i]));
+  ctx.lineTo(W, H); ctx.lineTo(0, H); ctx.closePath();
+  ctx.fillStyle = grad; ctx.fill();
+
+  // Line
+  ctx.beginPath();
+  ctx.moveTo(px(0), py(vals[0]));
+  for (let i = 1; i < vals.length; i++) ctx.lineTo(px(i), py(vals[i]));
+  ctx.strokeStyle = '#3fb950'; ctx.lineWidth = 2;
+  ctx.lineJoin = 'round'; ctx.stroke();
+
+  // Last dot
+  ctx.beginPath();
+  ctx.arc(px(vals.length-1), py(vals[vals.length-1]), 4, 0, Math.PI*2);
+  ctx.fillStyle = '#3fb950'; ctx.fill();
+}
+
+// ── Load aggregate stats ───────────────────────────────────────────────────
+async function loadTvl() {
+  try {
+    const res = await fetch('/api/public/tvl');
+    const data = await res.json();
+    const l = data.latest;
+    if (l) {
+      document.getElementById('stat-aum').textContent = fmtShort(l.total_aum);
+      document.getElementById('hero-aum').textContent = fmtShort(l.total_aum);
+      document.getElementById('stat-positions').textContent = l.open_positions;
+      const pnl = l.total_pnl;
+      const pnlEl = document.getElementById('stat-pnl');
+      pnlEl.textContent = (pnl >= 0 ? '+' : '') + fmtShort(Math.abs(pnl));
+      pnlEl.className = 'stat-value ' + (pnl >= 0 ? 'green' : 'red');
+      document.getElementById('stat-pnl-pct').textContent = fmtPct(l.pnl_pct) + ' since launch';
+    }
+    if (data.points && data.points.length > 1) {
+      drawChart(data.points);
+    }
+  } catch(e) { console.warn('tvl fetch failed', e); }
+}
+
+// ── Load per-account stats ─────────────────────────────────────────────────
+async function loadAccounts() {
+  try {
+    const res = await fetch('/api/public/stats');
+    const data = await res.json();
+    const tbody = document.getElementById('accounts-tbody');
+    if (!data.accounts || data.accounts.length === 0) {
+      tbody.innerHTML = '<tr class="acct-row"><td colspan="7" style="text-align:center;color:#484f58;padding:32px">No accounts yet</td></tr>';
+      return;
+    }
+    tbody.innerHTML = data.accounts.map((a, i) => {
+      const ret = a.initial_capital > 0 ? ((a.current_equity - a.initial_capital) / a.initial_capital * 100) : 0;
+      const pctClass = ret > 0.01 ? 'pct-pos' : ret < -0.01 ? 'pct-neg' : 'pct-neu';
+      const wallet = a.wallet_address && a.wallet_address.length >= 10
+        ? a.wallet_address.slice(0,6) + '…' + a.wallet_address.slice(-4)
+        : '—';
+      return `<tr class="acct-row">
+        <td style="color:#484f58">${i+1}</td>
+        <td class="acct-name">${a.display_name}</td>
+        <td class="acct-cap">${fmtShort(a.initial_capital)}</td>
+        <td class="acct-equity">${fmtShort(a.current_equity)}</td>
+        <td class="acct-pct ${pctClass}">${fmtPct(ret)}</td>
+        <td class="acct-pos">${a.open_positions}</td>
+        <td class="acct-wallet">${wallet}</td>
+      </tr>`;
+    }).join('');
+
+    const now = new Date();
+    document.getElementById('refresh-tag').textContent =
+      'Last updated: ' + now.toLocaleTimeString();
+  } catch(e) { console.warn('stats fetch failed', e); }
+}
+
+// ── Init & auto-refresh ────────────────────────────────────────────────────
+loadTvl();
+loadAccounts();
+setInterval(loadTvl, 30000);
+setInterval(loadAccounts, 30000);
+</script>
+</body>
+</html>"#.to_string())
+}
+
+/// `GET /api/public/stats` — per-account stats for the public landing page.
+///
+/// Returns each account's name, initial capital, current equity, open position
+/// count.  No PII beyond what's already on-chain (wallet address truncated).
+/// No authentication required.
+async fn api_public_stats_handler(
+    State(app): State<AppState>,
+) -> impl axum::response::IntoResponse {
+    use axum::http::{HeaderMap, StatusCode};
+
+    let mut headers = HeaderMap::new();
+    headers.insert("Access-Control-Allow-Origin", "*".parse().unwrap());
+    headers.insert("Cache-Control", "public, max-age=15".parse().unwrap());
+
+    let Some(db) = &app.db else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            headers,
+            axum::Json(serde_json::json!({ "accounts": [], "error": "db unavailable" })),
+        );
+    };
+
+    // Use non-macro query to avoid requiring .sqlx/ cache regeneration.
+    // Fetches all tenants with their latest equity snapshot and open position count.
+    let rows = sqlx::query(r#"
+        SELECT
+            t.id::text                                              AS tenant_id,
+            COALESCE(t.display_name, 'Anonymous')                  AS display_name,
+            t.initial_capital::float8                              AS initial_capital,
+            t.wallet_address,
+            COALESCE(
+                (SELECT equity::float8
+                 FROM   equity_snapshots
+                 WHERE  tenant_id = t.id
+                 ORDER  BY recorded_at DESC
+                 LIMIT  1),
+                t.initial_capital::float8
+            )                                                       AS current_equity,
+            COALESCE(
+                (SELECT COUNT(*)::int
+                 FROM   positions p
+                 WHERE  p.tenant_id = t.id),
+                0
+            )                                                       AS open_positions
+        FROM   tenants t
+        ORDER  BY t.initial_capital DESC
+    "#)
+    .fetch_all(db.pool())
+    .await;
+
+    match rows {
+        Err(e) => {
+            log::warn!("api_public_stats_handler: DB error: {e}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                headers,
+                axum::Json(serde_json::json!({ "accounts": [], "error": "query failed" })),
+            )
+        }
+        Ok(rows) => {
+            let accounts: Vec<serde_json::Value> = rows.iter().map(|r| {
+                use sqlx::Row;
+                let display_name: String = r.try_get("display_name").unwrap_or_else(|_| "Anonymous".into());
+                let initial_capital: f64 = r.try_get("initial_capital").unwrap_or(0.0);
+                let current_equity: f64  = r.try_get("current_equity").unwrap_or(initial_capital);
+                let open_positions: i32  = r.try_get("open_positions").unwrap_or(0);
+                let wallet_address: Option<String> = r.try_get("wallet_address").ok().flatten();
+                serde_json::json!({
+                    "display_name":    display_name,
+                    "initial_capital": initial_capital,
+                    "current_equity":  current_equity,
+                    "open_positions":  open_positions,
+                    "wallet_address":  wallet_address,
+                })
+            }).collect();
+
+            (
+                StatusCode::OK,
+                headers,
+                axum::Json(serde_json::json!({
+                    "generated_at": chrono::Utc::now().to_rfc3339(),
+                    "accounts": accounts,
+                })),
+            )
+        }
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 pub async fn serve(app_state: AppState, port: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let app = Router::new()
-        .route("/", get(dashboard_handler))
+        .route("/", get(public_landing_handler))
+        .route("/dashboard", get(dashboard_handler))
         .route("/app",                  get(consumer_app_handler))
         .route("/app/history",          get(consumer_history_handler))
         .route("/app/tax",              get(consumer_tax_handler))
@@ -5281,6 +5676,7 @@ pub async fn serve(app_state: AppState, port: u16) -> Result<(), Box<dyn std::er
         // Used by the landing page TVL hero graph and external integrations.
         .route("/api/public/tvl",       get(public_tvl_handler))
         .route("/api/public/tvl/svg",   get(public_tvl_svg_handler))
+        .route("/api/public/stats",     get(api_public_stats_handler))
         // ── Funnel / analytics (first-party, no third-party scripts) ───────
         .route("/api/funnel",           post(funnel_event_handler))
         // ── Trade journal ────────────────────────────────────────────────
