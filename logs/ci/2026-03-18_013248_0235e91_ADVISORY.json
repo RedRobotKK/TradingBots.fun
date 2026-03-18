@@ -1,0 +1,72 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-03-18T01:29:13Z",
+    "commit": "0235e91",
+    "commit_full": "0235e911d38255dc832bfddc201d4d44bb85e2da",
+    "commit_message": "chore: bump version 0.1.21 \u2192 0.1.22",
+    "branch": "master",
+    "overall_status": "ADVISORY",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
+    "cargo": "cargo 1.93.1 (083ac5135 2025-12-15)",
+    "os_kernel": "6.8.0-106-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "PASSED",
+      "exit_code": 0,
+      "duration_seconds": 161,
+      "total_passed": 588,
+      "total_failed": 0,
+      "total_ignored": 1,
+      "failures": []
+    },
+    "clippy": {
+      "status": "PASSED",
+      "exit_code": 0,
+      "duration_seconds": 49,
+      "error_count": 0,
+      "errors": []
+    },
+    "audit": {
+      "status": "ADVISORY",
+      "exit_code": 1,
+      "duration_seconds": 3,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2023-0071",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2023-0071",
+          "severity": "5.9 (medium)",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "tradingbots",
+    "status": "active",
+    "active_since": "Wed 2026-03-18 01:19:44 UTC",
+    "recent_logs": [
+      "Mar 18 01:23:38 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[70598]: [2026-03-18T01:23:38.756Z ERROR tradingbots_fun::web_dashboard] invite claim DB error: claim_invite_code DB error: error returned from database: column reference \"campaign_id\" is ambiguous",
+      "Mar 18 01:23:39 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[70598]: [2026-03-18T01:23:39.617Z ERROR tradingbots_fun::web_dashboard] invite claim DB error: claim_invite_code DB error: error returned from database: column reference \"campaign_id\" is ambiguous",
+      "Mar 18 01:23:40 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[70598]: [2026-03-18T01:23:40.568Z ERROR tradingbots_fun::web_dashboard] invite claim DB error: claim_invite_code DB error: error returned from database: column reference \"campaign_id\" is ambiguous",
+      "Mar 18 01:23:41 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[70598]: [2026-03-18T01:23:41.260Z ERROR tradingbots_fun::web_dashboard] invite claim DB error: claim_invite_code DB error: error returned from database: column reference \"campaign_id\" is ambiguous",
+      "Mar 18 01:23:42 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[70598]: [2026-03-18T01:23:42.101Z ERROR tradingbots_fun::web_dashboard] invite claim DB error: claim_invite_code DB error: error returned from database: column reference \"campaign_id\" is ambiguous"
+    ]
+  }
+}
