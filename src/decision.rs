@@ -94,9 +94,9 @@ impl Regime {
     /// choppy-market noise that caused 0W/14L in ranging conditions.
     fn threshold(self) -> f64 {
         match self {
-            Regime::Trending => 0.58,  // only strong, confirmed trend signals
-            Regime::Ranging  => 0.52,  // mean-reversion requires clear extremes
-            Regime::Neutral  => 0.55,  // balanced but still demanding
+            Regime::Trending => 0.44,  // confirmed trend signals
+            Regime::Ranging  => 0.38,  // mean-reversion clear extremes
+            Regime::Neutral  => 0.42,  // balanced
         }
     }
     /// Dominance ratio — winning side must exceed losing side by this factor.
