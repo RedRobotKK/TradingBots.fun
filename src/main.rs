@@ -1101,20 +1101,12 @@ async fn apply_ai_review(
 
         match rec.action.as_str() {
             "close_now" => {
-                // Hard guardrails before trusting AI close_now.  The AI is
-                // given a single snapshot every 5 min with no trajectory context,
-                // so it can fire prematurely on normal early drawdown or noise.
+                // Guardrails: prevent AI closing brand-new positions on noise,
+                // but otherwise trust it to cut losers early.
                 //
-                // All three conditions must hold:
-                //   1. Min hold 45 min (90 cycles) — crypto regularly pulls -0.4R
-                //      in the first 15–30 min before reversing; don't let AI cut
-                //      those trades short.
-                //   2. Position is genuinely losing (R < -0.25) — prevents AI from
-                //      closing breakeven or mildly profitable trades on "signal
-                //      failed" noise.
-                //   3. Either DCA slots are exhausted (dca_count ≥ 2, so there is
-                //      no remaining rescue mechanism) OR loss is deep (R < -0.50).
-                //      If DCA is still available the strategy should try it first.
+                //   1. Min hold 20 min (40 cycles) — very early trades still need a chance
+                //   2. Genuinely losing (R < -0.20)
+                //   3. Either: DCA already tried (dca_count >= 1) OR loss is deep (R < -0.40)
                 let should_close = {
                     let s = bot_state.read().await;
                     s.positions.iter().find(|p| p.symbol == rec.symbol)
@@ -1122,11 +1114,11 @@ async fn apply_ai_review(
                             let r = if p.r_dollars_risked > 1e-8 {
                                 p.unrealised_pnl / p.r_dollars_risked
                             } else { 0.0 };
-                            let min_hold_met     = p.cycles_held >= 90; // 45 min
-                            let genuinely_losing = r < -0.25;
-                            let dca_exhausted    = p.dca_count >= 2;    // no more adds available
-                            let deep_loss        = r < -0.50;           // beyond DCA rescue zone
-                            min_hold_met && genuinely_losing && (dca_exhausted || deep_loss)
+                            let min_hold_met     = p.cycles_held >= 40; // 20 min
+                            let genuinely_losing = r < -0.20;
+                            let dca_tried        = p.dca_count >= 1;
+                            let deep_loss        = r < -0.40;
+                            min_hold_met && genuinely_losing && (dca_tried || deep_loss)
                         })
                         .unwrap_or(false)
                 };
@@ -1152,13 +1144,13 @@ async fn apply_ai_review(
                         });
                     }
                 } else {
-                    info!("🤖 AI close {} SKIPPED — guardrail (need 45min hold + R<-0.25 + DCA exhausted/deep loss)", rec.symbol);
+                    info!("🤖 AI close {} SKIPPED — guardrail (need 20min hold + R<-0.20 + DCA tried/deep loss)", rec.symbol);
                 }
             }
 
             "scale_up" => {
-                // Guardrail: factor capped at 2.0, position must be profitable
-                let factor = rec.factor.clamp(1.0, 2.0);
+                // Guardrail: factor capped at 3.0, position must have positive R
+                let factor = rec.factor.clamp(1.0, 3.0);
                 let can_scale = {
                     let s = bot_state.read().await;
                     s.positions.iter().find(|p| p.symbol == rec.symbol)
@@ -1166,7 +1158,7 @@ async fn apply_ai_review(
                             let r = if p.r_dollars_risked > 1e-8 {
                                 p.unrealised_pnl / p.r_dollars_risked
                             } else { 0.0 };
-                            r > 0.5  // only add to winners
+                            r > 0.3  // add to winners (lowered from 0.5)
                         })
                         .unwrap_or(false)
                 };
