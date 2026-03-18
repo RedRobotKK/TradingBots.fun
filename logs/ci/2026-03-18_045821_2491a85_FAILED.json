@@ -1,0 +1,66 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-03-18T04:49:53Z",
+    "commit": "2491a85",
+    "commit_full": "2491a854af2bc238075919311f6026105ba1c8be",
+    "commit_message": "chore: bump version 0.1.27 \u2192 0.1.28",
+    "branch": "master",
+    "overall_status": "FAILED",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
+    "cargo": "cargo 1.93.1 (083ac5135 2025-12-15)",
+    "os_kernel": "6.8.0-106-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "PASSED",
+      "exit_code": 0,
+      "duration_seconds": 396,
+      "total_passed": 588,
+      "total_failed": 0,
+      "total_ignored": 1,
+      "failures": []
+    },
+    "clippy": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 108,
+      "error_count": 2,
+      "errors": [
+        {
+          "code": "E",
+          "message": "could not create incremental compilation session directory `/tradingbots-fun/target/debug/incremental/tradingbots_fun-2c"
+        },
+        {
+          "code": "E",
+          "message": "could not compile `tradingbots-fun` (lib test) due to 1 previous error"
+        }
+      ]
+    },
+    "audit": {
+      "status": "ADVISORY",
+      "exit_code": 1,
+      "duration_seconds": 1,
+      "vulnerability_count": 0,
+      "vulnerabilities": []
+    }
+  },
+  "service": {
+    "name": "tradingbots",
+    "status": "active",
+    "active_since": "Wed 2026-03-18 04:42:25 UTC",
+    "recent_logs": [
+      "Mar 18 04:42:25 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: tradingbots.service: Deactivated successfully.",
+      "Mar 18 04:42:25 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Stopped tradingbots.service - TradingBots.fun.",
+      "Mar 18 04:42:25 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: tradingbots.service: Consumed 23.415s CPU time, 23.7M memory peak, 16.4M memory swap peak.",
+      "Mar 18 04:42:25 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Starting tradingbots.service - TradingBots.fun...",
+      "Mar 18 04:42:25 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Started tradingbots.service - TradingBots.fun."
+    ]
+  }
+}
