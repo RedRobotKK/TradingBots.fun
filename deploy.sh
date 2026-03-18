@@ -1242,6 +1242,15 @@ ENDSSH
       PASS=0; FAIL=0
       STEP1="⏳"; STEP2="⏳"; STEP3="⏳"
 
+      # ── Pre-CI: free disk space to prevent "No space left on device" ────────
+      {
+        DISK_BEFORE=$(df -h / | awk 'NR==2{print $4}')
+        echo "▸ Pre-CI cargo clean (freeing target/ artifacts, disk free before: ${DISK_BEFORE})"
+        cargo clean 2>&1 || true
+        DISK_AFTER=$(df -h / | awk 'NR==2{print $4}')
+        echo "  disk free after clean: ${DISK_AFTER}"
+      } | tee -a "$CI_LOG"
+
       # ── Log header ─────────────────────────────────────────────────────────
       {
         echo "════════════════════════════════════════════════════════════════"
