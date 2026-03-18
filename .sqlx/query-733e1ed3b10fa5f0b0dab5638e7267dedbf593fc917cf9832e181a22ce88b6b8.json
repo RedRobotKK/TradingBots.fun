@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO funnel_events (tenant_id, event_type)\n            VALUES ($1, 'PROMO_SENT')\n            ON CONFLICT DO NOTHING\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "733e1ed3b10fa5f0b0dab5638e7267dedbf593fc917cf9832e181a22ce88b6b8"
+}

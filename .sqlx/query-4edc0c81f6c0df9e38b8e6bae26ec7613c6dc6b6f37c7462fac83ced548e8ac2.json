@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT count(*) FROM closed_trades ct\n               JOIN campaigns c ON c.id = $2\n               WHERE ct.tenant_id = $1\n                 AND ct.closed_at >= c.starts_at",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "count",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "4edc0c81f6c0df9e38b8e6bae26ec7613c6dc6b6f37c7462fac83ced548e8ac2"
+}
