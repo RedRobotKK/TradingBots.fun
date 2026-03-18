@@ -103,9 +103,9 @@ impl Regime {
     /// Higher = only enter when direction is unambiguous.
     fn dominance(self) -> f64 {
         match self {
-            Regime::Trending => 1.55,
-            Regime::Ranging  => 1.45,
-            Regime::Neutral  => 1.50,
+            Regime::Trending => 1.35,
+            Regime::Ranging  => 1.28,
+            Regime::Neutral  => 1.32,
         }
     }
 }
@@ -264,12 +264,13 @@ pub fn make_decision(
     // ── Intraday session filter ────────────────────────────────────────────────
     // UTC hour → entry quality multiplier applied to the score threshold.
     // London+NY overlap (08:00–17:00) has the highest signal quality.
-    // Asian dead zone (00:00–06:00) has poor follow-through; raise the bar.
+    // Asia session (00:00–07:00) has good crypto-native liquidity — treat same
+    // as London/NY since crypto markets are 24/7 with strong Asia participation.
     let utc_hour = chrono::Utc::now().hour();
     let session_mult: f64 = match utc_hour {
         8..=17  => 1.00,  // London+NY overlap — full signal quality
-        18..=21 => 1.06,  // NY close / early Asia — slightly elevated bar
-        _       => 1.14,  // Asian dead zone — meaningfully higher bar required
+        18..=21 => 1.03,  // NY close / early Asia — minimal elevation
+        _       => 1.05,  // Asia session — slight elevation, still very tradeable
     };
     let session_label = match utc_hour {
         8..=12  => "LON",
