@@ -147,51 +147,107 @@ impl SignalWeights {
 
     /// Adjust weights from a closed trade outcome.
     ///
-    /// A signal is "aligned" when its bull/bear call matches the trade side.
-    /// Profitable + aligned   → reward the signal  (+LR_WIN)
-    /// Profitable + misaligned → small penalty      (−LR_LOSE)
-    /// Loss       + aligned   → small penalty      (−LR_LOSE)
-    /// Loss       + misaligned → reward (contrarian) (+LR_WIN × 0.5)
+    /// ## Learning design
+    ///
+    /// **Asymmetric rates** — `LR_LOSE > LR_WIN` on purpose.  A signal must be
+    /// correct on >63% of trades just to hold its weight steady.  Below that,
+    /// weight decays to the floor and the signal stops influencing entries.
+    /// This is Darwin-style filtering: only consistently predictive signals
+    /// survive to influence live trades.
+    ///
+    /// **Confidence scaling** — the entry confidence (0–1) recorded at open
+    /// modulates how hard each update hits:
+    ///   • High-confidence loss  → full penalty  (we were certain, still wrong)
+    ///   • Low-confidence win    → reduced reward (lucky, not skilled)
+    ///
+    /// **Regime-aware multiplier** — every signal has a "home regime" where it
+    /// is expected to work best.  If it fires in its home regime and the trade
+    /// still loses, the penalty is 1.5× — no excuses in your own turf.
+    ///
+    /// ## Per-outcome nudge table
+    ///
+    /// | Signal aligned | Profitable | Action |
+    /// |----------------|-----------|--------|
+    /// | ✓ yes          | ✓ yes     | `+ LR_WIN  × win_scale`  |
+    /// | ✓ yes          | ✗ no      | `− LR_LOSE × lose_scale` |
+    /// | ✗ no           | ✓ yes     | `− LR_LOSE × 0.3`        (wrong but got lucky) |
+    /// | ✗ no           | ✗ no      | `+ LR_WIN  × 0.35`       (correct dissent) |
     pub fn update(&mut self, contrib: &SignalContribution, was_long: bool, profitable: bool) {
-        const LR_WIN:  f64 = 0.022;
-        const LR_LOSE: f64 = 0.009;
+        // ── Base rates ────────────────────────────────────────────────────────
+        // LR_LOSE > LR_WIN: steady downward pressure on wrong signals.
+        // Break-even requires >63% accuracy (LR_LOSE / (LR_WIN + LR_LOSE) ≈ 0.63).
+        const LR_WIN:  f64 = 0.018;
+        const LR_LOSE: f64 = 0.030;
 
-        fn nudge(w: &mut f64, sig_bullish: bool, was_long: bool, profitable: bool) {
+        // ── Confidence scaling ────────────────────────────────────────────────
+        // entry_confidence is 0 for old positions without the field; treat as 0.6.
+        let conf = if contrib.entry_confidence > 0.0 {
+            contrib.entry_confidence.clamp(0.3, 1.0)
+        } else {
+            0.6
+        };
+        // win_scale: low-conf wins get 55% reward (lucky); high-conf wins get 100%
+        let win_scale  = 0.55 + conf * 0.45;
+        // lose_scale: low-conf losses get 85% penalty; high-conf losses get 130%
+        let lose_scale = 0.85 + conf * 0.45;
+
+        // ── Regime-aware penalty multiplier ──────────────────────────────────
+        // When a signal fires in its home regime and the trade still loses,
+        // it gets a 1.5× penalty. "No excuses in your own turf."
+        let regime = contrib.regime.as_str();
+        let regime_mult_z    = if regime == "Ranging"  { 1.50 } else { 1.0 };
+        let regime_mult_bb   = if regime == "Ranging"  { 1.30 } else { 1.0 };
+        let regime_mult_rsi  = if regime == "Ranging"  { 1.30 } else { 1.0 };
+        let regime_mult_ema  = if regime == "Trending" { 1.50 } else { 1.0 };
+        let regime_mult_macd = if regime == "Trending" { 1.30 } else { 1.0 };
+
+        // ── Core nudge closure ────────────────────────────────────────────────
+        fn nudge(
+            w:           &mut f64,
+            sig_bullish:  bool,
+            was_long:     bool,
+            profitable:   bool,
+            win_s:        f64,
+            lose_s:       f64,
+            regime_m:     f64,
+        ) {
             let aligned = sig_bullish == was_long;
             match (aligned, profitable) {
-                (true,  true)  => *w += LR_WIN,
-                (true,  false) => *w -= LR_LOSE,
-                (false, true)  => *w -= LR_LOSE,
-                (false, false) => *w += LR_WIN * 0.5,
+                // Correct call, won: reward proportional to confidence
+                (true,  true)  => *w += LR_WIN  * win_s,
+                // Correct call, lost: full penalty × regime multiplier
+                (true,  false) => *w -= LR_LOSE * lose_s * regime_m,
+                // Wrong call, won: mild penalty (lucky, but still wrong direction)
+                (false, true)  => *w -= LR_LOSE * 0.30,
+                // Wrong call, lost: small reward — signal correctly dissented
+                (false, false) => *w += LR_WIN  * 0.35,
             }
         }
 
-        nudge(&mut self.rsi,        contrib.rsi_bullish,       was_long, profitable);
-        nudge(&mut self.bollinger,  contrib.bb_bullish,        was_long, profitable);
-        nudge(&mut self.macd,       contrib.macd_bullish,      was_long, profitable);
-        nudge(&mut self.ema_cross,  contrib.ema_cross_bullish, was_long, profitable);
-        nudge(&mut self.order_flow, contrib.of_bullish,        was_long, profitable);
-        nudge(&mut self.trend,      contrib.trend_bullish,     was_long, profitable);
+        nudge(&mut self.rsi,        contrib.rsi_bullish,       was_long, profitable, win_scale, lose_scale, regime_mult_rsi);
+        nudge(&mut self.bollinger,  contrib.bb_bullish,        was_long, profitable, win_scale, lose_scale, regime_mult_bb);
+        nudge(&mut self.macd,       contrib.macd_bullish,      was_long, profitable, win_scale, lose_scale, regime_mult_macd);
+        nudge(&mut self.ema_cross,  contrib.ema_cross_bullish, was_long, profitable, win_scale, lose_scale, regime_mult_ema);
+        nudge(&mut self.order_flow, contrib.of_bullish,        was_long, profitable, win_scale, lose_scale, 1.0);
+        nudge(&mut self.trend,      contrib.trend_bullish,     was_long, profitable, win_scale, lose_scale, 1.0);
 
         if contrib.z_score_present {
-            nudge(&mut self.z_score, contrib.z_score_bullish, was_long, profitable);
+            nudge(&mut self.z_score, contrib.z_score_bullish, was_long, profitable, win_scale, lose_scale, regime_mult_z);
         }
         if contrib.volume_present {
-            nudge(&mut self.volume, contrib.volume_bullish, was_long, profitable);
+            nudge(&mut self.volume, contrib.volume_bullish, was_long, profitable, win_scale, lose_scale, 1.0);
         }
         if contrib.sentiment_present {
-            nudge(&mut self.sentiment, contrib.sentiment_bullish, was_long, profitable);
+            nudge(&mut self.sentiment, contrib.sentiment_bullish, was_long, profitable, win_scale, lose_scale, 1.0);
         }
         if contrib.funding_present {
-            nudge(&mut self.funding_rate, contrib.funding_bullish, was_long, profitable);
+            nudge(&mut self.funding_rate, contrib.funding_bullish, was_long, profitable, win_scale, lose_scale, 1.0);
         }
-
-        // Pattern learning: only update pattern weights when pattern was present
         if contrib.candle_pattern_present {
-            nudge(&mut self.candle_pattern, contrib.candle_pattern_bullish, was_long, profitable);
+            nudge(&mut self.candle_pattern, contrib.candle_pattern_bullish, was_long, profitable, win_scale, lose_scale, 1.0);
         }
         if contrib.chart_pattern_present {
-            nudge(&mut self.chart_pattern, contrib.chart_pattern_bullish, was_long, profitable);
+            nudge(&mut self.chart_pattern, contrib.chart_pattern_bullish, was_long, profitable, win_scale, lose_scale, 1.0);
         }
 
         self.clamp_and_normalise();
@@ -246,8 +302,19 @@ impl SignalWeights {
 
 /// Records each signal's direction at the time a position was opened.
 /// Persisted inside PaperPosition so the learner can use it on close.
+///
+/// `regime` and `entry_confidence` are stamped at entry so the learning
+/// update can apply regime-aware and confidence-scaled adjustments.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SignalContribution {
+    // ── Entry context — stamped by decision.rs before returning Decision ─────
+    /// Market regime at entry: "Trending" | "Ranging" | "Neutral"
+    #[serde(default)]
+    pub regime:             String,
+    /// Decision confidence [0.0, 1.0] at entry — used to scale learning rates.
+    /// High-confidence losses are penalised harder; low-confidence wins rewarded less.
+    #[serde(default)]
+    pub entry_confidence:   f64,
     // ── Direction flags (bullish = true, bearish = false) ─────────────────────
     pub rsi_bullish:        bool,
     pub bb_bullish:         bool,
@@ -477,7 +544,7 @@ mod tests {
     #[test]
     fn signal_contribution_old_json_without_new_fields_deserialises_ok() {
         // Simulates loading a SignalContribution saved before the new pattern fields
-        // were added — #[serde(default)] must fill them in as false.
+        // were added — #[serde(default)] must fill them in as false / empty.
         let old_json = r#"{
             "rsi_bullish": true,
             "bb_bullish": false,
@@ -491,5 +558,80 @@ mod tests {
             "old JSON (no candle_pattern_present) should deserialise as false");
         assert!(!c.chart_pattern_present,
             "old JSON (no chart_pattern_present) should deserialise as false");
+        // New fields also default gracefully
+        assert_eq!(c.regime, "", "old JSON should give empty regime string");
+        assert_eq!(c.entry_confidence, 0.0, "old JSON should give 0.0 confidence");
+    }
+
+    // ── Asymmetric learning rates ─────────────────────────────────────────────
+
+    #[test]
+    fn loss_penalty_exceeds_win_reward_so_bad_signals_decay() {
+        // Run 5 aligned wins then 4 aligned losses.
+        // With LR_LOSE > LR_WIN the weight should have decayed overall,
+        // proving a 55% win rate is not enough to maintain weight.
+        let contrib = SignalContribution {
+            rsi_bullish: true,
+            entry_confidence: 0.8,
+            regime: "Ranging".to_string(),
+            ..all_bullish_contrib()
+        };
+        let mut w = SignalWeights::default();
+        let start = w.rsi;
+        for _ in 0..5 { w.update(&contrib, true, true);  }
+        for _ in 0..4 { w.update(&contrib, true, false); }
+        // 5 wins, 4 losses = 55.6% win rate — weight should be lower than start
+        assert!(w.rsi < start,
+            "55% win rate should not maintain weight: start={start:.4} end={:.4}", w.rsi);
+    }
+
+    #[test]
+    fn high_confidence_loss_penalises_harder_than_low_confidence() {
+        let mut w_hi = SignalWeights::default();
+        let mut w_lo = SignalWeights::default();
+
+        let contrib_hi = SignalContribution {
+            rsi_bullish: true, entry_confidence: 0.95,
+            regime: "Ranging".to_string(),
+            ..Default::default()
+        };
+        let contrib_lo = SignalContribution {
+            rsi_bullish: true, entry_confidence: 0.35,
+            regime: "Ranging".to_string(),
+            ..Default::default()
+        };
+
+        w_hi.update(&contrib_hi, true, false);  // high-confidence loss
+        w_lo.update(&contrib_lo, true, false);  // low-confidence loss
+
+        assert!(w_hi.rsi < w_lo.rsi,
+            "high-confidence loss ({:.4}) should penalise harder than low-confidence ({:.4})",
+            w_hi.rsi, w_lo.rsi);
+    }
+
+    #[test]
+    fn regime_aware_penalty_z_score_in_ranging_is_harsher() {
+        // Z-score is the primary Ranging signal.
+        // A z_score loss in Ranging should penalise harder than in Trending.
+        let mut w_ranging  = SignalWeights::default();
+        let mut w_trending = SignalWeights::default();
+
+        let contrib_ranging = SignalContribution {
+            z_score_present: true, z_score_bullish: true,
+            entry_confidence: 0.7, regime: "Ranging".to_string(),
+            ..Default::default()
+        };
+        let contrib_trending = SignalContribution {
+            z_score_present: true, z_score_bullish: true,
+            entry_confidence: 0.7, regime: "Trending".to_string(),
+            ..Default::default()
+        };
+
+        w_ranging.update(&contrib_ranging,   true, false);  // z_score in home regime, lost
+        w_trending.update(&contrib_trending, true, false);  // z_score off-regime, lost
+
+        assert!(w_ranging.z_score < w_trending.z_score,
+            "z_score loss in Ranging ({:.4}) should penalise harder than in Trending ({:.4})",
+            w_ranging.z_score, w_trending.z_score);
     }
 }

@@ -912,6 +912,11 @@ pub fn make_decision(
         "NONE".to_string()
     };
 
+    // Stamp entry context onto contrib so the learner can apply
+    // regime-aware and confidence-scaled weight updates on close.
+    contrib.regime           = regime.label().to_string();
+    contrib.entry_confidence = confidence;
+
     Ok(Decision {
         action,
         skipped_direction,
