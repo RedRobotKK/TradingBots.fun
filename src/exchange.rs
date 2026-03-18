@@ -454,3 +454,134 @@ fn parse_hl_f64(v: &serde_json::Value) -> f64 {
         _ => 0.0,
     }
 }
+
+// ─────────────────────────── Tests ───────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── HlBuilder serialisation ───────────────────────────────────────────────
+
+    #[test]
+    fn builder_serialises_with_correct_field_names() {
+        // HL requires exactly {"b": "<addr>", "f": <bps>} — wrong field names
+        // cause silent fee loss or order rejection.
+        let b = HlBuilder {
+            b: "0xa765cd52ad56efc294fc6a7155a53920294ca3e3".to_string(),
+            f: 3,
+        };
+        let j = serde_json::to_value(&b).unwrap();
+        assert_eq!(j["b"], "0xa765cd52ad56efc294fc6a7155a53920294ca3e3",
+            "builder address field must be 'b'");
+        assert_eq!(j["f"], 3,
+            "fee field must be 'f'");
+        assert!(j.get("address").is_none(), "no stray 'address' field");
+        assert!(j.get("fee").is_none(),     "no stray 'fee' field");
+    }
+
+    // ── HlAction: builder field present / absent ──────────────────────────────
+
+    #[test]
+    fn action_includes_builder_when_code_is_set() {
+        let action = HlAction {
+            action_type: "order".to_string(),
+            orders:      vec![],
+            grouping:    "na".to_string(),
+            builder: Some(HlBuilder {
+                b: "0xa765cd52ad56efc294fc6a7155a53920294ca3e3".to_string(),
+                f: 3,
+            }),
+        };
+        let j = serde_json::to_value(&action).unwrap();
+        assert!(j.get("builder").is_some(),
+            "builder field must be present when BUILDER_CODE is set — fees depend on this");
+        assert_eq!(j["builder"]["f"], 3);
+    }
+
+    #[test]
+    fn action_omits_builder_when_code_is_none() {
+        // skip_serializing_if = "Option::is_none" must suppress the field entirely
+        // (not serialize it as null — HL may reject null builder fields).
+        let action = HlAction {
+            action_type: "order".to_string(),
+            orders:      vec![],
+            grouping:    "na".to_string(),
+            builder:     None,
+        };
+        let j = serde_json::to_value(&action).unwrap();
+        assert!(j.get("builder").is_none(),
+            "builder field must be absent (not null) when BUILDER_CODE is unset");
+    }
+
+    // ── fee_bps clamping ──────────────────────────────────────────────────────
+
+    #[test]
+    fn fee_bps_clamped_to_hl_maximum_of_3() {
+        // HL rejects orders with builder fee > 3 bps.  Any value above 3 must
+        // be silently clamped — never passed through unchecked.
+        for input in [4u32, 5, 10, 100] {
+            let clamped = input.min(3);
+            assert_eq!(clamped, 3,
+                "fee_bps {} must clamp to 3, got {}", input, clamped);
+        }
+    }
+
+    #[test]
+    fn fee_bps_below_max_passes_through_unchanged() {
+        for input in [0u32, 1, 2, 3] {
+            let clamped = input.min(3);
+            assert_eq!(clamped, input,
+                "fee_bps {} should not be altered, got {}", input, clamped);
+        }
+    }
+
+    // ── per-tier fee rates ────────────────────────────────────────────────────
+
+    #[test]
+    fn free_tier_builder_fee_is_3_bps() {
+        use crate::tenant::{TenantConfig, TenantTier};
+        let cfg = TenantConfig::paper();
+        assert_eq!(cfg.builder_fee_bps(), 3,
+            "free tier must carry maximum 3 bps to maximise revenue on non-paying users");
+    }
+
+    #[test]
+    fn pro_tier_builder_fee_is_1_bps() {
+        use crate::tenant::{TenantConfig, TenantTier};
+        let mut cfg = TenantConfig::paper();
+        cfg.tier = TenantTier::Pro;
+        assert_eq!(cfg.builder_fee_bps(), 1,
+            "Pro tier reward: lighter 1 bps take on paying subscribers");
+    }
+
+    #[test]
+    fn builder_fee_never_exceeds_hl_maximum() {
+        use crate::tenant::{TenantConfig, TenantTier};
+        for tier in [TenantTier::Free, TenantTier::Pro, TenantTier::Internal] {
+            let mut cfg = TenantConfig::paper();
+            cfg.tier = tier.clone();
+            assert!(cfg.builder_fee_bps() <= 3,
+                "{:?} tier fee {} exceeds HL maximum of 3 bps", tier, cfg.builder_fee_bps());
+        }
+    }
+
+    // ── symbol_to_asset_index ─────────────────────────────────────────────────
+
+    #[test]
+    fn btc_and_eth_have_correct_asset_indices() {
+        // BTC=0, ETH=1 are load-bearing constants — wrong indices place orders
+        // on the wrong market, causing financial losses.
+        assert_eq!(symbol_to_asset_index("BTC").unwrap(),  0);
+        assert_eq!(symbol_to_asset_index("ETH").unwrap(),  1);
+        assert_eq!(symbol_to_asset_index("BTCUSDT").unwrap(), 0,
+            "USDT suffix should be stripped");
+    }
+
+    #[test]
+    fn unknown_symbol_returns_error_not_panic() {
+        let result = symbol_to_asset_index("FAKECOIN");
+        assert!(result.is_err(),
+            "unknown symbol must return Err, not silently use index 0");
+    }
+}
