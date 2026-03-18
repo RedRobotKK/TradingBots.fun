@@ -13,17 +13,17 @@
 
 // ─────────────────────────── Risk constants ───────────────────────────────────
 /// Minimum signal confidence for new entries. Below this the trade is skipped.
-const MIN_CONFIDENCE: f64 = 0.68;
+const MIN_CONFIDENCE: f64 = 0.60;
 /// Maximum fraction of equity at risk per individual trade (stop-distance based).
-const MAX_TRADE_HEAT: f64 = 0.02;   // 2 %
+const MAX_TRADE_HEAT: f64 = 0.05;   // 5 %
 /// Maximum total fraction of equity at risk across all open positions.
-const MAX_PORTFOLIO_HEAT: f64 = 0.08;  // 8 %
+const MAX_PORTFOLIO_HEAT: f64 = 0.15;  // 15 %
 /// Maximum number of concurrent open positions.
 const MAX_POSITIONS: usize = 8;
 /// Maximum open positions in the same direction (long OR short).
 const MAX_SAME_DIRECTION: usize = 4;
 /// DCA minimum confidence (slightly higher than new-entry minimum).
-const DCA_MIN_CONFIDENCE: f64 = 0.72;
+const DCA_MIN_CONFIDENCE: f64 = 0.65;
 /// Circuit-breaker drawdown threshold.  Once peak→current drawdown exceeds
 /// this fraction, all new position sizes are scaled down by `CB_SIZE_MULT`.
 const CB_DRAWDOWN_THRESHOLD: f64 = 0.08;  // 8 %

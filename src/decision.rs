@@ -118,26 +118,26 @@ fn detect_regime(ind: &TechnicalIndicators) -> Regime {
 
 /// Confidence-scaled leverage, capped by market regime.
 ///
-/// Ranging markets: max 2× (false breakouts are common; stops get hit more)
-/// Neutral markets: max 2× (conservative until win rate improves)
-/// Trending markets: max 3× (momentum carries positions; higher conviction warranted)
+/// Ranging markets: max 3× (tighter stops offset the higher leverage)
+/// Neutral markets: max 3× (balanced risk while win rate builds)
+/// Trending markets: max 5× (momentum carries positions; higher conviction warranted)
 ///
-/// Minimum entry confidence is 0.68 (gated in main.rs).
+/// Minimum entry confidence is 0.60 (gated in main.rs).
 /// Confidence scaling within the regime cap:
-///   0.68–0.75 → 1.5×  (minimum — just above gate)
-///   0.75–0.82 → 2×
-///   0.82–0.90 → 2.5×
+///   0.60–0.70 → 2×  (minimum — just above gate)
+///   0.70–0.82 → 3×
+///   0.82–0.90 → 4×
 ///   0.90+     → regime max
 pub fn calc_leverage(confidence: f64, regime: Regime) -> f64 {
     let regime_cap: f64 = match regime {
-        Regime::Ranging  => 2.0,
-        Regime::Neutral  => 2.0,   // reduced until win rate established
-        Regime::Trending => 3.0,   // reduced from 5× — protect capital
+        Regime::Ranging  => 3.0,
+        Regime::Neutral  => 3.0,
+        Regime::Trending => 5.0,
     };
-    let raw: f64 = if confidence < 0.75      { 1.5 }
-                   else if confidence < 0.82 { 2.0 }
-                   else if confidence < 0.90 { 2.5 }
-                   else                      { 3.0 };
+    let raw: f64 = if confidence < 0.70      { 2.0 }
+                   else if confidence < 0.82 { 3.0 }
+                   else if confidence < 0.90 { 4.0 }
+                   else                      { 5.0 };
     raw.min(regime_cap)
 }
 
@@ -1071,35 +1071,35 @@ mod tests {
 
     #[test]
     fn leverage_minimum_near_gate() {
-        assert!((calc_leverage(0.70, Regime::Trending) - 1.5).abs() < 1e-6,
-            "confidence 0.70 → 1.5× leverage");
+        assert!((calc_leverage(0.65, Regime::Trending) - 2.0).abs() < 1e-6,
+            "confidence 0.60–0.70 → 2.0× leverage");
     }
 
     #[test]
-    fn leverage_trending_max_3x() {
-        assert!((calc_leverage(0.95, Regime::Trending) - 3.0).abs() < 1e-6,
-            "high confidence trending → 3.0× leverage");
+    fn leverage_trending_max_5x() {
+        assert!((calc_leverage(0.95, Regime::Trending) - 5.0).abs() < 1e-6,
+            "high confidence trending → 5.0× leverage");
     }
 
     #[test]
-    fn leverage_ranging_capped_at_2x() {
-        // Even at max confidence, Ranging caps at 2×
-        assert!((calc_leverage(0.95, Regime::Ranging) - 2.0).abs() < 1e-6,
-            "ranging regime caps leverage at 2.0×");
+    fn leverage_ranging_capped_at_3x() {
+        // Even at max confidence, Ranging caps at 3×
+        assert!((calc_leverage(0.95, Regime::Ranging) - 3.0).abs() < 1e-6,
+            "ranging regime caps leverage at 3.0×");
     }
 
     #[test]
-    fn leverage_neutral_capped_at_2x() {
-        assert!((calc_leverage(0.95, Regime::Neutral) - 2.0).abs() < 1e-6,
-            "neutral regime caps leverage at 2.0×");
+    fn leverage_neutral_capped_at_3x() {
+        assert!((calc_leverage(0.95, Regime::Neutral) - 3.0).abs() < 1e-6,
+            "neutral regime caps leverage at 3.0×");
     }
 
     #[test]
     fn leverage_mid_confidence() {
-        assert!((calc_leverage(0.78, Regime::Trending) - 2.0).abs() < 1e-6,
-            "confidence 0.75–0.82 → 2.0× leverage");
-        assert!((calc_leverage(0.85, Regime::Trending) - 2.5).abs() < 1e-6,
-            "confidence 0.82–0.90 → 2.5× leverage");
+        assert!((calc_leverage(0.78, Regime::Trending) - 3.0).abs() < 1e-6,
+            "confidence 0.70–0.82 → 3.0× leverage");
+        assert!((calc_leverage(0.85, Regime::Trending) - 4.0).abs() < 1e-6,
+            "confidence 0.82–0.90 → 4.0× leverage");
     }
 
     // ── BTC Dominance context ─────────────────────────────────────────────────
@@ -1239,8 +1239,8 @@ mod tests {
         let of  = neutral_of();
         let weights = SignalWeights::default();
         let dec = make_decision(&candles, &ind, &of, &weights, None, None, None, None, None).unwrap();
-        assert!(dec.leverage >= 1.0 && dec.leverage <= 3.0,
-            "leverage out of valid range [1.0, 3.0]: {}", dec.leverage);
+        assert!(dec.leverage >= 1.0 && dec.leverage <= 5.0,
+            "leverage out of valid range [1.0, 5.0]: {}", dec.leverage);
     }
 
     #[test]
