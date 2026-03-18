@@ -380,6 +380,7 @@ mod tests {
             funding_present:   true, funding_bullish:   true,
             candle_pattern_present: false, candle_pattern_bullish: false,
             chart_pattern_present:  false, chart_pattern_bullish:  false,
+            ..Default::default()
         }
     }
 

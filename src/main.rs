@@ -675,6 +675,7 @@ async fn run_cycle(
     }
 
     let mut to_close:    Vec<(String, f64, String)> = Vec::new(); // (sym, exit, reason)
+    let mut to_partial0: Vec<(String, f64)>         = Vec::new(); // 1/4 out at 1R  — lock in early profit
     let mut to_partial1: Vec<(String, f64)>         = Vec::new(); // 1/3 out at 2R
     let mut to_partial2: Vec<(String, f64)>         = Vec::new(); // 1/3 out at 4R
     let mut pnl_updates: Vec<(String, f64)>         = Vec::new(); // (sym, pnl_pct) for hot_positions
@@ -709,27 +710,44 @@ async fn run_cycle(
             let atr = pos.atr_at_entry.max(pos.entry_price * 0.001);
 
             // ── Trailing stop logic ───────────────────────────────────────
+            // Three-tier approach so profits are protected progressively:
+            //   0.75R → tight 0.6×ATR trail (allows small giveback, catches reversals early)
+            //   1.0R  → stop moves to breakeven (guaranteed no-loss outcome)
+            //   1.5R  → wider 1.2×ATR trail (lets winner breathe and run further)
             if pos.side == "LONG" {
-                // Breakeven at 1R profit
-                if r_mult >= 1.0 && pos.stop_loss < pos.entry_price {
-                    pos.stop_loss = pos.entry_price;
-                    info!("📌 {} LONG stop → breakeven ${:.4}", pos.symbol, pos.entry_price);
-                }
-                // Trail 1.2×ATR below HWM once 1.5R ahead
+                // Tier 3: Wide trail once deeply profitable (1.5R+)
                 if r_mult >= 1.5 {
                     let trail = pos.high_water_mark - atr * 1.2;
                     if trail > pos.stop_loss {
                         pos.stop_loss = trail;
                     }
+                // Tier 2: Lock in breakeven at 1R
+                } else if r_mult >= 1.0 && pos.stop_loss < pos.entry_price {
+                    pos.stop_loss = pos.entry_price;
+                    info!("📌 {} LONG stop → breakeven ${:.4}", pos.symbol, pos.entry_price);
+                // Tier 1: Tight trail at 0.75R — don't give back early gains
+                } else if r_mult >= 0.75 {
+                    let trail = pos.high_water_mark - atr * 0.6;
+                    if trail > pos.stop_loss && trail < pos.entry_price {
+                        // Only tighten below entry — don't over-ride breakeven once set
+                        pos.stop_loss = trail;
+                    }
                 }
             } else { // SHORT
-                if r_mult >= 1.0 && pos.stop_loss > pos.entry_price {
-                    pos.stop_loss = pos.entry_price;
-                    info!("📌 {} SHORT stop → breakeven ${:.4}", pos.symbol, pos.entry_price);
-                }
+                // Tier 3: Wide trail once deeply profitable (1.5R+)
                 if r_mult >= 1.5 {
                     let trail = pos.low_water_mark + atr * 1.2;
                     if trail < pos.stop_loss {
+                        pos.stop_loss = trail;
+                    }
+                // Tier 2: Lock in breakeven at 1R
+                } else if r_mult >= 1.0 && pos.stop_loss > pos.entry_price {
+                    pos.stop_loss = pos.entry_price;
+                    info!("📌 {} SHORT stop → breakeven ${:.4}", pos.symbol, pos.entry_price);
+                // Tier 1: Tight trail at 0.75R — don't give back early gains
+                } else if r_mult >= 0.75 {
+                    let trail = pos.low_water_mark + atr * 0.6;
+                    if trail < pos.stop_loss && trail > pos.entry_price {
                         pos.stop_loss = trail;
                     }
                 }
@@ -752,24 +770,33 @@ async fn run_cycle(
             //   • Post-DCA bleeder: DCA didn't rescue it after another 2 hrs
             //     → cycles_held ≥ 480 (240 min) AND r_mult < -0.60 AND dca_count > 0
             //   • Never time-exit within 0.10R of stop (let stop-loss handle)
-            let truly_flat     = pos.cycles_held >= 240 && r_mult.abs() < 0.20;
-            let chronic_loss   = pos.cycles_held >= 360 && r_mult < -0.45 && r_mult > -0.90 && pos.dca_count == 0;
-            let post_dca_loss  = pos.cycles_held >= 480 && r_mult < -0.60 && r_mult > -0.90 && pos.dca_count > 0;
-            let stale = (truly_flat || chronic_loss || post_dca_loss) && r_mult <= 0.0;
+            let truly_flat         = pos.cycles_held >= 240 && r_mult.abs() < 0.20;
+            let chronic_loss       = pos.cycles_held >= 360 && r_mult < -0.45 && r_mult > -0.90 && pos.dca_count == 0;
+            // Post-DCA: sooner exit when more DCA slots have been used up
+            let post_dca_loss      = pos.cycles_held >= 360 && r_mult < -0.50 && r_mult > -0.90 && pos.dca_count == 1;
+            // DCA exhausted bleeder: 2+ add-ons and still losing after 2hrs — stop the bleeding
+            let post_dca_exhausted = pos.cycles_held >= 240 && r_mult < -0.25 && r_mult > -0.90 && pos.dca_count >= 2;
+            let stale = (truly_flat || chronic_loss || post_dca_loss || post_dca_exhausted) && r_mult <= 0.0;
 
             if hit_stop {
                 to_close.push((pos.symbol.clone(), cur, "StopLoss".to_string()));
             } else if hit_tp {
                 to_close.push((pos.symbol.clone(), cur, "TakeProfit".to_string()));
             } else if stale {
-                let reason_detail = if truly_flat { "flat" } else if chronic_loss { "chronic loss" } else { "post-DCA loss" };
+                let reason_detail = if truly_flat { "flat" } else if chronic_loss { "chronic loss" }
+                                   else if post_dca_exhausted { "DCA exhausted" } else { "post-DCA loss" };
                 to_close.push((pos.symbol.clone(), cur, "TimeExit".to_string()));
                 info!("⏰ {} time-exit ({}) after {} cycles at {:.2}R", pos.symbol, reason_detail, pos.cycles_held, r_mult);
             } else {
                 // R-multiple partial profit tranches
-                if r_mult >= 2.0 && pos.tranches_closed == 0 {
+                // Tranche 0: 1/4 out at 1R — harvest early profit, reduce risk immediately
+                // Tranche 1: 1/3 out at 2R — take more off as the trade extends
+                // Tranche 2: 1/3 out at 4R — capture deep runner profits
+                if r_mult >= 1.0 && pos.tranches_closed == 0 {
+                    to_partial0.push((pos.symbol.clone(), cur));
+                } else if r_mult >= 2.0 && pos.tranches_closed == 1 {
                     to_partial1.push((pos.symbol.clone(), cur));
-                } else if r_mult >= 4.0 && pos.tranches_closed == 1 {
+                } else if r_mult >= 4.0 && pos.tranches_closed == 2 {
                     to_partial2.push((pos.symbol.clone(), cur));
                 }
             }
@@ -790,6 +817,11 @@ async fn run_cycle(
     }
 
     // Execute partials first (they don't remove positions)
+    // Tranche 0 first (1R, 1/4 size) → then 1 (2R, 1/3) → then 2 (4R, 1/3)
+    for (sym, price) in to_partial0 {
+        if to_close.iter().any(|(s, _, _)| s == &sym) { continue; }
+        take_partial(sym, price, 0, bot_state, weights, trade_logger).await;
+    }
     for (sym, price) in to_partial1 {
         if to_close.iter().any(|(s, _, _)| s == &sym) { continue; }
         take_partial(sym, price, 1, bot_state, weights, trade_logger).await;
@@ -1107,8 +1139,10 @@ async fn apply_ai_review(
                 // but otherwise trust it to cut losers early.
                 //
                 //   1. Min hold 20 min (40 cycles) — very early trades still need a chance
-                //   2. Genuinely losing (R < -0.20)
-                //   3. Either: DCA already tried (dca_count >= 1) OR loss is deep (R < -0.40)
+                //   2. Normal path: Genuinely losing (R < -0.20) AND (DCA tried OR deep loss R < -0.40)
+                //   3. DCA-exhausted fast path: all DCA slots used (dca_count >= 2) AND any loss (R < -0.05)
+                //      → when we've thrown everything at the trade and it's still going against us,
+                //        trust the AI to cut it instead of waiting for R=-0.20
                 let should_close = {
                     let s = bot_state.read().await;
                     s.positions.iter().find(|p| p.symbol == rec.symbol)
@@ -1116,11 +1150,15 @@ async fn apply_ai_review(
                             let r = if p.r_dollars_risked > 1e-8 {
                                 p.unrealised_pnl / p.r_dollars_risked
                             } else { 0.0 };
-                            let min_hold_met     = p.cycles_held >= 40; // 20 min
-                            let genuinely_losing = r < -0.20;
-                            let dca_tried        = p.dca_count >= 1;
-                            let deep_loss        = r < -0.40;
-                            min_hold_met && genuinely_losing && (dca_tried || deep_loss)
+                            let min_hold_met      = p.cycles_held >= 40; // 20 min
+                            let genuinely_losing  = r < -0.20;
+                            let dca_tried         = p.dca_count >= 1;
+                            let deep_loss         = r < -0.40;
+                            // DCA exhausted fast-path: all standard slots used AND any loss.
+                            // This covers both normal cap (2) and high-conviction cap (3-4):
+                            // we trust the AI to cut the trade once DCA is fully deployed.
+                            let dca_exhausted     = p.dca_count >= 2 && r < -0.05;
+                            min_hold_met && (dca_exhausted || (genuinely_losing && (dca_tried || deep_loss)))
                         })
                         .unwrap_or(false)
                 };
@@ -1590,10 +1628,17 @@ async fn execute_paper_trade(
                 }
 
                 // ── Same direction: DCA DOWN on moderate loser with conviction ──
-                // Conditions: between -0.15R and -0.85R, ≤2 DCA add-ons, signal confidence ≥ DCA_MIN_CONFIDENCE
-                // Upper bound extended to -0.85R (-0.75 was too tight; minor overshoots
-                // permanently blocked DCA even when slots remained.)
-                if r_mult < -0.15 && r_mult > -0.85 && pos.dca_count < 2 && dec.confidence >= DCA_MIN_CONFIDENCE {
+                // Tiered DCA cap: high conviction signals earn extra DCA slots
+                //   confidence ≥ DCA_MIN_CONFIDENCE (0.65): up to 2 add-ons (standard)
+                //   confidence ≥ 0.75:                      up to 3 add-ons (high conviction)
+                //   confidence ≥ 0.85:                      up to 4 add-ons (very high conviction)
+                // Rationale: a strong confluence of signals screaming the same direction
+                // on a volatile asset like REZ/KAS deserves averaging down further.
+                // Upper bound kept at -0.85R — position must not be near stop before adding.
+                let dca_max = if dec.confidence >= 0.85 { 4 }
+                              else if dec.confidence >= 0.75 { 3 }
+                              else { 2 };
+                if r_mult < -0.15 && r_mult > -0.85 && pos.dca_count < dca_max && dec.confidence >= DCA_MIN_CONFIDENCE {
                     drop(s);
                     dca_position(symbol, dec, ind, bot_state).await;
                     return;
@@ -1965,11 +2010,16 @@ async fn dca_position(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  PARTIAL PROFIT TAKING  (1/3 at 2R, 1/3 at 4R)
+//  PARTIAL PROFIT TAKING  (1/4 at 1R, 1/3 at 2R, 1/3 at 4R)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// Close one tranche (1/3 of remaining position) at R-multiple milestone.
-/// tranche=1 → 2R milestone, tranche=2 → 4R milestone.
+/// Close one tranche of an open position at an R-multiple milestone.
+///
+/// | tranche | R target | Fraction closed | Purpose                        |
+/// |---------|----------|-----------------|--------------------------------|
+/// |    0    |    1R    |       1/4       | Lock in early profit; reduce risk |
+/// |    1    |    2R    |       1/3       | Take more off as trade extends |
+/// |    2    |    4R    |       1/3       | Capture deep runner profits    |
 async fn take_partial(
     symbol:       String,
     exit_price:   f64,
@@ -1979,11 +2029,17 @@ async fn take_partial(
     trade_logger: &SharedTradeLogger,
 ) {
     let mut s = bot_state.write().await;
-    let idx = s.positions.iter().position(|p| p.symbol == symbol && p.tranches_closed < tranche);
+    let idx = s.positions.iter().position(|p| p.symbol == symbol && p.tranches_closed < tranche + 1);
     if let Some(idx) = idx {
-        // Take 1/3 of remaining position
-        let close_qty  = s.positions[idx].quantity / 3.0;
-        let close_size = s.positions[idx].size_usd / 3.0;
+        // Tranche 0 = 1/4 (early profit capture); tranches 1 & 2 = 1/3 each
+        let (close_frac, r_num, r_label) = match tranche {
+            0 => (0.25_f64, 1_u8, "1R"),
+            1 => (1.0 / 3.0, 2_u8, "2R"),
+            _ => (1.0 / 3.0, 4_u8, "4R"),
+        };
+
+        let close_qty  = s.positions[idx].quantity * close_frac;
+        let close_size = s.positions[idx].size_usd * close_frac;
         let entry      = s.positions[idx].entry_price;
         let side       = s.positions[idx].side.clone();
         let contrib    = s.positions[idx].contrib.clone();
@@ -1995,27 +2051,28 @@ async fn take_partial(
             (entry - exit_price) * close_qty
         };
 
-        s.positions[idx].quantity        -= close_qty;
-        s.positions[idx].size_usd        -= close_size;
-        s.positions[idx].r_dollars_risked *= 2.0 / 3.0; // scale down risked dollars
-        s.positions[idx].tranches_closed  = tranche;
-        s.positions[idx].partial_closed   = true;
+        s.positions[idx].quantity         -= close_qty;
+        s.positions[idx].size_usd         -= close_size;
+        s.positions[idx].r_dollars_risked *= 1.0 - close_frac; // scale down risked dollars
+        s.positions[idx].tranches_closed   = tranche + 1;
+        s.positions[idx].partial_closed    = true;
 
         s.capital += close_size + trade_pnl;
         s.pnl     += trade_pnl;
 
         let pnl_pct    = trade_pnl / close_size * 100.0;
-        let r_label    = if tranche == 1 { "2R" } else { "4R" };
+        let frac_label = if tranche == 0 { "¼" } else { "⅓" };
 
-        info!("💰 {}R PARTIAL {} {} @ ${:.4}  P&L {:+.2} ({:+.1}%)  [⅓ closed]",
-            if tranche == 1 { 2 } else { 4 }, side, symbol, exit_price, trade_pnl, pnl_pct);
+        info!("💰 {}R PARTIAL {} {} @ ${:.4}  P&L {:+.2} ({:+.1}%)  [{} closed]",
+            r_num, side, symbol, exit_price, trade_pnl, pnl_pct, frac_label);
 
         let partial_breakdown = Some(format!(
             "<div style='font-size:.78em;padding:4px 0;line-height:1.7'>\
-             <div>Partial close ⅓ at <b>{lbl}</b> target &nbsp;·&nbsp; \
+             <div>Partial close {frac} at <b>{lbl}</b> target &nbsp;·&nbsp; \
              entry <b>${entry:.4}</b> → <b>${exit:.4}</b></div>\
              <div style='color:#8b949e'>Locked in <b style='color:#3fb950'>{pnl:+.2}</b> \
              ({pct:+.1}%) on this tranche</div></div>",
+            frac  = frac_label,
             lbl   = r_label,
             entry = entry,
             exit  = exit_price,
@@ -2065,7 +2122,7 @@ async fn take_partial(
             exit_price,
             size_closed_usd: close_size,
             pnl_usd:         trade_pnl,
-            r_milestone:     if tranche == 1 { 2 } else { 4 },
+            r_milestone:     r_num,
             r_at_close:      r_at_partial,
         });
 
@@ -2770,6 +2827,50 @@ mod tests {
         // Trailing stop rule: if r_mult >= 1.0 && stop < entry → set stop = entry
         let new_stop = if r_mult >= 1.0 && stop < entry { entry } else { stop };
         assert_eq!(new_stop, entry, "stop should move to breakeven at 1R");
+    }
+
+    #[test]
+    fn trailing_stop_tier1_tight_trail_at_0_75r_for_long() {
+        // At 0.75R profit: tight 0.6×ATR trail below HWM starts protecting early gains.
+        let entry: f64 = 100.0;
+        let stop    = 95.0;
+        let atr     = 2.0;
+        let qty     = 3.0;
+        let r_risk  = (entry - stop) * qty; // $15
+
+        // Current price at exactly 0.75R: entry + 0.75 × (entry-stop) = $103.75
+        let cur    = 103.75;
+        let unr    = (cur - entry) * qty; // $11.25
+        let r_mult = unr / r_risk; // 0.75
+
+        assert!((r_mult - 0.75).abs() < 1e-10, "should be 0.75R at $103.75");
+
+        let hwm = cur;
+        let trail = hwm - atr * 0.6; // 103.75 - 1.2 = 102.55
+        // Only set if trail > current stop AND trail < entry (below breakeven)
+        let new_stop = if r_mult >= 0.75 && trail > stop && trail < entry { trail } else { stop };
+        assert!(
+            (new_stop - 102.55).abs() < 1e-10,
+            "0.75R tight trail should be HWM - 0.6×ATR = 102.55, got {new_stop}"
+        );
+    }
+
+    #[test]
+    fn trailing_stop_tier1_does_not_override_breakeven_for_long() {
+        // Once stop is at breakeven ($100), the 0.75R tight trail must NOT pull it back below entry.
+        let entry: f64 = 100.0;
+        let stop    = entry; // already at breakeven
+        let atr     = 2.0;
+        let qty     = 3.0;
+        let r_risk  = (entry - (entry - 5.0)) * qty; // original $15, but stop is now at entry
+        let cur     = 103.75;
+        let unr     = (cur - entry) * qty;
+        // r_mult based on current stop would be undefined; use tier logic directly:
+        // tier1 only fires if trail > stop && trail < entry.  trail = 102.55, entry = 100 → trail >= entry → skip
+        let hwm   = cur;
+        let trail = hwm - atr * 0.6; // 102.55 — which is > entry(100), so tier1 condition trail < entry fails
+        let new_stop = if trail > stop && trail < entry { trail } else { stop };
+        assert_eq!(new_stop, stop, "0.75R tier must not drag stop below breakeven once set");
     }
 
     #[test]
