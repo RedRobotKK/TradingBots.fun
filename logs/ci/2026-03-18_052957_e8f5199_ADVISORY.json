@@ -1,0 +1,72 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-03-18T05:21:46Z",
+    "commit": "e8f5199",
+    "commit_full": "e8f5199bfeeb53025710e6c93ce9630294c2ae3a",
+    "commit_message": "chore: bump version 0.1.28 \u2192 0.1.29",
+    "branch": "master",
+    "overall_status": "ADVISORY",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
+    "cargo": "cargo 1.93.1 (083ac5135 2025-12-15)",
+    "os_kernel": "6.8.0-106-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "PASSED",
+      "exit_code": 0,
+      "duration_seconds": 418,
+      "total_passed": 588,
+      "total_failed": 0,
+      "total_ignored": 1,
+      "failures": []
+    },
+    "clippy": {
+      "status": "PASSED",
+      "exit_code": 0,
+      "duration_seconds": 69,
+      "error_count": 0,
+      "errors": []
+    },
+    "audit": {
+      "status": "ADVISORY",
+      "exit_code": 1,
+      "duration_seconds": 3,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2023-0071",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2023-0071",
+          "severity": "5.9 (medium)",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "tradingbots",
+    "status": "active",
+    "active_since": "Wed 2026-03-18 04:42:25 UTC",
+    "recent_logs": [
+      "Mar 18 05:11:16 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[93120]: \u26a0 TradeLogger write error: No space left on device (os error 28)",
+      "Mar 18 05:11:17 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[93120]: \u26a0 TradeLogger write error: No space left on device (os error 28)",
+      "Mar 18 05:11:17 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[93120]: \u26a0 TradeLogger write error: No space left on device (os error 28)",
+      "Mar 18 05:11:18 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[93120]: \u26a0 TradeLogger write error: No space left on device (os error 28)",
+      "Mar 18 05:11:18 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[93120]: \u26a0 TradeLogger write error: No space left on device (os error 28)"
+    ]
+  }
+}
