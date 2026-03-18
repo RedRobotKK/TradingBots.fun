@@ -70,6 +70,7 @@ mod correlation;
 mod notifier;
 mod onchain;
 mod thesis;
+mod collective;
 
 use anyhow::Result;
 use log::{error, info, warn};
@@ -89,6 +90,13 @@ use signal_watchlist::{SharedWatchlist, SignalWatchlist, SkipReason};
 use cross_exchange::{CrossExchangeMonitor, SharedCrossExchange};
 use trade_log::{SharedTradeLogger, TradeEvent, TradeLogger, ts_now, date_today};
 use db::{AumSnapshot, Database, SharedDb};
+use uuid::Uuid;
+
+/// Tenant ID used in single-operator mode (no multi-tenant yet).
+/// Matches the hardcoded UUID used in equity_snapshot writes elsewhere.
+fn single_op_tenant() -> Uuid {
+    Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap()
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  ERROR CLASSIFICATION – human-friendly cycle error messages
@@ -427,6 +435,20 @@ async fn main() -> Result<()> {
                     }
                 });
             }
+            // Recalculate collective signal weights from 90 days of cross-user outcomes
+            if let Some(ref db) = shared_db {
+                let db_coll   = db.clone();
+                let w_coll    = weights.clone();
+                tokio::spawn(async move {
+                    let current = w_coll.read().await.clone();
+                    if let Some(new_w) = collective::recalculate_collective_weights(
+                        &db_coll, &current, 50,
+                    ).await {
+                        *w_coll.write().await = new_w;
+                        info!("🧠 Collective weights recalculated from cross-user outcomes");
+                    }
+                });
+            }
         }
 
         set_status(&bot_state, "📡 Fetching prices…").await;
@@ -654,6 +676,7 @@ async fn run_cycle(
     let mut to_close:    Vec<(String, f64, String)> = Vec::new(); // (sym, exit, reason)
     let mut to_partial1: Vec<(String, f64)>         = Vec::new(); // 1/3 out at 2R
     let mut to_partial2: Vec<(String, f64)>         = Vec::new(); // 1/3 out at 4R
+    let mut pnl_updates: Vec<(String, f64)>         = Vec::new(); // (sym, pnl_pct) for hot_positions
 
     {
         let mut s = bot_state.write().await;
@@ -673,6 +696,9 @@ async fn run_cycle(
             } else {
                 (pos.entry_price - cur) * pos.quantity
             };
+            // Collect for collective hot_position P&L update (fired after write-lock released)
+            let pnl_pct_now = if pos.size_usd > 0.0 { pos.unrealised_pnl / pos.size_usd * 100.0 } else { 0.0 };
+            pnl_updates.push((pos.symbol.clone(), pnl_pct_now));
 
             // R-multiple (uses original dollars risked, not current stop)
             let r_mult = if pos.r_dollars_risked > 1e-8 {
@@ -749,6 +775,19 @@ async fn run_cycle(
         }
     }
 
+    // ── Collective intelligence: flush hot-position P&L updates ──────────
+    // Fire after the write lock is released so we don't hold it during async I/O.
+    if let Some(ref shared_db) = db {
+        for (sym, pnl_pct) in pnl_updates {
+            // Skip symbols being closed this cycle — they'll be removed instead
+            if to_close.iter().any(|(s, _, _)| s == &sym) { continue; }
+            let db_u = shared_db.clone();
+            tokio::spawn(async move {
+                collective::update_hot_pnl(&db_u, single_op_tenant(), &sym, pnl_pct).await;
+            });
+        }
+    }
+
     // Execute partials first (they don't remove positions)
     for (sym, price) in to_partial1 {
         if to_close.iter().any(|(s, _, _)| s == &sym) { continue; }
@@ -761,7 +800,7 @@ async fn run_cycle(
 
     // Execute full closes
     for (sym, price, reason) in to_close {
-        close_paper_position(&sym, price, &reason, bot_state, weights, trade_logger, notifier).await;
+        close_paper_position(&sym, price, &reason, bot_state, weights, trade_logger, notifier, db, single_op_tenant()).await;
         info!("🚨 {} closed → {} @ ${:.4}", sym, reason, price);
     }
 
@@ -871,6 +910,32 @@ async fn run_cycle(
                     if dec.leverage > max_lev {
                         info!("🎯 {} leverage clamped {:.1}→{:.1}× (thesis)", sym, dec.leverage, max_lev);
                         dec.leverage = max_lev;
+                    }
+                }
+
+                // ── Collective intelligence: crowd signal confidence nudge ──
+                // Query how many users are currently holding this symbol and
+                // whether the crowd is winning or losing.  Apply a multiplier
+                // to our confidence before the entry decision is finalised.
+                // If confidence falls below the minimum floor after the nudge,
+                // suppress the trade (override action to SKIP).
+                if dec.action != "SKIP" {
+                    if let Some(ref shared_db) = db {
+                        if let Some(crowd) = collective::get_crowd_signal(shared_db, sym).await {
+                            let mult = crowd.confidence_multiplier(&if dec.action == "BUY" { "LONG" } else { "SHORT" });
+                            if (mult - 1.0).abs() > 0.001 {
+                                let old_conf = dec.confidence;
+                                dec.confidence *= mult;
+                                info!("👥 {} crowd×{:.3} conf {:.0}%→{:.0}% ({} holders avg_pnl={:.1}%)",
+                                    sym, mult, old_conf*100.0, dec.confidence*100.0,
+                                    crowd.holder_count, crowd.avg_pnl_pct);
+                            }
+                            if dec.confidence < MIN_CONFIDENCE {
+                                info!("👥 {} suppressed by crowd signal (conf {:.0}% < {:.0}%)",
+                                    sym, dec.confidence*100.0, MIN_CONFIDENCE*100.0);
+                                dec.action = "SKIP".to_string();
+                            }
+                        }
                     }
                 }
 
@@ -1007,7 +1072,7 @@ async fn run_cycle(
                 let mut s = bot_state.write().await;
                 s.ai_status = summary;
             }
-            apply_ai_review(&review, bot_state, weights, &current_mids, trade_logger, notifier).await;
+            apply_ai_review(&review, bot_state, weights, &current_mids, trade_logger, notifier, db, single_op_tenant()).await;
         }
     }
 
@@ -1025,6 +1090,8 @@ async fn apply_ai_review(
     current_mids: &HashMap<String, f64>,
     trade_logger: &SharedTradeLogger,
     notifier:     &Option<SharedNotifier>,
+    db:           &Option<SharedDb>,
+    tenant_id:    Uuid,
 ) {
     for rec in &review.recommendations {
         let cur_price = match current_mids.get(rec.symbol.as_str()) {
@@ -1074,7 +1141,7 @@ async fn apply_ai_review(
                             } else { 0.0 })
                             .unwrap_or(0.0)
                     };
-                    close_paper_position(&rec.symbol, cur_price, "AI-Close", bot_state, weights, trade_logger, notifier).await;
+                    close_paper_position(&rec.symbol, cur_price, "AI-Close", bot_state, weights, trade_logger, notifier, db, tenant_id).await;
                     // Fire ai_action notification
                     if let Some(n) = notifier {
                         let n = n.clone();
@@ -1216,7 +1283,7 @@ async fn analyse_symbol(
     symbol:       &str,
     market:       &Arc<data::MarketClient>,
     hl:           &Arc<exchange::HyperliquidClient>,
-    _db:          &Option<SharedDb>,
+    db:           &Option<SharedDb>,
     config:       &config::Config,
     bot_state:    &SharedState,
     weights:      &SharedWeights,
@@ -1374,7 +1441,7 @@ async fn analyse_symbol(
     }
 
     if config.paper_trading && dec.action != "SKIP" {
-        execute_paper_trade(symbol, &dec, &ind, bot_state, weights, trade_logger, notifier).await;
+        execute_paper_trade(symbol, &dec, &ind, bot_state, weights, trade_logger, notifier, db, single_op_tenant()).await;
     } else if !config.paper_trading && dec.action != "SKIP" {
         let account = hl.get_account().await?;
         if risk::should_trade(&dec, &account)? {
@@ -1507,6 +1574,8 @@ async fn execute_paper_trade(
     weights:      &SharedWeights,
     trade_logger: &SharedTradeLogger,
     notifier:     &Option<SharedNotifier>,
+    db:           &Option<SharedDb>,
+    tenant_id:    Uuid,
 ) {
     let target_side = if dec.action == "BUY" { "LONG" } else { "SHORT" };
 
@@ -1565,7 +1634,7 @@ async fn execute_paper_trade(
             drop(s);
             info!("🔄 {} signal reversal: {} at {:.2}R  held={}  conf={:.0}%",
                   symbol, pos_side, r_mult_snap, cycles_snap, dec.confidence * 100.0);
-            close_paper_position(symbol, dec.entry_price, "SignalExit", bot_state, weights, trade_logger, notifier).await;
+            close_paper_position(symbol, dec.entry_price, "SignalExit", bot_state, weights, trade_logger, notifier, db, tenant_id).await;
         }
         // No existing: fall through to new entry
     }
@@ -1742,6 +1811,9 @@ async fn execute_paper_trade(
         size_usd, leverage, notional,
         r_risk, p_heat * 100.0, kelly_str);
 
+    // Snapshot position for collective upsert (must happen before drop(s))
+    let hp_snap = s.positions.last().cloned();
+
     // Log the trade entry
     drop(s);
     trade_logger.lock().await.log(&TradeEvent::TradeEntry {
@@ -1774,6 +1846,14 @@ async fn execute_paper_trade(
         let lev     = leverage;
         tokio::spawn(async move {
             n.position_opened(&sym, &side, entry, sz, conf, sl, lev).await;
+        });
+    }
+
+    // ── Collective intelligence: register new position in hot_positions ────
+    if let (Some(ref shared_db), Some(snap)) = (db, hp_snap) {
+        let db_hp = shared_db.clone();
+        tokio::spawn(async move {
+            collective::upsert_hot_position(&db_hp, tenant_id, &snap).await;
         });
     }
 }
@@ -2026,6 +2106,8 @@ async fn close_paper_position(
     weights:      &SharedWeights,
     trade_logger: &SharedTradeLogger,
     notifier:     &Option<SharedNotifier>,
+    db:           &Option<SharedDb>,
+    tenant_id:    Uuid,
 ) {
     let mut s = bot_state.write().await;
 
@@ -2169,6 +2251,49 @@ async fn close_paper_position(
         w.update(&pos.contrib, was_long, profitable);
         info!("🧠 Weights → RSI:{:.2} BB:{:.2} MACD:{:.2} Trend:{:.2} OF:{:.2}",
             w.rsi, w.bollinger, w.macd, w.trend, w.order_flow);
+        drop(w);
+
+        // ── Collective intelligence: record outcome + remove from crowd ───
+        if let Some(ref shared_db) = db {
+            let db_rec  = shared_db.clone();
+            let db_rem  = shared_db.clone();
+            let sym_rec = pos.symbol.clone();
+            let sym_rem = pos.symbol.clone();
+            // Capture pos fields needed for record_outcome before moving
+            let pos_snap = pos.clone();
+            let exit_snap = exit_price;
+            let pnl_snap  = pnl_pct;
+            let r_snap    = r_at_close;
+
+            // Record trade outcome in collective table (fire-and-forget)
+            tokio::spawn(async move {
+                collective::record_outcome(
+                    &db_rec, Some(tenant_id), &pos_snap,
+                    exit_snap, pnl_snap, r_snap,
+                ).await;
+                // Also write to the existing closed_trades DB table
+                let _ = db_rec.insert_closed_trade(
+                    &tenant_id.to_string(),
+                    &sym_rec,
+                    &pos_snap.side,
+                    pos_snap.entry_price,
+                    exit_snap,
+                    pos_snap.size_usd,
+                    pnl_snap / 100.0 * pos_snap.size_usd, // approximate pnl_usd
+                    pnl_snap,
+                    r_snap,
+                    ledger::estimate_fees(pos_snap.size_usd, pos_snap.leverage),
+                    None, // opened_at (we have entry_time string, not DateTime — skip)
+                    "close",
+                    None,
+                ).await.map_err(|e| log::debug!("insert_closed_trade: {e}"));
+            });
+
+            // Remove from hot_positions (fire-and-forget)
+            tokio::spawn(async move {
+                collective::remove_hot_position(&db_rem, tenant_id, &sym_rem).await;
+            });
+        }
     }
 }
 
