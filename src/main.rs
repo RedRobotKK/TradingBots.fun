@@ -923,7 +923,7 @@ async fn run_cycle(
                 if dec.action != "SKIP" {
                     if let Some(ref shared_db) = db {
                         if let Some(crowd) = collective::get_crowd_signal(shared_db, sym).await {
-                            let mult = crowd.confidence_multiplier(&if dec.action == "BUY" { "LONG" } else { "SHORT" });
+                            let mult = crowd.confidence_multiplier(if dec.action == "BUY" { "LONG" } else { "SHORT" });
                             if (mult - 1.0).abs() > 0.001 {
                                 let old_conf = dec.confidence;
                                 dec.confidence *= mult;
@@ -1084,6 +1084,7 @@ async fn run_cycle(
 //  AI REVIEW APPLICATION
 // ═══════════════════════════════════════════════════════════════════════════════
 
+#[allow(clippy::too_many_arguments)]
 async fn apply_ai_review(
     review:       &ai_reviewer::AiReview,
     bot_state:    &SharedState,
@@ -1560,6 +1561,7 @@ fn portfolio_heat(positions: &[PaperPosition], equity: f64) -> f64 {
 ///
 /// Circuit breaker: if peak→current drawdown > `CB_DRAWDOWN_THRESHOLD` (8%),
 /// position size is multiplied by `CB_SIZE_MULT` (0.35).
+#[allow(clippy::too_many_arguments)]
 async fn execute_paper_trade(
     symbol:       &str,
     dec:          &decision::Decision,
@@ -2092,6 +2094,7 @@ async fn take_partial(
 //  FULL CLOSE
 // ═══════════════════════════════════════════════════════════════════════════════
 
+#[allow(clippy::too_many_arguments)]
 async fn close_paper_position(
     symbol:       &str,
     exit_price:   f64,

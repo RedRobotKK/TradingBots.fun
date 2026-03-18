@@ -234,7 +234,7 @@ fn extract_leverage(lc: &str) -> Option<f64> {
             let is_times = j + 1 < bytes.len() && bytes[j] == 0xC3 && bytes[j + 1] == 0x97;
             if is_x || is_times {
                 if let Ok(v) = num_str.parse::<f64>() {
-                    if v >= 1.0 && v <= 50.0 {
+                    if (1.0..=50.0).contains(&v) {
                         return Some(v);
                     }
                 }
@@ -249,7 +249,7 @@ fn extract_leverage(lc: &str) -> Option<f64> {
             let rest = &lc[pos + pattern.len()..];
             let num: String = rest.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
             if let Ok(v) = num.parse::<f64>() {
-                if v >= 1.0 && v <= 50.0 {
+                if (1.0..=50.0).contains(&v) {
                     return Some(v);
                 }
             }
@@ -287,10 +287,9 @@ fn extract_symbols(cmd: &str) -> Vec<String> {
     let parts: Vec<&str> = cmd.split(|c: char| !c.is_alphanumeric()).collect();
     for part in parts {
         let up = part.to_ascii_uppercase();
-        if up.len() >= 2 && up.len() <= 6 && KNOWN.contains(&up.as_str()) {
-            if !found.contains(&up) {
-                found.push(up);
-            }
+        if up.len() >= 2 && up.len() <= 6 && KNOWN.contains(&up.as_str())
+            && !found.contains(&up) {
+            found.push(up);
         }
     }
     found
