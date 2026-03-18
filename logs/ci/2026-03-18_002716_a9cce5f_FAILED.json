@@ -1,0 +1,62 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-03-18T00:24:09Z",
+    "commit": "a9cce5f",
+    "commit_full": "a9cce5fefcb53d260892394b77c974b26ba02bd7",
+    "commit_message": "chore: bump version 0.1.18 \u2192 0.1.19",
+    "branch": "master",
+    "overall_status": "FAILED",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
+    "cargo": "cargo 1.93.1 (083ac5135 2025-12-15)",
+    "os_kernel": "6.8.0-106-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 183,
+      "total_passed": 0,
+      "total_failed": 0,
+      "total_ignored": 0,
+      "failures": []
+    },
+    "clippy": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 1,
+      "error_count": 1,
+      "errors": [
+        {
+          "code": "E",
+          "message": "failed to create directory `/tradingbots-fun/target/debug/.fingerprint/tradingbots-fun-0f4e1e68bd6b3bc7`"
+        }
+      ]
+    },
+    "audit": {
+      "status": "ADVISORY",
+      "exit_code": 1,
+      "duration_seconds": 2,
+      "vulnerability_count": 0,
+      "vulnerabilities": []
+    }
+  },
+  "service": {
+    "name": "tradingbots",
+    "status": "active",
+    "active_since": "Wed 2026-03-18 00:07:47 UTC",
+    "recent_logs": [
+      "Mar 18 00:07:47 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Started tradingbots.service - TradingBots.fun.",
+      "Mar 18 00:27:11 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[51417]: \u26a0 TradeLogger write error: No space left on device (os error 28)",
+      "Mar 18 00:27:11 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[51417]: \u26a0 TradeLogger write error: No space left on device (os error 28)",
+      "Mar 18 00:27:12 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[51417]: \u26a0 TradeLogger write error: No space left on device (os error 28)",
+      "Mar 18 00:27:12 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[51417]: \u26a0 TradeLogger write error: No space left on device (os error 28)"
+    ]
+  }
+}
