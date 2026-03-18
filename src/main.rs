@@ -2376,14 +2376,14 @@ mod tests {
 
     #[test]
     fn trade_heat_exceeds_max_at_3x_where_1x_would_not() {
-        // Setup: entry=$100, stop=$98 (2% stop), $100 margin, $1000 equity.
-        // 1× heat = 0.002 — well below MAX_TRADE_HEAT (0.02).
-        // 3× heat = 0.006 — still below, but 10× leverage = 0.02 = exactly at limit.
-        // At 10× leverage, heat should equal exactly MAX_TRADE_HEAT (0.02).
-        let heat_10x = trade_heat(100.0, 98.0, 100.0, 1000.0, 10.0);
+        // Setup: entry=$100, stop=$95 (5% stop), $100 margin, $1000 equity.
+        // 1× heat = 0.05 × 100 × 1 / 1000 = 0.005 — well below MAX_TRADE_HEAT (0.05).
+        // 3× heat = 0.015 — still below, but 10× leverage = 0.05 = exactly at limit.
+        // At 10× leverage, heat should equal exactly MAX_TRADE_HEAT (0.05).
+        let heat_10x = trade_heat(100.0, 95.0, 100.0, 1000.0, 10.0);
         assert!(
             (heat_10x - MAX_TRADE_HEAT).abs() < 1e-10,
-            "10× lev with 2% stop on 10% position should reach MAX_TRADE_HEAT exactly: {heat_10x}"
+            "10× lev with 5% stop on 10% position should reach MAX_TRADE_HEAT exactly: {heat_10x}"
         );
     }
 
