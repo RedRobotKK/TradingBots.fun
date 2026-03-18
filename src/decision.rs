@@ -90,22 +90,25 @@ impl Regime {
         }
     }
     /// Entry score threshold — minimum winner score to consider a trade.
-    /// Higher = fewer but higher-quality entries. Raised from ~0.42 to avoid
-    /// choppy-market noise that caused 0W/14L in ranging conditions.
+    ///
+    /// Calibrated against live signal score distributions (Mar 2026):
+    /// typical "good" signal produces bull/bear ≈ 0.10–0.30; old thresholds
+    /// (0.44/0.38/0.42) were 2–3× the actual score range → 0 trades in 500+ cycles.
+    /// New values sit at ~70–80% of a realistic strong signal.
     fn threshold(self) -> f64 {
         match self {
-            Regime::Trending => 0.44,  // confirmed trend signals
-            Regime::Ranging  => 0.38,  // mean-reversion clear extremes
-            Regime::Neutral  => 0.42,  // balanced
+            Regime::Trending => 0.22,  // trend signal bundle at 70% of strong Trending score
+            Regime::Ranging  => 0.16,  // mean-reversion signals are smaller in absolute terms
+            Regime::Neutral  => 0.18,  // balanced but signals conflict → lower gate
         }
     }
     /// Dominance ratio — winning side must exceed losing side by this factor.
     /// Higher = only enter when direction is unambiguous.
     fn dominance(self) -> f64 {
         match self {
-            Regime::Trending => 1.35,
-            Regime::Ranging  => 1.28,
-            Regime::Neutral  => 1.32,
+            Regime::Trending => 1.25,
+            Regime::Ranging  => 1.20,
+            Regime::Neutral  => 1.22,
         }
     }
 }
@@ -302,8 +305,8 @@ pub fn make_decision(
         let z4h_extreme = z4h.abs() > 1.2;
         if same_dir && z4h_extreme { 1.40 }  // both TFs agree at extremes — strong edge
         else if same_dir            { 1.10 }  // same direction — mild boost
-        else if z4h.abs() < 0.4    { 0.70 }  // 4h near neutral — 1h extreme likely noise
-        else                        { 0.85 }  // mild disagreement
+        else if z4h.abs() < 0.4    { 0.85 }  // 4h near neutral — 1h extreme likely noise (was 0.70)
+        else                        { 0.90 }  // mild disagreement (was 0.85)
     }).unwrap_or(1.0);
     let mut bull    = 0.0f64;
     let mut bear    = 0.0f64;
@@ -327,9 +330,17 @@ pub fn make_decision(
                 bull += rsi_w * 0.55;
                 contrib.rsi_bullish = true;
             } else if ind.rsi < 35.0 {
-                // Very oversold even in uptrend = shake-out, reversal likely
-                bull += rsi_w * 0.70;
-                contrib.rsi_bullish = true;
+                // Direction-aware: shake-out bounce only when EMA confirms uptrend.
+                // In a downtrend (EMA < -0.20%), RSI < 35 = bear continuation, not reversal.
+                if ind.ema_cross_pct > 0.20 {
+                    bull += rsi_w * 0.70;  // uptrend shake-out → reversal likely
+                    contrib.rsi_bullish = true;
+                } else if ind.ema_cross_pct < -0.20 {
+                    bear += rsi_w * 0.40;  // downtrend continuation → bear momentum
+                    contrib.rsi_bullish = false;
+                } else {
+                    contrib.rsi_bullish = ind.rsi < 50.0; // flat EMA — no contribution
+                }
             } else if ind.rsi < 45.0 {
                 bear += rsi_w * 0.55;
                 contrib.rsi_bullish = false;
@@ -596,10 +607,14 @@ pub fn make_decision(
     let vol_ratio = ind.volume_ratio;
 
     // Step a: apply global multiplier to all signals computed so far
+    // Volume conviction multiplier — less aggressive penalty than before.
+    // Crypto markets routinely show VOL:0.1-0.3× outside peak hours; the old
+    // 0.75 multiplier wiped 25% off ALL scores (including the already-small
+    // real-world signal values) making the threshold unreachable.
     let vol_mult = if vol_ratio > 2.0      { 1.20 }
                    else if vol_ratio > 1.4 { 1.10 }
-                   else if vol_ratio < 0.6 { 0.85 }   // thin volume = weak conviction
-                   else if vol_ratio < 0.4 { 0.75 }
+                   else if vol_ratio < 0.4 { 0.87 }   // thin volume — mild caution (was 0.75)
+                   else if vol_ratio < 0.6 { 0.93 }   // below-avg volume (was 0.85)
                    else                    { 1.00 };
 
     bull *= vol_mult;
@@ -866,7 +881,7 @@ pub fn make_decision(
         .unwrap_or_default();
 
     let rationale = format!(
-        "[{}/{}] RSI:{:.0} Z:{:.1} EMA:{:+.2}% MACD-H:{:.5} VOL:{:.1}× ADX:{:.0} VWAP:{:+.1}%{}{}{}{}{}{}{}{}",
+        "[{}/{}] RSI:{:.0} Z:{:.1} EMA:{:+.2}% MACD-H:{:.5} VOL:{:.1}× ADX:{:.0} VWAP:{:+.1}%{}{}{}{}{}{}{}{} ⟨B:{:.3} b:{:.3} t:{:.3}⟩",
         regime.label(),
         session_label,
         ind.rsi,
@@ -884,6 +899,9 @@ pub fn make_decision(
         atr_tag,
         mtf_tag,
         cex_tag,
+        bull,
+        bear,
+        threshold,
     );
 
     // For SKIP decisions, capture the dominant lean so the watchlist can
