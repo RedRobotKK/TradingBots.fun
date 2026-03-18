@@ -175,6 +175,7 @@ pub async fn check_balance(address: &str) -> f64 {
 ///
 /// This is fire-and-forget — a failure is logged but does not block onboarding.
 /// The action must be signed by the *user's* trading wallet private key.
+#[allow(dead_code)]
 pub async fn register_referral(
     _wallet_address: &str,
     _private_key_hex: &str,

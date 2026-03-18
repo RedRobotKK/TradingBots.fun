@@ -46,6 +46,7 @@ pub struct CrowdSignal {
     /// Average unrealised P&L across all holders (as % of margin).
     pub avg_pnl_pct:    f64,
     /// Total USD margin committed across all holders.
+    #[allow(dead_code)]
     pub total_size_usd: f64,
     /// Dominant direction: `"LONG"`, `"SHORT"`, or `"MIXED"`.
     pub crowd_side:     String,

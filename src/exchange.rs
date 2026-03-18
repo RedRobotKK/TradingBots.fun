@@ -540,8 +540,8 @@ mod tests {
 
     #[test]
     fn free_tier_builder_fee_is_3_bps() {
-        use crate::tenant::{TenantConfig, TenantTier};
-        let cfg = TenantConfig::paper();
+        use crate::tenant::TenantConfig;
+        let cfg = TenantConfig::paper("test", 1000.0);
         assert_eq!(cfg.builder_fee_bps(), 3,
             "free tier must carry maximum 3 bps to maximise revenue on non-paying users");
     }
@@ -549,7 +549,7 @@ mod tests {
     #[test]
     fn pro_tier_builder_fee_is_1_bps() {
         use crate::tenant::{TenantConfig, TenantTier};
-        let mut cfg = TenantConfig::paper();
+        let mut cfg = TenantConfig::paper("test", 1000.0);
         cfg.tier = TenantTier::Pro;
         assert_eq!(cfg.builder_fee_bps(), 1,
             "Pro tier reward: lighter 1 bps take on paying subscribers");
@@ -559,7 +559,7 @@ mod tests {
     fn builder_fee_never_exceeds_hl_maximum() {
         use crate::tenant::{TenantConfig, TenantTier};
         for tier in [TenantTier::Free, TenantTier::Pro, TenantTier::Internal] {
-            let mut cfg = TenantConfig::paper();
+            let mut cfg = TenantConfig::paper("test", 1000.0);
             cfg.tier = tier.clone();
             assert!(cfg.builder_fee_bps() <= 3,
                 "{:?} tier fee {} exceeds HL maximum of 3 bps", tier, cfg.builder_fee_bps());
