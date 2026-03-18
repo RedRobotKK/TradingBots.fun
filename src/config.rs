@@ -58,7 +58,12 @@ pub struct Config {
     /// Privy App ID from https://dashboard.privy.io (your-app-id).
     /// When set, all `/app/*` consumer routes require a valid Privy session.
     /// Leave unset for single-operator deployments (no per-user auth).
-    pub privy_app_id:    Option<String>,
+    pub privy_app_id:             Option<String>,
+    /// WalletConnect Cloud project ID — enables mobile wallet login (MetaMask Mobile,
+    /// Rainbow, Coinbase Wallet, etc.) via Privy's wallet login method.
+    /// Get a free project ID at https://cloud.walletconnect.com
+    /// When unset, browser-extension wallets (MetaMask desktop) still work.
+    pub walletconnect_project_id: Option<String>,
     /// HMAC-SHA256 key used to sign session cookies.
     /// Generate with: `openssl rand -hex 32`
     /// Falls back to a random UUID at startup if not set (sessions survive
@@ -168,6 +173,7 @@ impl Config {
             stripe_webhook_secret:      env::var("STRIPE_WEBHOOK_SECRET").ok(),
             stripe_price_id:            env::var("STRIPE_PRICE_ID").ok(),
             privy_app_id:               env::var("PRIVY_APP_ID").ok(),
+            walletconnect_project_id:   env::var("WALLETCONNECT_PROJECT_ID").ok(),
             session_secret:             env::var("SESSION_SECRET")
                 .unwrap_or_else(|_| uuid::Uuid::new_v4().to_string()),
             apple_pay_domain_assoc:     env::var("APPLE_PAY_DOMAIN_ASSOC").ok(),

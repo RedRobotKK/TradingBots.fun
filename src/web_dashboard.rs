@@ -39,7 +39,10 @@ pub struct AppState {
     pub stripe_price_id:       Option<String>,
     /// Privy App ID — when set, consumer routes require a valid Privy session.
     /// Set via `PRIVY_APP_ID` env var.  `None` = single-operator fallback mode.
-    pub privy_app_id:          Option<String>,
+    pub privy_app_id:             Option<String>,
+    /// WalletConnect Cloud project ID — enables mobile-wallet login via Privy.
+    /// Set via `WALLETCONNECT_PROJECT_ID` env var.  `None` = desktop wallets only.
+    pub walletconnect_project_id: Option<String>,
     /// HMAC-SHA256 signing key for session cookies.  Set via `SESSION_SECRET`.
     pub session_secret:        String,
     /// In-memory cache of Privy's JWKS — refreshed every hour on first use.
@@ -2550,6 +2553,14 @@ async fn login_handler(
     State(app): State<AppState>,
 ) -> axum::response::Html<String> {
     let body = if let Some(ref app_id) = app.privy_app_id {
+        // Build optional walletConnectCloudProjectId JS config key.
+        // When env var is set we inject it; otherwise omit so Privy falls back
+        // to injected-wallet-only mode (MetaMask browser extension).
+        let wc_config = match &app.walletconnect_project_id {
+            Some(id) if !id.is_empty() =>
+                format!(", walletConnectCloudProjectId: '{}'", id),
+            _ => String::new(),
+        };
         format!(r#"<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2624,19 +2635,19 @@ body{{background:#0d1117;color:#c9d1d9;
         padding:9px 12px;font-size:.73rem;color:#8b949e}}
 .wnote-dot{{width:6px;height:6px;border-radius:50%;background:#3fb950;
              flex-shrink:0;box-shadow:0 0 5px #3fb950}}
-/* Invite code field */
-.inv-wrap{{display:flex;flex-direction:column;gap:6px}}
-.inv-lbl{{display:flex;justify-content:space-between;align-items:baseline;
-          font-size:.78rem;font-weight:600;color:#c9d1d9}}
-.inv-hint{{font-size:.7rem;color:#484f58;font-weight:400}}
+/* Post-auth invite code card */
+.inv-card{{background:#0d1117;border:1px solid #30363d;border-radius:12px;
+           padding:22px;display:flex;flex-direction:column;gap:14px}}
+.inv-card-hd{{font-size:.92rem;font-weight:700;color:#e6edf3;text-align:center}}
+.inv-card-sub{{font-size:.76rem;color:#6e7681;text-align:center;line-height:1.5;margin-top:-6px}}
 .inv-inp{{width:100%;padding:11px 14px;background:#010409;border:1px solid #30363d;
-          border-radius:8px;color:#e6edf3;font-size:.95rem;font-weight:700;
-          letter-spacing:.08em;text-transform:uppercase;outline:none;transition:.15s}}
+          border-radius:8px;color:#e6edf3;font-size:1.05rem;font-weight:700;
+          letter-spacing:.1em;text-transform:uppercase;outline:none;transition:.15s;text-align:center}}
 .inv-inp:focus{{border-color:#58a6ff;box-shadow:0 0 0 3px rgba(88,166,255,.12)}}
 .inv-inp.ok{{border-color:#3fb950;box-shadow:0 0 0 3px rgba(63,185,80,.1)}}
 .inv-inp.bad{{border-color:#f85149;box-shadow:0 0 0 3px rgba(248,81,73,.1)}}
-.inv-status{{font-size:.72rem;min-height:16px;transition:.15s}}
-.inv-status.ok{{color:#3fb950}}.inv-status.bad{{color:#f85149}}
+.inv-hint-row{{font-size:.71rem;color:#484f58;text-align:center}}
+.inv-hint-row a{{color:#58a6ff}}
 @media(max-width:600px){{
   .pl{{display:none}}
   .pr{{width:100%;padding:36px 24px}}
@@ -2701,20 +2712,7 @@ body{{background:#0d1117;color:#c9d1d9;
   <div class="pr">
     <div class="lh">
       <h2>Sign in to your account</h2>
-      <p>Invite-only · <a href="/leaderboard" style="color:#58a6ff;text-decoration:none">🏆 View leaderboard</a></p>
-    </div>
-
-    <!-- Invite code field -->
-    <div class="inv-wrap">
-      <label class="inv-lbl" for="invite-input">
-        <span>🎟 Invite Code</span>
-        <span class="inv-hint">Get one from a friend or the <a href="/leaderboard" style="color:#58a6ff">weekly campaign</a></span>
-      </label>
-      <input id="invite-input" type="text" class="inv-inp"
-             placeholder="TB-XXXXXXXX"
-             autocomplete="off" autocapitalize="characters" spellcheck="false"
-             maxlength="20">
-      <div id="inv-status" class="inv-status"></div>
+      <p>Invite-only &middot; <a href="/leaderboard" style="color:#58a6ff;text-decoration:none">🏆 View leaderboard</a></p>
     </div>
 
     <div class="tos">
@@ -2732,15 +2730,16 @@ body{{background:#0d1117;color:#c9d1d9;
       </label>
     </div>
 
-    <div>
-      <button id="login-btn" class="btn btn-p" disabled>Sign in with Privy</button>
-      <div id="status" style="margin-top:8px"></div>
-      <div id="err" class="err" style="margin-top:4px"></div>
+    <!-- React mounts here — replaces #login-area -->
+    <div id="login-area">
+      <button id="login-btn" class="btn btn-p" disabled>Loading…</button>
     </div>
+    <div id="status" style="text-align:center;font-size:.78rem;color:#8b949e;min-height:16px"></div>
+    <div id="err" class="err" style="margin-top:2px"></div>
 
     <div class="wnote">
       <div class="wnote-dot"></div>
-      $20/mo · 9 bots · compete for weekly prizes
+      $20/mo &middot; 9 bots &middot; compete for weekly prizes
     </div>
   </div>
 </div>
@@ -2748,60 +2747,23 @@ body{{background:#0d1117;color:#c9d1d9;
 <script type="module">
 const PRIVY_APP_ID = '{app_id}';
 
-const tosCheck    = document.getElementById('tos-check');
-const loginBtn    = document.getElementById('login-btn');
-const inviteInp   = document.getElementById('invite-input');
-const invStatus   = document.getElementById('inv-status');
-
-// Read invite code from URL param ?invite=TB-XXXX if present
-const urlParams = new URLSearchParams(window.location.search);
-const prefilledCode = urlParams.get('invite') || urlParams.get('code') || '';
-if (prefilledCode) {{ inviteInp.value = prefilledCode.toUpperCase(); }}
-
-// Gate: both ToS checked AND invite code non-empty
-function canLogin() {{
-  return tosCheck.checked && inviteInp.value.trim().length >= 6;
-}}
-function updateBtn() {{
-  if (!loginBtn.dataset.loading) loginBtn.disabled = !canLogin();
-}}
-tosCheck.addEventListener('change', updateBtn);
-
-// Live invite input feedback
-inviteInp.addEventListener('input', () => {{
-  const v = inviteInp.value.trim().toUpperCase();
-  inviteInp.value = v;
-  if (v.length === 0) {{
-    inviteInp.classList.remove('ok','bad');
-    invStatus.textContent = ''; invStatus.className = 'inv-status';
-  }} else if (v.length < 6) {{
-    inviteInp.classList.remove('ok'); inviteInp.classList.add('bad');
-    invStatus.textContent = 'Code too short'; invStatus.className = 'inv-status bad';
-  }} else {{
-    inviteInp.classList.remove('bad'); inviteInp.classList.add('ok');
-    invStatus.textContent = '✓ Code looks good'; invStatus.className = 'inv-status ok';
-  }}
-  updateBtn();
-}});
+// Capture ?invite= / ?code= from URL now; passed into post-auth invite flow.
+const urlParams     = new URLSearchParams(window.location.search);
+const urlInviteCode = (urlParams.get('invite') || urlParams.get('code') || '').toUpperCase();
 
 function setStatus(msg) {{ document.getElementById('status').textContent = msg; }}
 function setErr(msg)    {{ document.getElementById('err').textContent    = msg; }}
-function setLoading(yes) {{
-  loginBtn.dataset.loading = yes ? '1' : '';
-  loginBtn.disabled = yes;
-  loginBtn.textContent = yes ? 'Signing in…' : 'Sign in with Privy';
-}}
 
-// Read UTM params from cookie or URL for attribution
-function getUtm(key) {{
-  const url = new URLSearchParams(window.location.search);
-  return url.get(key) || '';
-}}
+function getUtm(key) {{ return new URLSearchParams(window.location.search).get(key) || ''; }}
 
-async function exchangeToken(privyToken) {{
+// ── Session exchange ───────────────────────────────────────────────────────
+// Throws a plain Error on generic failures.
+// Throws an Error with .needsInvite = true when the server wants an invite
+// code — lets the UI render the post-auth invite prompt instead.
+async function exchangeToken(privyToken, inviteCode) {{
   const body = {{
     token:        privyToken,
-    invite_code:  inviteInp.value.trim().toUpperCase() || null,
+    invite_code:  (inviteCode || '').trim().toUpperCase() || null,
     utm_source:   getUtm('utm_source') || 'direct',
     utm_campaign: getUtm('utm_campaign') || null,
     hl_referred:  getUtm('ref') === 'TRADINGBOTS' || getUtm('hl_ref') === '1',
@@ -2813,106 +2775,163 @@ async function exchangeToken(privyToken) {{
   }});
   if (res.status === 403) {{
     const j = await res.json().catch(() => ({{}}));
-    const msg = j.message || (j.error === 'invite_required'
-      ? 'An invite code is required to create an account.'
-      : 'That invite code is invalid or already used.');
-    throw new Error(msg);
+    if (j.error === 'invite_required') {{
+      const err = new Error('An invite code is required to create an account.');
+      err.needsInvite = true;
+      throw err;
+    }}
+    throw new Error(j.message || 'That invite code is invalid or already used.');
   }}
   if (!res.ok) throw new Error('Session exchange failed: ' + res.status);
   return res.json();
 }}
 
-// Load the pre-built Privy SDK bundle from our own server — no external CDN.
-// All exports share a single bundled React instance so hooks work correctly.
+// ── Privy SDK ──────────────────────────────────────────────────────────────
+// Bundle served from our own server — no external CDN.
 // Rebuild after SDK upgrades: cd js && npm run build
 import('/static/privy-login.js').then(({{ PrivyProvider, usePrivy, createElement, useState, useEffect, createRoot }}) => {{
   const h = createElement;
 
-  // Watchdog: if the mount div is still empty 8 s after the bundle loads,
-  // Privy silently crashed — restore a visible error so the user isn't stuck.
+  // Watchdog: surface error if mount div is still empty after 8 s
+  const area = document.getElementById('login-area');
   const watchdog = setTimeout(() => {{
-    if (mount.childElementCount === 0) {{
+    if (!area || area.querySelector('#login-btn')) {{
       setErr('Auth SDK failed to initialise — please reload the page.');
-      mount.innerHTML = '<button class="btn btn-p" disabled>Auth unavailable — reload</button>';
     }}
   }}, 8000);
 
-  function LoginButton() {{
+  // ── LoginApp ──────────────────────────────────────────────────────────
+  function LoginApp() {{
     const {{ ready, authenticated, login, getAccessToken }} = usePrivy();
-    const [, setTick] = useState(0);
+    // phase: 'idle' | 'loading' | 'invite' | 'done'
+    const [phase, setPhase]           = useState('idle');
+    const [inviteCode, setInviteCode] = useState(urlInviteCode);
+    const [errMsg, setErrMsg]         = useState('');
+    const [pendingToken, setPToken]   = useState(null);
+    const [tosChecked, setTos]        = useState(false);
 
-    // Re-render whenever ToS checkbox or invite input change
+    // Mirror ToS checkbox into React state
     useEffect(() => {{
-      const rerender = () => setTick(t => t + 1);
-      const tos = document.getElementById('tos-check');
-      const inv = document.getElementById('invite-input');
-      tos?.addEventListener('change', rerender);
-      inv?.addEventListener('input', rerender);
-      return () => {{
-        tos?.removeEventListener('change', rerender);
-        inv?.removeEventListener('input', rerender);
-      }};
+      const cb = (e) => setTos(e.target.checked);
+      const el = document.getElementById('tos-check');
+      el?.addEventListener('change', cb);
+      return () => el?.removeEventListener('change', cb);
     }}, []);
 
-    // Auto-redirect if already authenticated
+    // Push error into the external #err div
+    useEffect(() => {{ setErr(errMsg); }}, [errMsg]);
+
+    // Auto-redirect when already authenticated on page load
     useEffect(() => {{
       if (!ready || !authenticated) return;
-      setStatus('Already signed in — loading…');
+      setStatus('Already signed in — loading dashboard…');
       getAccessToken().then(async (token) => {{
-        try {{ await exchangeToken(token); window.location.href = '/app'; }}
-        catch(e) {{ setStatus(''); setErr('Session setup failed. Please sign in again.'); }}
+        try {{
+          await exchangeToken(token, inviteCode);
+          window.location.href = '/app';
+        }} catch(e) {{
+          if (e.needsInvite) {{
+            setPToken(token); setPhase('invite'); setStatus('');
+          }} else {{
+            setStatus(''); setErrMsg('Session setup failed. Please sign in again.');
+          }}
+        }}
       }}).catch(() => {{}});
     }}, [ready, authenticated]);
 
-    const handleClick = async () => {{
-      if (!canLogin()) return;
-      setErr(''); setStatus('Opening Privy…');
+    // ── Post-auth invite code prompt ────────────────────────────────────
+    if (phase === 'invite') {{
+      const codeOk = inviteCode.trim().length >= 6;
+      const handleSubmit = async () => {{
+        if (!codeOk || phase === 'loading') return;
+        setPhase('loading'); setErrMsg(''); setStatus('Verifying invite code…');
+        try {{
+          await exchangeToken(pendingToken, inviteCode);
+          window.location.href = '/app';
+        }} catch(e) {{
+          setPhase('invite'); setStatus(''); setErrMsg(e.message || 'Invalid invite code.');
+        }}
+      }};
+      return h('div', {{ className: 'inv-card' }},
+        h('div', {{ className: 'inv-card-hd' }}, '🎟 Enter your invite code'),
+        h('div', {{ className: 'inv-card-sub' }},
+          'TradingBots.fun is invite-only for new accounts.'),
+        h('input', {{
+          className: 'inv-inp ' + (inviteCode.length === 0 ? '' : codeOk ? 'ok' : 'bad'),
+          type: 'text', placeholder: 'TB-XXXXXXXX', value: inviteCode,
+          maxLength: 20, autoFocus: true,
+          onInput:   (e) => setInviteCode(e.target.value.toUpperCase()),
+          onKeyDown: (e) => {{ if (e.key === 'Enter') handleSubmit(); }},
+        }}),
+        h('button', {{
+          className: 'btn btn-p', disabled: !codeOk,
+          onClick: handleSubmit,
+        }}, 'Continue →'),
+        h('div', {{ className: 'inv-hint-row' }},
+          'Get a code from a friend or the ',
+          h('a', {{ href: '/leaderboard' }}, 'weekly campaign'))
+      );
+    }}
+
+    // ── Main sign-in button ─────────────────────────────────────────────
+    const busy = phase === 'loading';
+    const handleLogin = async () => {{
+      if (!tosChecked || busy) return;
+      setErrMsg(''); setStatus('Opening sign-in…'); setPhase('loading');
       try {{
         await login();
         setStatus('Authenticated — setting up your account…');
         const token = await getAccessToken();
-        await exchangeToken(token);
-        window.location.href = '/app';
+        try {{
+          await exchangeToken(token, inviteCode);
+          window.location.href = '/app';
+        }} catch(e) {{
+          if (e.needsInvite) {{
+            setPToken(token); setPhase('invite'); setStatus('');
+          }} else {{ throw e; }}
+        }}
       }} catch(e) {{
-        setStatus('');
-        setErr(e.message || 'Login failed. Please try again.');
+        setPhase('idle'); setStatus('');
+        setErrMsg(e.message || 'Login failed. Please try again.');
       }}
     }};
 
     return h('button', {{
       className: 'btn btn-p',
-      disabled: !ready || !canLogin(),
-      onClick: handleClick,
-    }}, ready ? 'Sign in with Privy' : 'Loading…');
+      disabled: !ready || !tosChecked || busy,
+      onClick: handleLogin,
+    }}, !ready ? 'Loading…' : busy ? 'Signing in…' : 'Sign in');
   }}
 
-  // Mount React in place of the static placeholder button
-  const btn = document.getElementById('login-btn');
+  // Mount React in place of the static placeholder
   const mount = document.createElement('div');
-  btn.parentNode.replaceChild(mount, btn);
+  area.replaceWith(mount);
 
   createRoot(mount).render(
     h(PrivyProvider, {{
       appId: PRIVY_APP_ID,
-      // 'email' OTP works out of the box — no WalletConnect project ID needed.
-      // Add 'wallet' here only after setting walletConnectCloudProjectId.
-      // embeddedWallets createOnLogin:'off' prevents the HTTPS-only embedded
-      // wallet initialiser from crashing Privy when served over plain HTTP.
-      config: {{ loginMethods: ['email'], appearance: {{ theme: 'dark' }}, embeddedWallets: {{ createOnLogin: 'off' }} }},
+      // 'wallet' enables MetaMask (browser extension) and, when
+      // walletConnectCloudProjectId is set, mobile wallets too.
+      // embeddedWallets createOnLogin:'off' prevents HTTPS-only wallet init
+      // from crashing when the page is served over plain HTTP in dev/staging.
+      config: {{
+        loginMethods: ['email', 'wallet'],
+        appearance: {{ theme: 'dark' }},
+        embeddedWallets: {{ createOnLogin: 'off' }}{wc_config},
+      }},
     }},
-      h(LoginButton)
+      h(LoginApp)
     )
   );
 
-  // Cancel watchdog once React has successfully rendered something
-  const cancelWatchdog = setInterval(() => {{
-    if (mount.childElementCount > 0) {{ clearTimeout(watchdog); clearInterval(cancelWatchdog); }}
+  const cancelWd = setInterval(() => {{
+    if (mount.childElementCount > 0) {{ clearTimeout(watchdog); clearInterval(cancelWd); }}
   }}, 200);
 }}).catch((e) => {{
   setErr('Could not load authentication SDK: ' + e.message);
 }});
 </script>
-</body></html>"#, app_id = app_id)
+</body></html>"#, app_id = app_id, wc_config = wc_config)
     } else {
         // Single-operator mode — Privy not configured
         r#"<!DOCTYPE html>
