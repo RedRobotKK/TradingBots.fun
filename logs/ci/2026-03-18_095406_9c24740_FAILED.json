@@ -1,0 +1,91 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-03-18T09:40:30Z",
+    "commit": "9c24740",
+    "commit_full": "9c24740ca6e62358da54fe4213f781a97884dcd5",
+    "commit_message": "chore: bump version 0.1.36 \u2192 0.1.37",
+    "branch": "master",
+    "overall_status": "FAILED",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
+    "cargo": "cargo 1.93.1 (083ac5135 2025-12-15)",
+    "os_kernel": "6.8.0-106-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 763,
+      "total_passed": 684,
+      "total_failed": 1,
+      "total_ignored": 1,
+      "failures": []
+    },
+    "clippy": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 49,
+      "error_count": 3,
+      "errors": [
+        {
+          "code": "E",
+          "message": "field assignment outside of initializer for an instance created with Default::default()",
+          "file": "src/thesis.rs",
+          "line": 451,
+          "col": 9
+        },
+        {
+          "code": "E",
+          "message": "field assignment outside of initializer for an instance created with Default::default()",
+          "file": "src/thesis.rs",
+          "line": 461,
+          "col": 9
+        },
+        {
+          "code": "E",
+          "message": "could not compile `tradingbots-fun` (bin \"tradingbots-fun\" test) due to 2 previous errors"
+        }
+      ]
+    },
+    "audit": {
+      "status": "ADVISORY",
+      "exit_code": 1,
+      "duration_seconds": 3,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2023-0071",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2023-0071",
+          "severity": "5.9 (medium)",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "tradingbots",
+    "status": "failed",
+    "active_since": "unknown",
+    "recent_logs": [
+      "Mar 18 09:14:45 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: tradingbots.service: Failed with result 'exit-code'.",
+      "Mar 18 09:14:50 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: tradingbots.service: Scheduled restart job, restart counter is at 5.",
+      "Mar 18 09:14:50 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: tradingbots.service: Start request repeated too quickly.",
+      "Mar 18 09:14:50 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: tradingbots.service: Failed with result 'exit-code'.",
+      "Mar 18 09:14:50 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Failed to start tradingbots.service - TradingBots.fun."
+    ]
+  }
+}
