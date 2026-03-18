@@ -91,7 +91,7 @@ pub async fn active_campaign(db: &SharedDb) -> Result<Option<CampaignInfo>> {
 
     let prizes: Vec<PrizeTier> = r.prizes
         .as_ref()
-        .and_then(|v| serde_json::from_value(v.clone()).ok())
+        .and_then(|v: &serde_json::Value| serde_json::from_value(v.clone()).ok())
         .unwrap_or_default();
 
     Ok(Some(CampaignInfo {
@@ -132,7 +132,7 @@ pub async fn live_standings(
     Ok(rows.into_iter().filter_map(|r| {
         let tenant_id = r.tenant_id?; // skip rows without a tenant_id
         let wallet_short = r.wallet_address
-            .map(|w| if w.len() >= 10 { format!("{}…{}", &w[..6], &w[w.len()-4..]) } else { w })
+            .map(|w: String| if w.len() >= 10 { format!("{}…{}", &w[..6], &w[w.len()-4..]) } else { w })
             .unwrap_or_else(|| "—".to_string());
 
         Some(LeaderboardEntry {
@@ -140,9 +140,9 @@ pub async fn live_standings(
             tenant_id,
             display_name:     r.display_name.unwrap_or_else(|| "Anonymous".into()),
             wallet_short,
-            equity_usd:       r.equity_usd.map(|d| d.to_string().parse::<f64>().unwrap_or(0.0)).unwrap_or(0.0),
-            start_equity_usd: r.start_equity_usd.map(|d| d.to_string().parse::<f64>().unwrap_or(0.0)).unwrap_or(0.0),
-            pct_return:       r.pct_return.map(|d| d.to_string().parse::<f64>().unwrap_or(0.0)).unwrap_or(0.0),
+            equity_usd:       r.equity_usd.map(|d: rust_decimal::Decimal| d.to_string().parse::<f64>().unwrap_or(0.0)).unwrap_or(0.0),
+            start_equity_usd: r.start_equity_usd.map(|d: rust_decimal::Decimal| d.to_string().parse::<f64>().unwrap_or(0.0)).unwrap_or(0.0),
+            pct_return:       r.pct_return.map(|d: rust_decimal::Decimal| d.to_string().parse::<f64>().unwrap_or(0.0)).unwrap_or(0.0),
             trades_in_period: r.trades_in_period.unwrap_or(0),
         })
     }).collect())
@@ -246,7 +246,7 @@ pub async fn snapshot_daily(
 
         let start_equity = start_equity_map
             .get(tenant_uuid)
-            .map(|d| d.to_string().parse::<f64>().unwrap_or(*current_equity))
+            .map(|d: &rust_decimal::Decimal| d.to_string().parse::<f64>().unwrap_or(*current_equity))
             .unwrap_or(*current_equity);  // first snapshot: anchor to current equity
 
         let result = sqlx::query!(

@@ -55,3 +55,6 @@ pub mod funnel;
 pub mod invite;
 pub mod leaderboard;
 pub mod mailer;
+pub mod thesis;
+pub mod hl_wallet;
+pub mod collective;
