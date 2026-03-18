@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT DISTINCT ON (tenant_id) tenant_id, start_equity_usd\n           FROM leaderboard_snapshots\n           WHERE tenant_id = ANY($1)\n             AND campaign_id = $2\n           ORDER BY tenant_id, snapshot_date ASC",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "tenant_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "start_equity_usd",
+        "type_info": "Numeric"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "134f4f44c94a8945517695e90062346b53c7bab3f84223ae1803dcef2b170455"
+}

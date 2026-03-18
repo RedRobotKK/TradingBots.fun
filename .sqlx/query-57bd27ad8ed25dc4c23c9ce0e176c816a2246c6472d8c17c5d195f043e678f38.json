@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE hot_positions SET unrealised_pnl_pct = $1\n         WHERE tenant_id = $2 AND symbol = $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Float8",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "57bd27ad8ed25dc4c23c9ce0e176c816a2246c6472d8c17c5d195f043e678f38"
+}

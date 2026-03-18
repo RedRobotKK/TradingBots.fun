@@ -1,0 +1,46 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n               COUNT(*)                                       AS holder_count,\n               COALESCE(AVG(unrealised_pnl_pct), 0.0)        AS avg_pnl_pct,\n               COALESCE(SUM(size_usd), 0.0)                  AS total_size_usd,\n               COUNT(CASE WHEN side = 'LONG'  THEN 1 END)    AS longs,\n               COUNT(CASE WHEN side = 'SHORT' THEN 1 END)    AS shorts\n           FROM hot_positions\n           WHERE symbol = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "holder_count",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "avg_pnl_pct",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 2,
+        "name": "total_size_usd",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 3,
+        "name": "longs",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "shorts",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "d1a6fd10e87444d976000686a79dcc748aed0da35b38da7abac085d8d08809ad"
+}

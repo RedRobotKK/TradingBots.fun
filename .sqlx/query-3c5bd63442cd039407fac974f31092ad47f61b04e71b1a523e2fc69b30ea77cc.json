@@ -1,0 +1,34 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO trade_outcomes (\n               tenant_id, symbol, side, entry_price, exit_price, pnl_pct,\n               r_multiple, hold_cycles,\n               sig_rsi, sig_bollinger, sig_macd, sig_ema_cross, sig_order_flow,\n               sig_z_score, sig_volume, sig_sentiment, sig_funding, sig_trend,\n               sig_candle, sig_chart,\n               outcome\n           ) VALUES (\n               $1,$2,$3,$4,$5,$6,\n               $7,$8,\n               $9,$10,$11,$12,$13,\n               $14,$15,$16,$17,$18,\n               $19,$20,\n               $21\n           )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Float8",
+        "Float8",
+        "Float8",
+        "Float8",
+        "Int4",
+        "Int2",
+        "Int2",
+        "Int2",
+        "Int2",
+        "Int2",
+        "Int2",
+        "Int2",
+        "Int2",
+        "Int2",
+        "Int2",
+        "Int2",
+        "Int2",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3c5bd63442cd039407fac974f31092ad47f61b04e71b1a523e2fc69b30ea77cc"
+}

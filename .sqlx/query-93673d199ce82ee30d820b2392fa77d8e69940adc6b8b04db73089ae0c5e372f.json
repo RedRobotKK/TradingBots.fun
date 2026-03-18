@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE tenants\n                     SET investment_thesis    = $1,\n                         symbol_whitelist     = $2,\n                         sector_filter        = $3,\n                         max_leverage_override = $4\n                     WHERE id = $5",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Text",
+        "Float8",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "93673d199ce82ee30d820b2392fa77d8e69940adc6b8b04db73089ae0c5e372f"
+}

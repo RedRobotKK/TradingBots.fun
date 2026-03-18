@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT investment_thesis, symbol_whitelist, sector_filter, max_leverage_override\n                 FROM tenants WHERE id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "investment_thesis",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "symbol_whitelist",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "sector_filter",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "max_leverage_override",
+        "type_info": "Float8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "09a49b5aeec7b1e6bbf2c4e944091e41803dcb885d2b9187452ce468926bdf6a"
+}

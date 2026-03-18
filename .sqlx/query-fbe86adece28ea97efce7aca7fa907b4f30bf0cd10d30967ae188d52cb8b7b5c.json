@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT ct.tenant_id, COUNT(*) AS cnt\n           FROM closed_trades ct\n           JOIN campaigns c ON c.id = $1\n           WHERE ct.tenant_id = ANY($2)\n             AND ct.closed_at >= c.starts_at\n           GROUP BY ct.tenant_id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "tenant_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "cnt",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "UuidArray"
+      ]
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "fbe86adece28ea97efce7aca7fa907b4f30bf0cd10d30967ae188d52cb8b7b5c"
+}

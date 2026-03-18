@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM hot_positions WHERE tenant_id = $1 AND symbol = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6864421be9c70e909f97c01646a47598dd88adb3a61407500d3e8bc668f2ced0"
+}

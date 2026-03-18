@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE tenants                      SET hl_wallet_address = $1, hl_wallet_key_enc = $2                      WHERE id = $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "386258416de8252a92d2cf34cc26aa5f115f096dccbe867878228f7fd7c71abf"
+}

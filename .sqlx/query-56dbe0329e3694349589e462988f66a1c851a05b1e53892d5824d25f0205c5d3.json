@@ -1,0 +1,170 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n               outcome,\n               SUM(CASE WHEN sig_rsi        =  1 THEN 1 ELSE 0 END) AS rsi_aligned,\n               SUM(CASE WHEN sig_rsi        = -1 THEN 1 ELSE 0 END) AS rsi_opposed,\n               SUM(CASE WHEN sig_bollinger  =  1 THEN 1 ELSE 0 END) AS bb_aligned,\n               SUM(CASE WHEN sig_bollinger  = -1 THEN 1 ELSE 0 END) AS bb_opposed,\n               SUM(CASE WHEN sig_macd       =  1 THEN 1 ELSE 0 END) AS macd_aligned,\n               SUM(CASE WHEN sig_macd       = -1 THEN 1 ELSE 0 END) AS macd_opposed,\n               SUM(CASE WHEN sig_ema_cross  =  1 THEN 1 ELSE 0 END) AS ema_aligned,\n               SUM(CASE WHEN sig_ema_cross  = -1 THEN 1 ELSE 0 END) AS ema_opposed,\n               SUM(CASE WHEN sig_order_flow =  1 THEN 1 ELSE 0 END) AS of_aligned,\n               SUM(CASE WHEN sig_order_flow = -1 THEN 1 ELSE 0 END) AS of_opposed,\n               SUM(CASE WHEN sig_z_score    =  1 THEN 1 ELSE 0 END) AS z_aligned,\n               SUM(CASE WHEN sig_z_score    = -1 THEN 1 ELSE 0 END) AS z_opposed,\n               SUM(CASE WHEN sig_volume     =  1 THEN 1 ELSE 0 END) AS vol_aligned,\n               SUM(CASE WHEN sig_volume     = -1 THEN 1 ELSE 0 END) AS vol_opposed,\n               SUM(CASE WHEN sig_sentiment  =  1 THEN 1 ELSE 0 END) AS sent_aligned,\n               SUM(CASE WHEN sig_sentiment  = -1 THEN 1 ELSE 0 END) AS sent_opposed,\n               SUM(CASE WHEN sig_funding    =  1 THEN 1 ELSE 0 END) AS fund_aligned,\n               SUM(CASE WHEN sig_funding    = -1 THEN 1 ELSE 0 END) AS fund_opposed,\n               SUM(CASE WHEN sig_trend      =  1 THEN 1 ELSE 0 END) AS trend_aligned,\n               SUM(CASE WHEN sig_trend      = -1 THEN 1 ELSE 0 END) AS trend_opposed,\n               SUM(CASE WHEN sig_candle     =  1 THEN 1 ELSE 0 END) AS cnd_aligned,\n               SUM(CASE WHEN sig_candle     = -1 THEN 1 ELSE 0 END) AS cnd_opposed,\n               SUM(CASE WHEN sig_chart      =  1 THEN 1 ELSE 0 END) AS cht_aligned,\n               SUM(CASE WHEN sig_chart      = -1 THEN 1 ELSE 0 END) AS cht_opposed,\n               COUNT(*) AS trade_count\n           FROM trade_outcomes\n           WHERE closed_at > now() - INTERVAL '90 days'\n           GROUP BY outcome",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "outcome",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "rsi_aligned",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 2,
+        "name": "rsi_opposed",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 3,
+        "name": "bb_aligned",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 4,
+        "name": "bb_opposed",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 5,
+        "name": "macd_aligned",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 6,
+        "name": "macd_opposed",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 7,
+        "name": "ema_aligned",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 8,
+        "name": "ema_opposed",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 9,
+        "name": "of_aligned",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 10,
+        "name": "of_opposed",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 11,
+        "name": "z_aligned",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 12,
+        "name": "z_opposed",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 13,
+        "name": "vol_aligned",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 14,
+        "name": "vol_opposed",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 15,
+        "name": "sent_aligned",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 16,
+        "name": "sent_opposed",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 17,
+        "name": "fund_aligned",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 18,
+        "name": "fund_opposed",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 19,
+        "name": "trend_aligned",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 20,
+        "name": "trend_opposed",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 21,
+        "name": "cnd_aligned",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 22,
+        "name": "cnd_opposed",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 23,
+        "name": "cht_aligned",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 24,
+        "name": "cht_opposed",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 25,
+        "name": "trade_count",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "56dbe0329e3694349589e462988f66a1c851a05b1e53892d5824d25f0205c5d3"
+}

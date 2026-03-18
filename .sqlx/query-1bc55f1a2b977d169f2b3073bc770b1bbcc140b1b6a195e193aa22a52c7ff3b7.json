@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE tenants SET hl_setup_complete = true WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1bc55f1a2b977d169f2b3073bc770b1bbcc140b1b6a195e193aa22a52c7ff3b7"
+}

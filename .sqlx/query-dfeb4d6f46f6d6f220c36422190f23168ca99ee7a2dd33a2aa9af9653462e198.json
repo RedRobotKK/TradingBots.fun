@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO hot_positions\n               (tenant_id, symbol, side, entry_price, size_usd, unrealised_pnl_pct)\n           VALUES ($1, $2, $3, $4, $5, 0.0)\n           ON CONFLICT (tenant_id, symbol)\n           DO UPDATE SET\n               entry_price        = EXCLUDED.entry_price,\n               size_usd           = EXCLUDED.size_usd,\n               unrealised_pnl_pct = 0.0,\n               opened_at          = now()",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text",
+        "Float8",
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "dfeb4d6f46f6d6f220c36422190f23168ca99ee7a2dd33a2aa9af9653462e198"
+}
