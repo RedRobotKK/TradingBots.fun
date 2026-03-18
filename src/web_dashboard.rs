@@ -4839,10 +4839,10 @@ async fn hl_balance_api_handler(
         None           => 0.0,
     };
 
-    axum::response::Json(serde_json::json!({{
+    axum::response::Json(serde_json::json!({
         "balance_usd": balance_usd,
         "address":     address,
-    }})).into_response()
+    })).into_response()
 }
 
 /// `GET /api/hl/wallet/key.json` — export the tenant's HL trading wallet as a
@@ -4884,14 +4884,14 @@ async fn hl_export_key_handler(
         }
     };
 
-    let payload = serde_json::json!({{
+    let payload = serde_json::json!({
         "platform":   "TradingBots.fun",
         "address":    addr,
         "privateKey": private_key,
         "network":    "Hyperliquid (EVM-compatible)",
         "exportedAt": chrono::Utc::now().to_rfc3339(),
         "note": "Keep this file safe. Import into MetaMask or any EVM wallet to access your Hyperliquid account externally."
-    }});
+    });
 
     let json_str = serde_json::to_string_pretty(&payload)
         .unwrap_or_else(|_| "{{}}".to_string());
@@ -4899,7 +4899,7 @@ async fn hl_export_key_handler(
     axum::response::Response::builder()
         .status(200)
         .header("Content-Type", "application/json")
-        .header("Content-Disposition", "attachment; filename="tradingbots-wallet.json"")
+        .header("Content-Disposition", "attachment; filename=\"tradingbots-wallet.json\"")
         .header("Cache-Control", "no-store")
         .body(axum::body::Body::from(json_str))
         .unwrap_or_else(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response())
