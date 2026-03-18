@@ -5107,7 +5107,53 @@ async fn thesis_update_handler(
         None    => return axum::http::StatusCode::UNAUTHORIZED.into_response(),
     };
 
-    let cmd = req.command.trim().to_string();
+    // ── Input validation ──────────────────────────────────────────────────────
+
+    // 1. Length cap — reject anything over 200 chars before any processing.
+    //    Prevents memory exhaustion and cuts off most injection attempts.
+    const MAX_CMD_LEN: usize = 200;
+    if req.command.len() > MAX_CMD_LEN {
+        return axum::response::Json(serde_json::json!({
+            "type":    "error",
+            "message": "Command too long. Please keep it under 200 characters.",
+        })).into_response();
+    }
+
+    // 2. Strip control characters and null bytes; collapse whitespace.
+    let cmd: String = req.command
+        .chars()
+        .map(|c| if (c as u32) < 32 && c != ' ' { ' ' } else { c })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim()
+        .to_string();
+
+    if cmd.is_empty() {
+        return axum::response::Json(serde_json::json!({
+            "type":    "error",
+            "message": "Empty command.",
+        })).into_response();
+    }
+
+    // 3. Topic guard — only crypto portfolio commands are accepted.
+    //    Reject obvious off-topic patterns before they reach the parser.
+    let cmd_lower = cmd.to_lowercase();
+    let off_topic_patterns = [
+        "ignore previous", "disregard", "forget your instructions",
+        "act as", "you are now", "new persona", "pretend you",
+        "system prompt", "jailbreak", "dan mode",
+        "tell me a joke", "write a poem", "write code",
+        "help me with", "explain how to", "what is the weather",
+        "translate", "summarize this article",
+    ];
+    if off_topic_patterns.iter().any(|p| cmd_lower.contains(p)) {
+        return axum::response::Json(serde_json::json!({
+            "type":    "error",
+            "message": "This AI only handles crypto portfolio commands — e.g. \"only BTC ETH\", \"max 5x\", \"show recent trades\".",
+        })).into_response();
+    }
 
     // ── Trade query path ──────────────────────────────────────────────────────
     if crate::thesis::parse_command(&cmd).is_none() {

@@ -125,6 +125,9 @@ pub fn sector_symbols(sector: &str) -> Option<Vec<String>> {
 /// Returns `None` if the command appears to be a trade query rather than a
 /// constraint update (so the caller can handle it differently).
 pub fn parse_command(cmd: &str) -> Option<ThesisConstraints> {
+    // Hard length cap — the web handler already checks this, but belt-and-braces.
+    if cmd.len() > 200 { return Some(ThesisConstraints::default()); }
+
     let lc = cmd.to_ascii_lowercase();
 
     // ── Trade queries (do NOT update constraints) ─────────────────────────
