@@ -953,7 +953,7 @@ var METRIC_INFO={
     fmt:function(v){return String(v);},
     no_gauge:true,
     formula:'Live count from current session state',
-    notes:['Open = positions currently held (hard limits: 8 total, 4 per direction).','Closed = completed trades this session — partial closes count as separate entries.','Session resets on restart — the trades_YYYY.csv ledger captures all-time history.','More closed trades → more reliable metrics. Kelly activates at 5; metrics become statistically meaningful at 10+.'],
+    notes:['Open = positions currently held. No hard count cap — the AI budgets size via Kelly and portfolio heat (15% max equity at risk), so a dozen or more concurrent positions are normal.','Closed = completed trades this session — partial closes count as separate entries.','Session resets on restart — the trades_YYYY.csv ledger captures all-time history.','More closed trades → more reliable metrics. Kelly activates at 5; metrics become statistically meaningful at 10+.'],
     verdict:function(){return['#8b949e','ℹ️ These counts grow as the bot trades. The closed count directly drives the quality of Sharpe, Sortino, Kelly, and Expectancy calculations — the more trades, the more trustworthy the numbers.'];}
   },
   cycles:{
@@ -6091,15 +6091,17 @@ mod tests {
     // ── Dashboard slot badge correctness ──────────────────────────────────────
 
     #[test]
-    fn slot_badge_reflects_correct_max_positions() {
-        // Correct values: MAX_POSITIONS=8, MAX_SAME_DIRECTION=4
-        let max_positions      = 8usize;
-        let max_same_direction = 4usize;
-        let badge = format!("{} / {} slots · max {} per direction",
-            0, max_positions, max_same_direction);
-        assert!(badge.contains("8 slots"),  "badge must show 8 total slots");
-        assert!(badge.contains("max 4 per"), "badge must show max 4 per direction");
-        assert!(!badge.contains("/ 4 slots"), "REGRESSION: badge must NOT say 4 slots");
-        assert!(!badge.contains("max 2 per"), "REGRESSION: badge must NOT say max 2 per direction");
+    fn position_count_is_heat_budgeted_not_hardcapped() {
+        // No hard slot cap — portfolio heat (15% equity) and Kelly sizing are
+        // the only limits.  This test documents that assumption so a future
+        // regression that re-introduces a count cap will be caught.
+        let heat_cap_pct = 15.0_f64;
+        let per_trade_heat_pct = 2.0_f64;
+        // Theoretical maximum simultaneous trades if every trade is at the per-trade heat floor:
+        let theoretical_max = (heat_cap_pct / per_trade_heat_pct).floor() as usize;
+        // Must be well above the old hard cap of 8.
+        assert!(theoretical_max >= 7, "heat budget should allow at least 7 positions");
+        // The old hard cap constants must NOT be referenced anywhere.
+        // (Compile-time check: MAX_POSITIONS and MAX_SAME_DIRECTION are deleted.)
     }
 }

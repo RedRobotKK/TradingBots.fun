@@ -2,7 +2,7 @@
 //!
 //! Professional quant trade management:
 //!   • Kelly Criterion position sizing (half-Kelly, confidence-scaled)
-//!   • Portfolio heat limit: max 8% total equity at risk across all positions
+//!   • Portfolio heat limit: max 15% total equity at risk — AI-budgeted, no hard position count cap
 //!   • Per-trade risk: max 2% equity at risk (stop-distance based)
 //!   • R-multiple exits: 1/3 at 2R, 1/3 at 4R, trail final 1/3 with no ceiling
 //!   • Trailing stop: breakeven at 1R, trail 1.2×ATR from HWM at 1.5R
@@ -17,11 +17,11 @@ const MIN_CONFIDENCE: f64 = 0.60;
 /// Maximum fraction of equity at risk per individual trade (stop-distance based).
 const MAX_TRADE_HEAT: f64 = 0.05;   // 5 %
 /// Maximum total fraction of equity at risk across all open positions.
+/// This is the primary position budget — the AI sizes each new position so that
+/// total portfolio heat never exceeds this ceiling.  No hard cap on position
+/// count; the heat limit and per-trade Kelly sizing naturally bound how many
+/// positions can coexist at meaningful size.
 const MAX_PORTFOLIO_HEAT: f64 = 0.15;  // 15 %
-/// Maximum number of concurrent open positions.
-const MAX_POSITIONS: usize = 8;
-/// Maximum open positions in the same direction (long OR short).
-const MAX_SAME_DIRECTION: usize = 4;
 /// DCA minimum confidence (slightly higher than new-entry minimum).
 const DCA_MIN_CONFIDENCE: f64 = 0.65;
 /// Circuit-breaker drawdown threshold.  Once peak→current drawdown exceeds
@@ -1545,13 +1545,16 @@ fn portfolio_heat(positions: &[PaperPosition], equity: f64) -> f64 {
 ///   - **Opposite side, confidence < MIN_CONFIDENCE**: ignore (no flip).
 ///   - **Opposite side, confidence ≥ MIN_CONFIDENCE**: close current, open new.
 ///
-/// For a new position, all six guards must pass:
+/// For a new position, all four guards must pass:
 ///   1. `confidence ≥ MIN_CONFIDENCE` (0.68)
-///   2. Open positions < `MAX_POSITIONS` (8)
-///   3. Same-direction positions < `MAX_SAME_DIRECTION` (4)
-///   4. Sufficient free capital (`size_usd ≥ $2`)
-///   5. Per-trade heat ≤ `MAX_TRADE_HEAT` (2% of equity) — scales down if over
-///   6. Portfolio heat < `MAX_PORTFOLIO_HEAT` (8% of equity)
+///   2. Sufficient free capital (`size_usd ≥ $2`)
+///   3. Per-trade heat ≤ `MAX_TRADE_HEAT` (2% of equity) — scales down if over
+///   4. Portfolio heat < `MAX_PORTFOLIO_HEAT` (15% of equity)
+///
+/// There is no hard cap on total position count or per-direction count.
+/// The heat budget and Kelly position sizing are the sole limits: once
+/// 15% of equity is at risk the bot simply waits for a position to close
+/// before opening another, regardless of direction.
 ///
 /// Circuit breaker: if peak→current drawdown > `CB_DRAWDOWN_THRESHOLD` (8%),
 /// position size is multiplied by `CB_SIZE_MULT` (0.35).
@@ -1714,18 +1717,6 @@ async fn execute_paper_trade(
     let pct          = position_size_pct(dec.confidence, &metrics, in_cb);
     let mut size_usd = s.capital * pct;
 
-    // Guard: max MAX_POSITIONS concurrent positions (quality over quantity)
-    if s.positions.len() >= MAX_POSITIONS {
-        info!("⚠ {} skipped — max {} positions open", symbol, MAX_POSITIONS);
-        return;
-    }
-    // Guard: max MAX_SAME_DIRECTION positions per side (prevent directional overexposure)
-    let same_dir = s.positions.iter().filter(|p| p.side == target_side).count();
-    if same_dir >= MAX_SAME_DIRECTION {
-        info!("⚠ {} skipped — already {} {} positions (max {} per direction)",
-              symbol, same_dir, target_side, MAX_SAME_DIRECTION);
-        return;
-    }
     // Guard: min position size
     if size_usd < 2.0 || s.capital < size_usd {
         info!("⚠ {} skipped — insufficient capital (${:.2})", symbol, s.capital);
