@@ -1366,26 +1366,20 @@ async fn analyse_symbol(
         }
     }
 
-    // ── Funding-staleness gate (new entries only) ─────────────────────────
-    // If the funding cache hasn't refreshed in >10 minutes we have no reliable
-    // crowd-positioning data.  Block new entries (BUY/SELL) so we don't open
-    // positions blind.  Position management (exits, trailing stops) already
-    // ran earlier in run_cycle and is unaffected — this only gates new orders.
+    // ── Funding-staleness warning (fail-open) ────────────────────────────
+    // If the funding cache is stale, log a warning but do NOT block entries.
+    // make_decision() already received fund=None (get() returns None when stale)
+    // so the funding signal simply contributes 0 weight — the other 8+ signals
+    // still drive the decision.  Blocking all trades when one optional signal
+    // is unavailable is too conservative.
     if dec.action != "SKIP" && fund_cache.is_stale().await {
         let age = fund_cache.age_secs().await
             .map(|s| format!("{}s ago", s))
             .unwrap_or_else(|| "never fetched".to_string());
         log::warn!(
-            "⚠️  {} → {} gated: funding data stale ({}) — skipping new entry",
+            "⚠️  {} → {} proceeding without funding signal (stale: {})",
             symbol, dec.action, age
         );
-        dec.action     = "SKIP".to_string();
-        dec.rationale  = format!(
-            "Funding gate: crowd-positioning data is stale (last refresh: {}). \
-             New entries blocked until HL funding cache refreshes.",
-            age
-        );
-        dec.confidence = 0.0;
     }
 
     log::debug!("{}: RSI={:.1} trend={:.2}% MACD={:.5} ATR={:.4} → {}",
