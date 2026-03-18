@@ -235,7 +235,7 @@ pub async fn snapshot_daily(
     .await
     .unwrap_or_default()
     .into_iter()
-    .filter_map(|r| r.tenant_id.map(|tid| (tid, r.start_equity_usd)))
+    .map(|r| (r.tenant_id, r.start_equity_usd))
     .collect();
 
     let start_equity_map: std::collections::HashMap<Uuid, rust_decimal::Decimal> =

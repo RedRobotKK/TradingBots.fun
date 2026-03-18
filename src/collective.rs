@@ -30,7 +30,7 @@
 //! The blend ratio is 60% collective / 40% current to prevent sudden swings.
 
 use crate::db::Database;
-use crate::learner::{SignalContribution, SignalWeights};
+use crate::learner::SignalWeights;
 use crate::web_dashboard::PaperPosition;
 use uuid::Uuid;
 
