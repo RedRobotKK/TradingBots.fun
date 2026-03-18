@@ -1,0 +1,58 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT\n                recorded_at,\n                total_aum::float8         AS total_aum,\n                deposited_capital::float8 AS deposited_capital,\n                total_pnl::float8         AS total_pnl,\n                pnl_pct::float8           AS pnl_pct,\n                active_tenant_count       AS active_tenants,\n                open_position_count       AS open_positions\n            FROM  aum_snapshots\n            WHERE recorded_at > now() - make_interval(days => $1)\n            ORDER BY recorded_at ASC\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "recorded_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 1,
+        "name": "total_aum",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 2,
+        "name": "deposited_capital",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 3,
+        "name": "total_pnl",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 4,
+        "name": "pnl_pct",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 5,
+        "name": "active_tenants",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 6,
+        "name": "open_positions",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": [
+      false,
+      null,
+      null,
+      null,
+      null,
+      false,
+      false
+    ]
+  },
+  "hash": "8afb9c7cd6d01e759016cc248535bcc4788e764f7616cb364cd00903e50864e3"
+}

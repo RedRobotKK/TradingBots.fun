@@ -1,0 +1,18 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO leaderboard_snapshots\n                   (tenant_id, campaign_id, snapshot_date, equity_usd, start_equity_usd, trades_in_period)\n               VALUES ($1, $2, CURRENT_DATE, $3, $4, $5)\n               ON CONFLICT (tenant_id, campaign_id, snapshot_date)\n               DO UPDATE SET equity_usd = EXCLUDED.equity_usd,\n                             trades_in_period = EXCLUDED.trades_in_period",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Numeric",
+        "Numeric",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0ffdda56c824416a4ee52a151f8882cef405eff79957d735608d0629056a7d3a"
+}

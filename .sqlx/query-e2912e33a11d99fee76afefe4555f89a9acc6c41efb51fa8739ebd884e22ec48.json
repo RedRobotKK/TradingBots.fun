@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE campaigns SET is_active = FALSE WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e2912e33a11d99fee76afefe4555f89a9acc6c41efb51fa8739ebd884e22ec48"
+}
