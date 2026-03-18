@@ -1857,6 +1857,18 @@ async fn consumer_app_handler(
         ConsumerStateResult::NeedsLogin       => return axum::response::Redirect::to("/login").into_response(),
         ConsumerStateResult::NeedsOnboarding { .. } => return axum::response::Redirect::to("/app/onboarding").into_response(),
     };
+
+    // Redirect to HL wallet setup if the user hasn't completed it yet
+    if let Some(ref tid) = tenant_id {
+        let setup_done = {
+            let tenants = app.tenants.read().await;
+            tenants.get(tid).map(|h| h.config.hl_setup_done()).unwrap_or(true)
+        };
+        if !setup_done {
+            return axum::response::Redirect::to("/app/setup").into_response();
+        }
+    }
+
     let s = state_arc.read().await;
 
     // Resolve tenant tier to determine whether to show ads
@@ -2459,6 +2471,27 @@ async fn auth_session_handler(
         );
         (id, is_new)
     };
+
+    // Restore HL wallet from DB after server restarts (in-memory only, no lock held)
+    if let Some(ref db) = app.db {
+        if let Ok(tid_uuid) = uuid::Uuid::parse_str(tenant_id.as_str()) {
+            if let Ok(Some(row)) = sqlx::query!(
+                "SELECT hl_wallet_address, hl_wallet_key_enc, hl_setup_complete                  FROM tenants WHERE id = $1",
+                tid_uuid
+            )
+            .fetch_optional(db.pool())
+            .await
+            {
+                if let (Some(addr), Some(key)) = (row.hl_wallet_address, row.hl_wallet_key_enc) {
+                    let mut tenants = app.tenants.write().await;
+                    let _ = tenants.setup_hl_wallet(&tenant_id, addr, key);
+                    if row.hl_setup_complete {
+                        let _ = tenants.complete_hl_setup(&tenant_id);
+                    }
+                }
+            }
+        }
+    }
 
     // ── Stamp invite attribution on the tenant row in DB ─────────────────────
     if is_new {
@@ -3145,7 +3178,8 @@ async fn onboarding_handler(
     axum::response::Html(html).into_response()
 }
 
-/// `POST /app/onboarding/accept` — record terms acceptance and redirect to `/app`.
+/// `POST /app/onboarding/accept` — record terms acceptance, auto-generate the
+/// tenant's Hyperliquid trading wallet, and redirect to `/app/setup`.
 async fn onboarding_accept_handler(
     State(app): State<AppState>,
     headers: HeaderMap,
@@ -3157,12 +3191,55 @@ async fn onboarding_accept_handler(
         None    => return axum::response::Redirect::to("/login").into_response(),
     };
 
+    // Accept ToS (idempotent)
     {
         let mut tenants = app.tenants.write().await;
         let _ = tenants.accept_terms(&tid);
     }
 
-    axum::response::Redirect::to("/app").into_response()
+    // Generate HL trading wallet if the tenant doesn't have one yet
+    let needs_wallet = {
+        let tenants = app.tenants.read().await;
+        tenants.get(&tid).map(|h| !h.config.has_hl_wallet()).unwrap_or(false)
+    };
+
+    if needs_wallet {
+        let (address, private_key) = crate::hl_wallet::generate_keypair();
+        let key_enc = crate::hl_wallet::encrypt_key(
+            &private_key, &app.session_secret, tid.as_str(),
+        );
+
+        // Update in-memory tenant
+        {
+            let mut tenants = app.tenants.write().await;
+            let _ = tenants.setup_hl_wallet(&tid, address.clone(), key_enc.clone());
+        }
+
+        // Persist to DB
+        if let Some(ref db) = app.db {
+            if let Ok(tid_uuid) = uuid::Uuid::parse_str(tid.as_str()) {
+                let _ = sqlx::query!(
+                    "UPDATE tenants                      SET hl_wallet_address = $1, hl_wallet_key_enc = $2                      WHERE id = $3",
+                    address, key_enc, tid_uuid,
+                )
+                .execute(db.pool())
+                .await
+                .map_err(|e| log::error!("❌ persist HL wallet: {}", e));
+            }
+        }
+    }
+
+    // If setup already acknowledged on a previous visit, skip straight to /app
+    let setup_done = {
+        let tenants = app.tenants.read().await;
+        tenants.get(&tid).map(|h| h.config.hl_setup_done()).unwrap_or(false)
+    };
+
+    if setup_done {
+        axum::response::Redirect::to("/app").into_response()
+    } else {
+        axum::response::Redirect::to("/app/setup").into_response()
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3183,7 +3260,8 @@ async fn consumer_settings_handler(
     };
 
     let (display_name, email, wallet, tier, trial_days, terms_ts, wallet_ts, hl_balance,
-         net_dep, total_dep, total_with, max_pos, trial_expired) = {
+         net_dep, total_dep, total_with, max_pos, trial_expired,
+         hl_trading_addr, hl_setup_done) = {
         let tenants = app.tenants.read().await;
         let h = match tenants.get(&tid) {
             Some(h) => h,
@@ -3206,6 +3284,8 @@ async fn consumer_settings_handler(
             fund_sum.total_withdrawn,
             h.config.max_positions(),
             h.config.is_trial_expired_free(),
+            h.config.hl_wallet_address.clone(),
+            h.config.hl_setup_done(),
         )
     };
 
@@ -3233,6 +3313,49 @@ async fn consumer_settings_handler(
   Your funds never leave your HL account — we only need the address to query
   your balance and attribute trades to your account.
 </div>"#.to_string()
+    };
+
+    // HL auto-generated trading wallet section (separate from the auth/Privy wallet)
+    let hl_trading_wallet_section = if let Some(ref addr) = hl_trading_addr {
+        let setup_link = if !hl_setup_done {
+            r#"<div class="metric-row" style="margin-top:8px">
+  <span class="ml" style="color:#e3b341">Setup incomplete</span>
+  <span class="mv"><a href="/app/setup" style="color:#58a6ff">Resume setup wizard →</a></span>
+</div>"#
+        } else { "" };
+        format!(r#"
+<div class="card" style="margin-top:16px">
+  <div class="card-label">Your Trading Wallet</div>
+  <p style="font-size:.8rem;color:#8b949e;margin-bottom:12px">
+    This dedicated Hyperliquid wallet was auto-generated for you at sign-up.
+    It is separate from your login wallet and is used exclusively by the bot to
+    sign trades on your behalf.
+  </p>
+  <div class="metric-row">
+    <span class="ml">Address</span>
+    <span class="mv" style="font-family:monospace;font-size:.78rem;word-break:break-all">{addr}</span>
+  </div>
+  {setup_link}
+  <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
+    <a href="https://app.hyperliquid.xyz/portfolio?user={addr}" target="_blank" rel="noopener"
+       class="btn" style="font-size:.82rem;padding:7px 14px;background:#21262d;border:1px solid #30363d">
+      View on HL ↗
+    </a>
+    <a href="/api/hl/wallet/key.json"
+       class="btn btn-green" style="font-size:.82rem;padding:7px 14px">
+      Export Private Key ↓
+    </a>
+  </div>
+  <p class="note" style="margin-top:10px">
+    Store your private key in a password manager or cloud drive (iCloud / Google Drive).
+    You can always re-export it here. Never share it with anyone.
+  </p>
+</div>"#,
+            addr       = addr,
+            setup_link = setup_link,
+        )
+    } else {
+        String::new()
     };
 
     let tier_badge = match tier.as_str() {
@@ -3330,6 +3453,8 @@ async fn consumer_settings_handler(
   </p>
 </div>
 
+{hl_trading_wallet_section}
+
 {upgrade_block}
 
 <p class="note" style="text-align:center;margin-top:12px">
@@ -3337,17 +3462,18 @@ async fn consumer_settings_handler(
   <a href="/auth/logout">sign out</a>.
 </p>
 "#,
-        display_name  = display_name,
-        email         = email,
-        tier_badge    = tier_badge,
-        trial_note    = trial_note,
-        pos_cap_row   = pos_cap_row,
-        terms_ts      = terms_ts,
-        wallet_section= wallet_section,
-        link_label    = if wallet.is_some() { "Update" } else { "Link Wallet" },
-        total_dep     = total_dep,
-        total_with    = total_with,
-        net_dep       = net_dep,
+        display_name              = display_name,
+        email                     = email,
+        tier_badge                = tier_badge,
+        trial_note                = trial_note,
+        pos_cap_row               = pos_cap_row,
+        terms_ts                  = terms_ts,
+        wallet_section            = wallet_section,
+        link_label                = if wallet.is_some() { "Update" } else { "Link Wallet" },
+        total_dep                 = total_dep,
+        total_with                = total_with,
+        net_dep                   = net_dep,
+        hl_trading_wallet_section = hl_trading_wallet_section,
         upgrade_block = if tier == "Free" && trial_expired {
             // Trial has expired — hard upgrade call-to-action
             r#"<div class="card" style="border-color:#f85149aa;background:#f8514906">
@@ -4297,6 +4423,490 @@ fn base64_encode(input: &str) -> String {
     out
 }
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  HL Wallet setup  (/app/setup)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// `GET /app/setup` — three-step wallet setup page shown after ToS acceptance.
+///
+/// Step 1 — Your wallet (address + private key + download)
+/// Step 2 — Fund it (bridge USDC from Arbitrum)
+/// Step 3 — Confirmed (balance detected / dashboard redirect)
+async fn hl_setup_handler(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let tid = match get_session_tenant_id(&headers, &app.session_secret) {
+        Some(t) => t,
+        None    => return axum::response::Redirect::to("/login").into_response(),
+    };
+
+    // Terms must be accepted before setup
+    let (hl_address, key_enc, setup_complete) = {
+        let tenants = app.tenants.read().await;
+        match tenants.get(&tid) {
+            Some(h) => (
+                h.config.hl_wallet_address.clone(),
+                h.config.hl_wallet_key_enc.clone(),
+                h.config.hl_setup_complete,
+            ),
+            None => return axum::response::Redirect::to("/login").into_response(),
+        }
+    };
+
+    // If wallet not generated yet, go back to ToS
+    let (address, key_enc_str) = match (hl_address, key_enc) {
+        (Some(a), Some(k)) => (a, k),
+        _ => return axum::response::Redirect::to("/app/onboarding").into_response(),
+    };
+
+    // Decrypt private key for display — only materialised in memory here
+    let private_key = match crate::hl_wallet::decrypt_key(
+        &key_enc_str, &app.session_secret, tid.as_str(),
+    ) {
+        Ok(k)  => k,
+        Err(e) => {
+            log::error!("❌ HL wallet key decrypt failed for {}: {}", tid, e);
+            return (axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Key decryption failed — please contact support").into_response();
+        }
+    };
+
+    let setup_done_js = if setup_complete { "true" } else { "false" };
+
+    let html = format!(r###"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TradingBots.fun · Wallet Setup</title>
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{background:#0d1117;color:#c9d1d9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+      min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;
+      padding:24px;
+      background-image:linear-gradient(rgba(88,166,255,.03) 1px,transparent 1px),
+                       linear-gradient(90deg,rgba(88,166,255,.03) 1px,transparent 1px);
+      background-size:44px 44px}}
+.wrap{{width:100%;max-width:520px;display:flex;flex-direction:column;gap:16px}}
+/* progress bar */
+.prog{{display:flex;align-items:center;gap:0;margin-bottom:4px}}
+.ps{{display:flex;align-items:center;gap:8px;flex:1}}
+.ps-dot{{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;
+          justify-content:center;font-size:.78rem;font-weight:700;flex-shrink:0;transition:.3s}}
+.ps-dot.done{{background:#3fb950;color:#0d1117}}
+.ps-dot.active{{background:#58a6ff;color:#0d1117}}
+.ps-dot.idle{{background:#21262d;color:#484f58}}
+.ps-label{{font-size:.74rem;color:#6e7681;white-space:nowrap}}
+.ps-line{{flex:1;height:2px;background:#21262d;margin:0 4px}}
+.ps-line.done{{background:#3fb950}}
+/* cards */
+.card{{background:#161b22;border:1px solid #21262d;border-radius:14px;padding:24px;
+       display:flex;flex-direction:column;gap:16px}}
+.card-title{{font-size:1rem;font-weight:700;color:#e6edf3;display:flex;align-items:center;gap:8px}}
+.card-sub{{font-size:.78rem;color:#6e7681;line-height:1.55}}
+/* address / key display */
+.mono-box{{background:#010409;border:1px solid #30363d;border-radius:8px;padding:12px 14px;
+           font-family:'JetBrains Mono',Consolas,monospace;font-size:.82rem;color:#58a6ff;
+           word-break:break-all;line-height:1.5;position:relative}}
+.mono-box.key-box{{color:#f0883e;border-color:rgba(240,136,62,.3);background:rgba(240,136,62,.04)}}
+.mono-label{{font-size:.68rem;color:#484f58;font-weight:600;letter-spacing:.5px;
+             text-transform:uppercase;margin-bottom:4px}}
+/* buttons */
+.btn{{display:block;width:100%;padding:13px;border-radius:9px;font-size:.92rem;font-weight:700;
+      cursor:pointer;border:none;transition:.15s;letter-spacing:.01em;text-align:center;text-decoration:none}}
+.btn-g{{background:#3fb950;color:#0d1117}}
+.btn-g:hover:not(:disabled){{background:#52c965}}
+.btn-g:disabled{{opacity:.4;cursor:not-allowed}}
+.btn-outline{{background:transparent;border:1px solid #30363d;color:#8b949e;font-size:.85rem;padding:10px}}
+.btn-outline:hover{{border-color:#58a6ff;color:#58a6ff}}
+.btn-row{{display:flex;gap:10px}}
+.btn-row .btn{{flex:1}}
+/* warning box */
+.warn{{background:rgba(248,81,73,.06);border:1px solid rgba(248,81,73,.22);
+       border-radius:8px;padding:12px 14px;font-size:.76rem;color:#8b949e;line-height:1.6}}
+.warn strong{{color:#f85149}}
+/* balance indicator */
+.bal-check{{display:flex;align-items:center;gap:10px;padding:12px 14px;
+            background:#010409;border:1px solid #30363d;border-radius:8px}}
+.spinner{{width:18px;height:18px;border:2px solid #30363d;border-top-color:#58a6ff;
+          border-radius:50%;animation:spin .8s linear infinite;flex-shrink:0}}
+@keyframes spin{{to{{transform:rotate(360deg)}}}}
+.bal-text{{font-size:.82rem;color:#8b949e}}
+.bal-amount{{font-size:.9rem;font-weight:700;color:#3fb950}}
+.hidden{{display:none!important}}
+/* bridge chips */
+.chips{{display:flex;gap:8px;flex-wrap:wrap}}
+.chip{{padding:6px 14px;border-radius:20px;font-size:.78rem;font-weight:600;
+       background:#21262d;color:#8b949e;border:1px solid #30363d}}
+.chip.rec{{border-color:#58a6ff;color:#58a6ff;background:rgba(88,166,255,.08)}}
+@media(max-width:480px){{
+  .btn-row{{flex-direction:column}}
+  .prog{{gap:2px}}
+  .ps-label{{display:none}}
+}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- Header -->
+  <div style="text-align:center;margin-bottom:8px">
+    <div style="font-size:1.1rem;font-weight:800;color:#e6edf3;margin-bottom:3px">
+      TradingBots<span style="color:#3fb950">.fun</span>
+    </div>
+    <div style="font-size:.75rem;color:#484f58">Wallet setup — takes about 2 minutes</div>
+  </div>
+
+  <!-- Progress -->
+  <div class="prog">
+    <div class="ps">
+      <div class="ps-dot active" id="dot1">1</div>
+      <span class="ps-label">Your wallet</span>
+    </div>
+    <div class="ps-line" id="line1"></div>
+    <div class="ps">
+      <div class="ps-dot idle" id="dot2">2</div>
+      <span class="ps-label">Add funds</span>
+    </div>
+    <div class="ps-line" id="line2"></div>
+    <div class="ps">
+      <div class="ps-dot idle" id="dot3">3</div>
+      <span class="ps-label">Done</span>
+    </div>
+  </div>
+
+  <!-- Step 1: Wallet keys -->
+  <div class="card" id="step1">
+    <div class="card-title">🔑 Your Hyperliquid Trading Wallet</div>
+    <div class="card-sub">
+      A dedicated wallet has been generated for you. This wallet holds your funds on Hyperliquid
+      and is used to sign every trade the bot makes on your behalf.
+    </div>
+
+    <div>
+      <div class="mono-label">Wallet address (public)</div>
+      <div class="mono-box" id="addr-box">{address}</div>
+    </div>
+
+    <div>
+      <div class="mono-label">Private key — save this somewhere safe</div>
+      <div class="mono-box key-box" id="key-box">{private_key}</div>
+    </div>
+
+    <div class="warn">
+      <strong>⚠ Back up your private key now.</strong>
+      Anyone who has it can access your wallet. Save it to your iCloud Drive, Google Drive,
+      or a password manager — then click the button below to continue.
+      <br><br>You can also re-export it any time from <b>Settings → Export Private Key</b>.
+    </div>
+
+    <div class="btn-row">
+      <button class="btn btn-outline" onclick="downloadKey()">⬇ Download .json</button>
+      <button class="btn btn-g" onclick="copyKey()">Copy key</button>
+    </div>
+    <button class="btn btn-g" id="ack-btn" onclick="goStep2()">
+      ✓ I&apos;ve saved my private key — continue
+    </button>
+  </div>
+
+  <!-- Step 2: Fund wallet (hidden until step 1 acked) -->
+  <div class="card hidden" id="step2">
+    <div class="card-title">💸 Fund Your Trading Account</div>
+    <div class="card-sub">
+      Deposit USDC from Arbitrum directly to your Hyperliquid account.
+      The bot needs at least <strong style="color:#e6edf3">$50 USDC</strong> to open its first position.
+    </div>
+
+    <div>
+      <div class="mono-label">Your Hyperliquid deposit address</div>
+      <div class="mono-box" style="cursor:pointer" onclick="copyAddr()" title="Click to copy">
+        {address}
+        <span style="float:right;font-size:.7rem;color:#484f58" id="copy-addr-hint">click to copy</span>
+      </div>
+    </div>
+
+    <div>
+      <div class="mono-label">Suggested amounts</div>
+      <div class="chips">
+        <div class="chip">$50</div>
+        <div class="chip rec">$100 ★</div>
+        <div class="chip">$250</div>
+        <div class="chip">$500</div>
+      </div>
+    </div>
+
+    <a class="btn btn-g" href="https://app.hyperliquid.xyz/deposit" target="_blank"
+       style="text-align:center">
+      Open Hyperliquid Bridge →
+    </a>
+
+    <div class="card-sub" style="margin-top:-4px">
+      Already have USDC on Arbitrum? Paste your deposit address into the Hyperliquid bridge.
+      Funds typically arrive within 2 minutes.
+      <br><br>
+      New to crypto?
+      <a href="https://www.coinbase.com" target="_blank" style="color:#58a6ff">Buy USDC on Coinbase</a>
+      → send to Arbitrum → bridge to Hyperliquid.
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <div class="bal-check">
+        <div class="spinner" id="spinner"></div>
+        <div>
+          <div class="bal-text" id="bal-text">Checking for deposits…</div>
+          <div class="bal-amount hidden" id="bal-amount"></div>
+        </div>
+      </div>
+      <button class="btn btn-outline" onclick="goStep3()" style="margin-top:4px">
+        Skip for now, go to dashboard →
+      </button>
+    </div>
+  </div>
+
+  <!-- Step 3: Done -->
+  <div class="card hidden" id="step3">
+    <div class="card-title">🎉 You&apos;re all set!</div>
+    <div class="card-sub">
+      Your trading wallet is ready. Head to the dashboard to activate your bots and
+      start tracking your positions.
+    </div>
+    <a href="/app" class="btn btn-g">Go to dashboard →</a>
+  </div>
+
+</div>
+
+<script>
+const WALLET_ADDRESS = {address:?};
+const PRIVATE_KEY    = {private_key:?};
+const SETUP_DONE     = {setup_done_js};
+
+function downloadKey() {{
+  const data = {{
+    platform:   "TradingBots.fun",
+    address:    WALLET_ADDRESS,
+    privateKey: PRIVATE_KEY,
+    network:    "Hyperliquid (EVM-compatible)",
+    createdAt:  new Date().toISOString(),
+    note:       "Keep this file safe. Import into MetaMask to access your wallet externally.",
+  }};
+  const blob = new Blob([JSON.stringify(data, null, 2)], {{type: 'application/json'}});
+  const a    = document.createElement('a');
+  a.href     = URL.createObjectURL(blob);
+  a.download = 'tradingbots-wallet.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}}
+
+function copyKey() {{
+  navigator.clipboard.writeText(PRIVATE_KEY).then(() => {{
+    const btn = document.querySelector('#step1 .btn-row .btn-g');
+    btn.textContent = '✓ Copied!';
+    setTimeout(() => btn.textContent = 'Copy key', 2000);
+  }});
+}}
+
+function copyAddr() {{
+  navigator.clipboard.writeText(WALLET_ADDRESS).then(() => {{
+    document.getElementById('copy-addr-hint').textContent = '✓ copied';
+    setTimeout(() => document.getElementById('copy-addr-hint').textContent = 'click to copy', 2000);
+  }});
+}}
+
+function setStep(n) {{
+  for (let i = 1; i <= 3; i++) {{
+    document.getElementById('step'+i).classList.toggle('hidden', i !== n);
+    const dot  = document.getElementById('dot'+i);
+    dot.className = 'ps-dot ' + (i < n ? 'done' : i === n ? 'active' : 'idle');
+    dot.textContent = i < n ? '✓' : i;
+    if (i < 3) {{
+      document.getElementById('line'+i).className = 'ps-line' + (i < n ? ' done' : '');
+    }}
+  }}
+}}
+
+async function goStep2() {{
+  // Mark setup acknowledged on server
+  await fetch('/app/setup/complete', {{method:'POST'}}).catch(()=>{{}});
+  setStep(2);
+  startPolling();
+}}
+
+function goStep3() {{ setStep(3); }}
+
+// Balance polling
+let pollTimer;
+function startPolling() {{
+  pollTimer = setInterval(checkBalance, 15000);
+  checkBalance();
+}}
+
+async function checkBalance() {{
+  try {{
+    const res  = await fetch('/api/hl/balance');
+    const data = await res.json();
+    const bal  = data.balance_usd || 0;
+    if (bal > 0) {{
+      clearInterval(pollTimer);
+      document.getElementById('spinner').style.display = 'none';
+      document.getElementById('bal-text').textContent = 'Funds detected!';
+      const amtEl = document.getElementById('bal-amount');
+      amtEl.textContent = '$' + bal.toFixed(2) + ' USDC on Hyperliquid';
+      amtEl.classList.remove('hidden');
+      setTimeout(() => setStep(3), 1500);
+    }} else {{
+      document.getElementById('bal-text').textContent = 'Watching for deposits…';
+    }}
+  }} catch(e) {{}}
+}}
+
+// Auto-start on step 2 if setup was already done on a previous visit
+if (SETUP_DONE) {{
+  setStep(2);
+  startPolling();
+}}
+</script>
+</body></html>"###,
+        address      = address,
+        private_key  = private_key,
+        setup_done_js = setup_done_js,
+    );
+
+    axum::response::Response::builder()
+        .status(200)
+        .header("Content-Type", "text/html; charset=utf-8")
+        .header("Cache-Control", "no-store, no-cache, must-revalidate")
+        .body(axum::body::Body::from(html))
+        .unwrap_or_else(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+/// `POST /app/setup/complete` — mark the HL wallet setup as acknowledged.
+/// Called by the frontend when the user confirms they have saved their private key.
+async fn hl_setup_complete_handler(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let tid = match get_session_tenant_id(&headers, &app.session_secret) {
+        Some(t) => t,
+        None    => return axum::http::StatusCode::UNAUTHORIZED.into_response(),
+    };
+
+    {
+        let mut tenants = app.tenants.write().await;
+        let _ = tenants.complete_hl_setup(&tid);
+    }
+
+    if let Some(ref db) = app.db {
+        if let Ok(tid_uuid) = uuid::Uuid::parse_str(tid.as_str()) {
+            let _ = sqlx::query!(
+                "UPDATE tenants SET hl_setup_complete = true WHERE id = $1",
+                tid_uuid,
+            )
+            .execute(db.pool())
+            .await
+            .map_err(|e| log::error!("❌ hl_setup_complete persist: {}", e));
+        }
+    }
+
+    axum::http::StatusCode::OK.into_response()
+}
+
+/// `GET /api/hl/balance` — return the live Hyperliquid cleared balance for the
+/// authenticated tenant.  Used by the setup page to detect first deposits.
+async fn hl_balance_api_handler(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let tid = match get_session_tenant_id(&headers, &app.session_secret) {
+        Some(t) => t,
+        None    => return axum::http::StatusCode::UNAUTHORIZED.into_response(),
+    };
+
+    let address = {
+        let tenants = app.tenants.read().await;
+        tenants.get(&tid).and_then(|h| h.config.hl_wallet_address.clone())
+    };
+
+    let balance_usd = match address {
+        Some(ref addr) => crate::hl_wallet::check_balance(addr).await,
+        None           => 0.0,
+    };
+
+    axum::response::Json(serde_json::json!({{
+        "balance_usd": balance_usd,
+        "address":     address,
+    }})).into_response()
+}
+
+/// `GET /api/hl/wallet/key.json` — export the tenant's HL trading wallet as a
+/// downloadable JSON file.  Requires an active session (authenticated user only).
+async fn hl_export_key_handler(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let tid = match get_session_tenant_id(&headers, &app.session_secret) {
+        Some(t) => t,
+        None    => return axum::http::StatusCode::UNAUTHORIZED.into_response(),
+    };
+
+    let (address, key_enc) = {
+        let tenants = app.tenants.read().await;
+        match tenants.get(&tid) {
+            Some(h) => (
+                h.config.hl_wallet_address.clone(),
+                h.config.hl_wallet_key_enc.clone(),
+            ),
+            None => return axum::http::StatusCode::NOT_FOUND.into_response(),
+        }
+    };
+
+    let (addr, enc) = match (address, key_enc) {
+        (Some(a), Some(k)) => (a, k),
+        _ => return (axum::http::StatusCode::NOT_FOUND,
+                     "No HL wallet found for this account").into_response(),
+    };
+
+    let private_key = match crate::hl_wallet::decrypt_key(&enc, &app.session_secret, tid.as_str()) {
+        Ok(k)  => k,
+        Err(e) => {
+            log::error!("❌ HL key export decrypt failed for {}: {}", tid, e);
+            return (axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Key decryption failed").into_response();
+        }
+    };
+
+    let payload = serde_json::json!({{
+        "platform":   "TradingBots.fun",
+        "address":    addr,
+        "privateKey": private_key,
+        "network":    "Hyperliquid (EVM-compatible)",
+        "exportedAt": chrono::Utc::now().to_rfc3339(),
+        "note": "Keep this file safe. Import into MetaMask or any EVM wallet to access your Hyperliquid account externally."
+    }});
+
+    let json_str = serde_json::to_string_pretty(&payload)
+        .unwrap_or_else(|_| "{{}}".to_string());
+
+    axum::response::Response::builder()
+        .status(200)
+        .header("Content-Type", "application/json")
+        .header("Content-Disposition", "attachment; filename="tradingbots-wallet.json"")
+        .header("Cache-Control", "no-store")
+        .body(axum::body::Body::from(json_str))
+        .unwrap_or_else(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 pub async fn serve(app_state: AppState, port: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let app = Router::new()
         .route("/", get(dashboard_handler))
@@ -4318,6 +4928,10 @@ pub async fn serve(app_state: AppState, port: u16) -> Result<(), Box<dyn std::er
         // ── Onboarding / Terms wall ─────────────────────────────────────────
         .route("/app/onboarding",       get(onboarding_handler))
         .route("/app/onboarding/accept",post(onboarding_accept_handler))
+        .route("/app/setup",             get(hl_setup_handler))
+        .route("/app/setup/complete",    post(hl_setup_complete_handler))
+        .route("/api/hl/balance",        get(hl_balance_api_handler))
+        .route("/api/hl/wallet/key.json",get(hl_export_key_handler))
         // ── Consumer settings ───────────────────────────────────────────────
         .route("/app/settings",         get(consumer_settings_handler))
         .route("/app/settings/wallet",  post(consumer_settings_wallet_handler))

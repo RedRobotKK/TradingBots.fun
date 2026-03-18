@@ -116,6 +116,25 @@ pub struct TenantConfig {
     /// This is the *cleared* balance — NOT the mark-to-market equity.
     pub hl_balance_usd:     f64,
 
+    // ── Auto-generated HL trading wallet ─────────────────────────────────
+    //
+    // A dedicated secp256k1 keypair is generated at onboarding and stored here.
+    // It is SEPARATE from the Privy authentication identity (`wallet_address`).
+    // The bot signs all HL orders with this key.
+
+    /// EIP-55 checksum address of the tenant's auto-generated HL trading wallet.
+    /// `None` until the onboarding wallet-setup step has been completed.
+    pub hl_wallet_address:  Option<String>,
+
+    /// AES-256-GCM encrypted private key (`nonce_hex:ciphertext_hex`).
+    /// Keyed from `SESSION_SECRET || "hl-wallet:" || tenant_id`.
+    /// `None` until the wallet is generated.  **Never logged.**
+    pub hl_wallet_key_enc:  Option<String>,
+
+    /// True once the user has acknowledged their private key and seen the
+    /// funding instructions.  Gates the /app/setup redirect on returning visits.
+    pub hl_setup_complete:  bool,
+
     // ── Acquisition attribution ───────────────────────────────────────────
 
     /// First-touch acquisition source captured at TRIAL_START.
@@ -150,6 +169,9 @@ impl TenantConfig {
             terms_accepted_at:  None,
             wallet_linked_at:   None,
             hl_balance_usd:     0.0,
+            hl_wallet_address:  None,
+            hl_wallet_key_enc:  None,
+            hl_setup_complete:  false,
             referral_source:    None,
             hl_referred:        false,
             utm_campaign:       None,
@@ -173,6 +195,9 @@ impl TenantConfig {
             terms_accepted_at:  None,
             wallet_linked_at:   None,
             hl_balance_usd:     0.0,
+            hl_wallet_address:  None,
+            hl_wallet_key_enc:  None,
+            hl_setup_complete:  false,
             referral_source:    None,
             hl_referred:        false,
             utm_campaign:       None,
@@ -253,6 +278,19 @@ impl TenantConfig {
             && self.trial_ends_at
                 .map(|exp| Utc::now() >= exp)
                 .unwrap_or(true) // no trial at all → treat as expired
+    }
+
+    // ── HL wallet helpers ─────────────────────────────────────────────────
+
+    /// `true` once the tenant's Hyperliquid trading wallet has been generated.
+    pub fn has_hl_wallet(&self) -> bool {
+        self.hl_wallet_address.is_some()
+    }
+
+    /// `true` once the user has acknowledged the private key backup step.
+    /// Until this is true, the `/app` route redirects to `/app/setup`.
+    pub fn hl_setup_done(&self) -> bool {
+        self.hl_setup_complete
     }
 }
 
@@ -507,6 +545,37 @@ impl TenantManager {
         let prev = handle.config.hl_balance_usd;
         handle.config.hl_balance_usd = new_balance;
         Ok(prev)
+    }
+
+    // ── HL wallet management ──────────────────────────────────────────────
+
+    /// Store the auto-generated HL trading wallet on first onboarding.
+    ///
+    /// `address`  — EIP-55 checksum address (0x…).
+    /// `key_enc`  — AES-256-GCM encrypted private key from `hl_wallet::encrypt_key`.
+    ///
+    /// Idempotent: calling again with the same address is a no-op.
+    pub fn setup_hl_wallet(
+        &mut self,
+        id:      &TenantId,
+        address: String,
+        key_enc: String,
+    ) -> Result<()> {
+        let handle = self.tenants.get_mut(id)
+            .ok_or_else(|| anyhow!("Tenant {} not found", id))?;
+        if handle.config.hl_wallet_address.is_none() {
+            handle.config.hl_wallet_address = Some(address);
+            handle.config.hl_wallet_key_enc = Some(key_enc);
+        }
+        Ok(())
+    }
+
+    /// Mark the HL wallet setup as complete (user has acknowledged their key).
+    pub fn complete_hl_setup(&mut self, id: &TenantId) -> Result<()> {
+        let handle = self.tenants.get_mut(id)
+            .ok_or_else(|| anyhow!("Tenant {} not found", id))?;
+        handle.config.hl_setup_complete = true;
+        Ok(())
     }
 }
 

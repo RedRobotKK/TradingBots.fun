@@ -64,6 +64,7 @@ mod fund_tracker;
 mod funnel;
 mod invite;
 mod leaderboard;
+mod hl_wallet;
 mod mailer;
 mod correlation;
 mod notifier;
