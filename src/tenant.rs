@@ -150,57 +150,83 @@ pub struct TenantConfig {
 
     /// UTM campaign tag from the signup landing page (for campaign drill-down).
     pub utm_campaign:       Option<String>,
+
+    // ── Investment thesis constraints ─────────────────────────────────────
+    //
+    // User-entered trading constraints from the floating AI bar.
+    // All are `None` by default (AI decides everything).
+
+    /// Free-form text of the last accepted command, e.g. "only meme coins max 3x leverage".
+    pub investment_thesis:      Option<String>,
+
+    /// Comma-separated symbol whitelist, e.g. "BTC,ETH,SOL".
+    /// Stored as a String for easy DB round-trip; parsed on read.
+    pub symbol_whitelist:       Option<String>,
+
+    /// Named sector filter, e.g. "meme", "l1", "defi".
+    pub sector_filter:          Option<String>,
+
+    /// Maximum leverage the bot may apply for this tenant.
+    pub max_leverage_override:  Option<f64>,
 }
 
 impl TenantConfig {
     pub fn paper(name: &str, capital: f64) -> Self {
         TenantConfig {
-            display_name:       name.to_string(),
-            email:              None,
-            privy_did:          None,
-            stripe_customer:    None,
-            stripe_sub_id:      None,
-            initial_capital:    capital,
-            wallet_address:     None,
-            secret_key:         None,
-            tier:               TenantTier::Free,
-            live_trading:       false,
-            trial_ends_at:      None,
-            terms_accepted_at:  None,
-            wallet_linked_at:   None,
-            hl_balance_usd:     0.0,
-            hl_wallet_address:  None,
-            hl_wallet_key_enc:  None,
-            hl_setup_complete:  false,
-            referral_source:    None,
-            hl_referred:        false,
-            utm_campaign:       None,
+            display_name:           name.to_string(),
+            email:                  None,
+            privy_did:              None,
+            stripe_customer:        None,
+            stripe_sub_id:          None,
+            initial_capital:        capital,
+            wallet_address:         None,
+            secret_key:             None,
+            tier:                   TenantTier::Free,
+            live_trading:           false,
+            trial_ends_at:          None,
+            terms_accepted_at:      None,
+            wallet_linked_at:       None,
+            hl_balance_usd:         0.0,
+            hl_wallet_address:      None,
+            hl_wallet_key_enc:      None,
+            hl_setup_complete:      false,
+            referral_source:        None,
+            hl_referred:            false,
+            utm_campaign:           None,
+            investment_thesis:      None,
+            symbol_whitelist:       None,
+            sector_filter:          None,
+            max_leverage_override:  None,
         }
     }
 
     #[allow(dead_code)]
     pub fn live(name: &str, capital: f64, wallet: &str, secret: &str) -> Self {
         TenantConfig {
-            display_name:       name.to_string(),
-            email:              None,
-            privy_did:          None,
-            stripe_customer:    None,
-            stripe_sub_id:      None,
-            initial_capital:    capital,
-            wallet_address:     Some(wallet.to_string()),
-            secret_key:         Some(secret.to_string()),
-            tier:               TenantTier::Pro,
-            live_trading:       true,
-            trial_ends_at:      None,
-            terms_accepted_at:  None,
-            wallet_linked_at:   None,
-            hl_balance_usd:     0.0,
-            hl_wallet_address:  None,
-            hl_wallet_key_enc:  None,
-            hl_setup_complete:  false,
-            referral_source:    None,
-            hl_referred:        false,
-            utm_campaign:       None,
+            display_name:           name.to_string(),
+            email:                  None,
+            privy_did:              None,
+            stripe_customer:        None,
+            stripe_sub_id:          None,
+            initial_capital:        capital,
+            wallet_address:         Some(wallet.to_string()),
+            secret_key:             Some(secret.to_string()),
+            tier:                   TenantTier::Pro,
+            live_trading:           true,
+            trial_ends_at:          None,
+            terms_accepted_at:      None,
+            wallet_linked_at:       None,
+            hl_balance_usd:         0.0,
+            hl_wallet_address:      None,
+            hl_wallet_key_enc:      None,
+            hl_setup_complete:      false,
+            referral_source:        None,
+            hl_referred:            false,
+            utm_campaign:           None,
+            investment_thesis:      None,
+            symbol_whitelist:       None,
+            sector_filter:          None,
+            max_leverage_override:  None,
         }
     }
 
@@ -576,6 +602,82 @@ impl TenantManager {
             .ok_or_else(|| anyhow!("Tenant {} not found", id))?;
         handle.config.hl_setup_complete = true;
         Ok(())
+    }
+
+    // ── Investment thesis ─────────────────────────────────────────────────────
+
+    /// Apply parsed thesis constraints to the in-memory tenant config.
+    ///
+    /// Pass `None` for any field you do not want to overwrite.
+    /// A full reset (all `None`) clears all constraints.
+    pub fn update_thesis(
+        &mut self,
+        id:                     &TenantId,
+        investment_thesis:      Option<String>,
+        symbol_whitelist:       Option<String>,    // comma-separated, e.g. "BTC,ETH"
+        sector_filter:          Option<String>,
+        max_leverage_override:  Option<f64>,
+    ) -> Result<()> {
+        let handle = self.tenants.get_mut(id)
+            .ok_or_else(|| anyhow!("Tenant {} not found", id))?;
+        handle.config.investment_thesis     = investment_thesis;
+        handle.config.symbol_whitelist      = symbol_whitelist;
+        handle.config.sector_filter         = sector_filter;
+        handle.config.max_leverage_override = max_leverage_override;
+        log::info!("🎯 Tenant {} thesis updated: {:?}", id, handle.config.investment_thesis);
+        Ok(())
+    }
+
+    /// Build a `ThesisConstraints` from a tenant's stored config.
+    ///
+    /// Returns `Default::default()` (no constraints) if the tenant is not found.
+    pub fn thesis_constraints(&self, id: &TenantId) -> crate::thesis::ThesisConstraints {
+        let Some(handle) = self.tenants.get(id) else {
+            return crate::thesis::ThesisConstraints::default();
+        };
+        let cfg = &handle.config;
+
+        // Rebuild symbol whitelist from comma-separated string
+        let symbol_whitelist = cfg.symbol_whitelist.as_ref().map(|s| {
+            s.split(',')
+                .map(|t| t.trim().to_ascii_uppercase())
+                .filter(|t| !t.is_empty())
+                .collect::<Vec<_>>()
+        });
+
+        let summary = {
+            let mut parts: Vec<String> = Vec::new();
+            if let Some(ref list) = symbol_whitelist {
+                parts.push(format!("Only: {}", list.join(" · ")));
+            } else if let Some(ref sector) = cfg.sector_filter {
+                let label = match sector.as_str() {
+                    "meme" => "Meme coins",
+                    "l1"   => "Layer-1",
+                    "l2"   => "Layer-2",
+                    "defi" => "DeFi",
+                    "rwa"  => "RWA",
+                    "ai"   => "AI coins",
+                    other  => other,
+                };
+                parts.push(label.to_string());
+            }
+            if let Some(lev) = cfg.max_leverage_override {
+                if (lev - lev.floor()).abs() < 0.01 {
+                    parts.push(format!("max {}×", lev as u32));
+                } else {
+                    parts.push(format!("max {:.1}×", lev));
+                }
+            }
+            if parts.is_empty() { None } else { Some(parts.join(" · ")) }
+        };
+
+        crate::thesis::ThesisConstraints {
+            summary,
+            symbol_whitelist,
+            sector_filter:          cfg.sector_filter.clone(),
+            max_leverage_override:  cfg.max_leverage_override,
+            thesis_text:            cfg.investment_thesis.clone(),
+        }
     }
 }
 

@@ -72,6 +72,9 @@ pub struct AppState {
     /// Stripe Price ID for the $9.95 first-month intro offer sent to expired-trial users.
     /// When set, `/billing/checkout?promo=1` substitutes this for the standard price.
     pub stripe_promo_price_id: Option<String>,
+    /// Global investment thesis constraints — updated by the floating AI bar,
+    /// consumed by `run_cycle` to filter candidates and clamp leverage.
+    pub global_thesis: std::sync::Arc<tokio::sync::RwLock<crate::thesis::ThesisConstraints>>,
 }
 
 // ─────────────────────────────── Serde defaults ──────────────────────────────
@@ -1836,12 +1839,117 @@ fn consumer_shell_open(title: &str, active: &str) -> String {
 
 fn consumer_shell_close() -> &'static str {
     r#"</div>
-<footer style="text-align:center;padding:32px 16px 24px;font-size:.72rem;color:#484f58;
+<footer style="text-align:center;padding:32px 16px 80px;font-size:.72rem;color:#484f58;
                border-top:1px solid #21262d;margin-top:24px">
   &copy; 2026 TradingBots Ltd. &nbsp;&middot;&nbsp;
   <a href="https://tradingbots.fun" style="color:#484f58;text-decoration:none">tradingbots.fun</a> &nbsp;&middot;&nbsp;
   <a href="/app/onboarding" style="color:#484f58;text-decoration:none">Terms &amp; Risk Disclosure</a>
 </footer>
+
+<!-- ── Floating AI Thesis Bar ─────────────────────────────────────────── -->
+<div id="thesis-bar" style="
+  position:fixed;bottom:0;left:0;right:0;z-index:9999;
+  background:rgba(13,17,23,0.92);
+  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  border-top:1px solid #30363d;
+  padding:10px 16px 12px;
+  display:flex;flex-direction:column;gap:6px;
+">
+  <!-- Active thesis chip (hidden when empty) -->
+  <div id="thesis-chip" style="display:none;align-items:center;gap:6px;font-size:.72rem;">
+    <span style="color:#8b949e">Active:</span>
+    <span id="thesis-chip-text" style="
+      background:#1f6feb22;border:1px solid #1f6feb88;color:#58a6ff;
+      padding:2px 8px;border-radius:10px;font-size:.70rem;
+    "></span>
+    <button onclick="sendThesisCmd('reset')" style="
+      background:none;border:none;color:#8b949e;cursor:pointer;
+      font-size:.68rem;padding:0 4px;line-height:1.4;
+    " title="Clear thesis">✕</button>
+  </div>
+
+  <!-- Input row -->
+  <div style="display:flex;gap:8px;align-items:center;">
+    <span style="font-size:1rem;flex-shrink:0;">🤖</span>
+    <input id="thesis-input" type="text"
+      placeholder='e.g. "only BTC ETH SOL", "meme coins max 3x", "reset"'
+      style="
+        flex:1;background:#161b22;border:1px solid #30363d;border-radius:6px;
+        padding:7px 12px;color:#e6edf3;font-size:.82rem;outline:none;
+        font-family:inherit;
+      "
+      onkeydown="if(event.key==='Enter')submitThesis()"
+    />
+    <button onclick="submitThesis()" style="
+      background:#238636;border:none;border-radius:6px;
+      color:#fff;font-size:.80rem;padding:7px 14px;cursor:pointer;
+      white-space:nowrap;font-family:inherit;
+    ">Send</button>
+  </div>
+
+  <!-- Response panel (slides in after submit) -->
+  <div id="thesis-response" style="
+    display:none;
+    background:#161b22;border:1px solid #21262d;border-radius:6px;
+    padding:10px 14px;font-size:.80rem;color:#8b949e;
+    max-height:120px;overflow-y:auto;
+    line-height:1.5;
+  "></div>
+</div>
+
+<script>
+(function() {
+  // Load current thesis on page load
+  fetch('/api/thesis').then(r=>r.json()).then(d=>{
+    if(d.summary) showChip(d.summary);
+  }).catch(()=>{});
+
+  window.submitThesis = function() {
+    var inp = document.getElementById('thesis-input');
+    var cmd = (inp.value||'').trim();
+    if(!cmd) return;
+    sendThesisCmd(cmd);
+    inp.value = '';
+  };
+
+  window.sendThesisCmd = function(cmd) {
+    var resp = document.getElementById('thesis-response');
+    resp.style.display = 'block';
+    resp.textContent = '⏳ Processing…';
+    fetch('/api/thesis', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({command: cmd})
+    }).then(r=>r.json()).then(d=>{
+      if(d.type === 'query') {
+        // Trade query response
+        resp.innerHTML = '📋 <b>Recent trades:</b><br>' + (d.message || 'No trades found');
+      } else if(d.summary) {
+        resp.textContent = '✅ ' + d.message;
+        showChip(d.summary);
+      } else {
+        resp.textContent = '✅ ' + (d.message || 'Thesis cleared — AI decides everything');
+        clearChip();
+      }
+      setTimeout(()=>{ resp.style.display='none'; }, 4000);
+    }).catch(()=>{
+      resp.textContent = '⚠ Could not update thesis. Please try again.';
+    });
+  };
+
+  function showChip(summary) {
+    var chip = document.getElementById('thesis-chip');
+    var txt  = document.getElementById('thesis-chip-text');
+    chip.style.display = 'flex';
+    txt.textContent = '🎯 ' + summary;
+  }
+
+  function clearChip() {
+    document.getElementById('thesis-chip').style.display = 'none';
+  }
+})();
+</script>
+
 </body></html>"#
 }
 
@@ -2488,6 +2596,39 @@ async fn auth_session_handler(
                     if row.hl_setup_complete {
                         let _ = tenants.complete_hl_setup(&tenant_id);
                     }
+                }
+            }
+        }
+    }
+
+    // ── Restore investment thesis from DB on login ────────────────────────────
+    if let Some(ref db) = app.db {
+        if let Ok(tid_uuid) = uuid::Uuid::parse_str(tenant_id.as_str()) {
+            if let Ok(Some(row)) = sqlx::query!(
+                "SELECT investment_thesis, symbol_whitelist, sector_filter, max_leverage_override
+                 FROM tenants WHERE id = $1",
+                tid_uuid
+            )
+            .fetch_optional(db.pool())
+            .await
+            {
+                // Update in-memory tenant config
+                {
+                    let mut tenants = app.tenants.write().await;
+                    let _ = tenants.update_thesis(
+                        &tenant_id,
+                        row.investment_thesis.clone(),
+                        row.symbol_whitelist.clone(),
+                        row.sector_filter.clone(),
+                        row.max_leverage_override,
+                    );
+                }
+                // Rebuild and propagate global_thesis from restored data
+                {
+                    let tenants = app.tenants.read().await;
+                    let constraints = tenants.thesis_constraints(&tenant_id);
+                    let mut gt = app.global_thesis.write().await;
+                    *gt = constraints;
                 }
             }
         }
@@ -4906,6 +5047,144 @@ async fn hl_export_key_handler(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+//  Investment thesis API
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// `GET /api/thesis` — return the current investment thesis for the UI chip.
+///
+/// Returns JSON `{"summary": "...", "thesis_text": "..."}` or `{}` when empty.
+async fn thesis_get_handler(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    // Must be logged in
+    if get_session_tenant_id(&headers, &app.session_secret).is_none() {
+        return axum::http::StatusCode::UNAUTHORIZED.into_response();
+    }
+
+    let c = app.global_thesis.read().await;
+    axum::response::Json(serde_json::json!({
+        "summary":     c.summary,
+        "thesis_text": c.thesis_text,
+    })).into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct ThesisCommand {
+    command: String,
+}
+
+/// `POST /api/thesis` — update the investment thesis from a natural-language command.
+///
+/// Request body: `{"command": "only meme coins max 3x leverage"}`
+///
+/// Response:
+///   - Constraint update: `{"type":"update","summary":"Meme coins · max 3×","message":"..."}`
+///   - Reset:             `{"type":"reset","message":"..."}`
+///   - Trade query:       `{"type":"query","message":"<recent trades text>"}`
+async fn thesis_update_handler(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+    axum::Json(req): axum::Json<ThesisCommand>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let tid = match get_session_tenant_id(&headers, &app.session_secret) {
+        Some(t) => t,
+        None    => return axum::http::StatusCode::UNAUTHORIZED.into_response(),
+    };
+
+    let cmd = req.command.trim().to_string();
+
+    // ── Trade query path ──────────────────────────────────────────────────────
+    if crate::thesis::parse_command(&cmd).is_none() {
+        // Query intent detected — return recent closed trades summary
+        let trades_summary = {
+            let s = app.bot_state.read().await;
+            if s.closed_trades.is_empty() {
+                "No trades recorded yet.".to_string()
+            } else {
+                let recent: Vec<String> = s.closed_trades.iter().rev().take(5).map(|t| {
+                    format!("• {} {} @ ${:.4} → ${:.4} · P&L: {}",
+                        t.side, t.symbol, t.entry, t.exit, t.pnl)
+                }).collect();
+                recent.join("<br>")
+            }
+        };
+        return axum::response::Json(serde_json::json!({
+            "type":    "query",
+            "message": trades_summary,
+        })).into_response();
+    }
+
+    // ── Constraint update path ────────────────────────────────────────────────
+    let parsed = crate::thesis::parse_command(&cmd).unwrap_or_default();
+
+    let (whitelist_str, sector, max_lev, thesis_txt) = if parsed.is_empty() {
+        // Reset
+        (None, None, None, None)
+    } else {
+        let wl_str = parsed.symbol_whitelist.as_ref().map(|v| v.join(","));
+        (wl_str, parsed.sector_filter.clone(), parsed.max_leverage_override, parsed.thesis_text.clone())
+    };
+
+    // Update in-memory tenant config
+    {
+        let mut tenants = app.tenants.write().await;
+        let _ = tenants.update_thesis(&tid, thesis_txt.clone(), whitelist_str.clone(), sector.clone(), max_lev);
+    }
+
+    // Persist to DB (non-blocking)
+    if let Some(ref db) = app.db {
+        if let Ok(tid_uuid) = uuid::Uuid::parse_str(tid.as_str()) {
+            let db2 = db.clone();
+            let (wl2, sec2, txt2) = (whitelist_str.clone(), sector.clone(), thesis_txt.clone());
+            tokio::spawn(async move {
+                let _ = sqlx::query!(
+                    "UPDATE tenants
+                     SET investment_thesis    = $1,
+                         symbol_whitelist     = $2,
+                         sector_filter        = $3,
+                         max_leverage_override = $4
+                     WHERE id = $5",
+                    txt2, wl2, sec2, max_lev, tid_uuid,
+                )
+                .execute(db2.pool())
+                .await
+                .map_err(|e| log::warn!("thesis persist failed: {e}"));
+            });
+        }
+    }
+
+    // Update the global_thesis Arc so run_cycle picks it up immediately
+    {
+        let new_constraints = if parsed.is_empty() {
+            crate::thesis::ThesisConstraints::default()
+        } else {
+            parsed.clone()
+        };
+        let mut gt = app.global_thesis.write().await;
+        *gt = new_constraints;
+    }
+
+    let (resp_type, message, summary) = if parsed.is_empty() {
+        ("reset", "AI decides everything now — all constraints cleared.".to_string(), None)
+    } else {
+        let sum = parsed.summary.clone().unwrap_or_default();
+        let msg = format!("Thesis updated: {}. The bot will apply these constraints from the next cycle.", sum);
+        ("update", msg, parsed.summary.clone())
+    };
+
+    axum::response::Json(serde_json::json!({
+        "type":    resp_type,
+        "message": message,
+        "summary": summary,
+    })).into_response()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 pub async fn serve(app_state: AppState, port: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let app = Router::new()
@@ -4954,6 +5233,8 @@ pub async fn serve(app_state: AppState, port: u16) -> Result<(), Box<dyn std::er
         .route("/app/invite",           get(get_invite_handler))
         .route("/app/invite/generate",  post(generate_invite_handler))
         .route("/api/leaderboard",      get(api_leaderboard_handler))
+        // ── Investment thesis ────────────────────────────────────────────────
+        .route("/api/thesis",           get(thesis_get_handler).post(thesis_update_handler))
         .with_state(app_state);
     let addr = format!("0.0.0.0:{}", port);
     log::info!("🌐 Dashboard at http://{}", addr);

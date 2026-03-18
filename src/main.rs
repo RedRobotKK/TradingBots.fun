@@ -69,6 +69,7 @@ mod mailer;
 mod correlation;
 mod notifier;
 mod onchain;
+mod thesis;
 
 use anyhow::Result;
 use log::{error, info, warn};
@@ -292,6 +293,9 @@ async fn main() -> Result<()> {
     // leaderboard snapshot task — keep one instance so registrations are
     // visible in both places.
     let tenant_manager = tenant::new_tenant_manager();
+    // Global investment thesis constraints — written by the web API, read by run_cycle.
+    let global_thesis: Arc<RwLock<thesis::ThesisConstraints>> =
+        Arc::new(RwLock::new(thesis::ThesisConstraints::default()));
     // Transactional mailer — None when RESEND_API_KEY is not set.
     let mailer = mailer::Mailer::new(
         config.email_api_key.as_deref(),
@@ -314,6 +318,7 @@ async fn main() -> Result<()> {
             coinzilla_zone_id:      config.coinzilla_zone_id.clone(),
             mailer:                 mailer.clone(),
             stripe_promo_price_id:  config.stripe_promo_price_id.clone(),
+            global_thesis:          global_thesis.clone(),
         };
         tokio::spawn(async move {
             if let Err(e) = web_dashboard::serve(app_state, 3000).await {
@@ -429,7 +434,8 @@ async fn main() -> Result<()> {
         match run_cycle(&config, &market, &hl, &shared_db, &bot_state, &weights,
                         &sentiment_cache, &funding_cache, &mut prev_mids, &btc_dominance,
                         &trade_logger, config.builder_fee_bps,
-                        &notifier, &onchain_cache, &signal_watchlist, &cex_monitor).await
+                        &notifier, &onchain_cache, &signal_watchlist, &cex_monitor,
+                        &global_thesis).await
         {
             Ok(_) => {
                 // Persist state every N cycles (cheap; atomic rename)
@@ -508,6 +514,7 @@ async fn run_cycle(
     onchain_cache:    &SharedOnchain,            // exchange netflow signal
     signal_watchlist: &SharedWatchlist,          // near-miss SKIP re-evaluator
     cex_monitor:      &SharedCrossExchange,      // cross-exchange price divergence
+    global_thesis:    &Arc<RwLock<thesis::ThesisConstraints>>, // user thesis constraints
 ) -> Result<()> {
     { bot_state.write().await.cycle_count += 1; }
 
@@ -539,6 +546,9 @@ async fn run_cycle(
     let candidates_raw = market.filter_candidates(&current_mids, prev_mids);
     *prev_mids = current_mids.clone();
 
+    // ── Investment thesis: read current constraints (lock-free snapshot) ──
+    let thesis_snap = global_thesis.read().await.clone();
+
     // Priority coins always analysed FIRST so they get slot priority
     const PRIORITY: &[&str] = &["SOL", "BTC", "ETH", "BNB", "AVAX"];
     let mut candidates: Vec<String> = PRIORITY.iter()
@@ -546,6 +556,18 @@ async fn run_cycle(
         .collect();
     for sym in &candidates_raw {
         if !candidates.contains(sym) { candidates.push(sym.clone()); }
+    }
+
+    // Apply whitelist / sector filter — drop disallowed symbols
+    if !thesis_snap.is_empty() {
+        let before = candidates.len();
+        candidates.retain(|sym| thesis_snap.allows(sym));
+        let after = candidates.len();
+        if after < before {
+            info!("🎯 Thesis filter: {}/{} candidates kept ({})",
+                after, before,
+                thesis_snap.summary.as_deref().unwrap_or("custom"));
+        }
     }
 
     // ── Update peak equity & increment cycles_held ────────────────────────
@@ -843,7 +865,15 @@ async fn run_cycle(
             &format!("🔬 Analysing {}/{}: {}…", i + 1, total, sym)).await;
 
         match analyse_symbol(sym, market, hl, db, config, bot_state, weights, sent_cache, fund_cache, btc_dom, btc_ret_24h, btc_ret_4h, trade_logger, fee_bps, notifier, onchain_cache, cex_monitor).await {
-            Ok(Some((dec, ind))) => {
+            Ok(Some((mut dec, ind))) => {
+                // ── Thesis: clamp leverage if user requested lower risk ───
+                if let Some(max_lev) = thesis_snap.max_leverage_override {
+                    if dec.leverage > max_lev {
+                        info!("🎯 {} leverage clamped {:.1}→{:.1}× (thesis)", sym, dec.leverage, max_lev);
+                        dec.leverage = max_lev;
+                    }
+                }
+
                 let price = ind.close_price;
 
                 if dec.action != "SKIP" {
