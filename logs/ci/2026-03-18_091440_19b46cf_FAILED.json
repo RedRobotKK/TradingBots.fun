@@ -1,0 +1,140 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-03-18T09:03:09Z",
+    "commit": "19b46cf",
+    "commit_full": "19b46cf014eb4aac040111fa0329f3eef95c9091",
+    "commit_message": "chore: bump version 0.1.34 \u2192 0.1.35",
+    "branch": "master",
+    "overall_status": "FAILED",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
+    "cargo": "cargo 1.93.1 (083ac5135 2025-12-15)",
+    "os_kernel": "6.8.0-106-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 418,
+      "total_passed": 0,
+      "total_failed": 0,
+      "total_ignored": 0,
+      "failures": []
+    },
+    "clippy": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 270,
+      "error_count": 10,
+      "errors": [
+        {
+          "code": "E",
+          "message": "function `register_referral` is never used",
+          "file": "src/hl_wallet.rs",
+          "line": 178,
+          "col": 14
+        },
+        {
+          "code": "E",
+          "message": "field `total_size_usd` is never read",
+          "file": "src/collective.rs",
+          "line": 49,
+          "col": 9
+        },
+        {
+          "code": "E",
+          "message": "manual `RangeInclusive::contains` implementation",
+          "file": "src/thesis.rs",
+          "line": 237,
+          "col": 24
+        },
+        {
+          "code": "E",
+          "message": "manual `RangeInclusive::contains` implementation",
+          "file": "src/thesis.rs",
+          "line": 252,
+          "col": 20
+        },
+        {
+          "code": "E",
+          "message": "this `if` statement can be collapsed",
+          "file": "src/thesis.rs",
+          "line": 290,
+          "col": 9
+        },
+        {
+          "code": "E",
+          "message": "this expression creates a reference which is immediately dereferenced by the compiler",
+          "file": "src/main.rs",
+          "line": 926,
+          "col": 68
+        },
+        {
+          "code": "E",
+          "message": "this function has too many arguments (8/7)",
+          "file": "src/main.rs",
+          "line": 1087,
+          "col": 1
+        },
+        {
+          "code": "E",
+          "message": "this function has too many arguments (9/7)",
+          "file": "src/main.rs",
+          "line": 1563,
+          "col": 1
+        },
+        {
+          "code": "E",
+          "message": "this function has too many arguments (9/7)",
+          "file": "src/main.rs",
+          "line": 2095,
+          "col": 1
+        },
+        {
+          "code": "E",
+          "message": "could not compile `tradingbots-fun` (bin \"tradingbots-fun\") due to 9 previous errors"
+        }
+      ]
+    },
+    "audit": {
+      "status": "ADVISORY",
+      "exit_code": 1,
+      "duration_seconds": 3,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2023-0071",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2023-0071",
+          "severity": "5.9 (medium)",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "tradingbots",
+    "status": "activating",
+    "active_since": "unknown",
+    "recent_logs": [
+      "Mar 18 09:14:40 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: tradingbots.service: Scheduled restart job, restart counter is at 3.",
+      "Mar 18 09:14:40 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Starting tradingbots.service - TradingBots.fun...",
+      "Mar 18 09:14:40 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Started tradingbots.service - TradingBots.fun.",
+      "Mar 18 09:14:40 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: tradingbots.service: Main process exited, code=exited, status=203/EXEC",
+      "Mar 18 09:14:40 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: tradingbots.service: Failed with result 'exit-code'."
+    ]
+  }
+}
