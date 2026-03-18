@@ -30,9 +30,10 @@ const CB_DRAWDOWN_THRESHOLD: f64 = 0.08;  // 8 %
 /// Position-size multiplier applied when the circuit breaker is active.
 const CB_SIZE_MULT: f64 = 0.35;
 /// Upper bound for position size as fraction of free capital (Kelly clamp).
-const MAX_POSITION_PCT: f64 = 0.18;
+const MAX_POSITION_PCT: f64 = 0.25;
 /// Lower bound for position size as fraction of free capital.
-const MIN_POSITION_PCT: f64 = 0.01;
+/// Raised from 1% — a $10 position on $1000 is economically meaningless.
+const MIN_POSITION_PCT: f64 = 0.05;
 
 mod config;
 mod data;
@@ -1480,12 +1481,13 @@ fn position_size_pct(confidence: f64, metrics: &PerformanceMetrics, in_circuit_b
         let conf_scale = (0.6 + (confidence - MIN_CONFIDENCE).max(0.0) * slope).min(1.0);
         kelly * conf_scale
     } else {
-        // Pre-Kelly fallback tiers (first ~5 trades)
+        // Pre-Kelly fallback tiers (first ~5 trades).
+        // Raised so early trades are meaningful — they're also learning trades.
         match confidence {
-            c if c >= 0.85 => 0.08,
-            c if c >= 0.75 => 0.06,
-            c if c >= MIN_CONFIDENCE => 0.04,
-            _              => 0.03,
+            c if c >= 0.85 => 0.15,
+            c if c >= 0.75 => 0.12,
+            c if c >= MIN_CONFIDENCE => 0.08,
+            _              => 0.05,
         }
     };
 
@@ -2579,25 +2581,25 @@ mod tests {
 
     #[test]
     fn position_size_pct_pre_kelly_high_confidence() {
-        // With <5 trades (no Kelly), conf=0.85 → base 8%, no Sharpe adjustment (1.0 mult)
+        // With <5 trades (no Kelly), conf=0.85 → base 15%, no Sharpe adjustment (1.0 mult)
         let metrics = PerformanceMetrics::default(); // total_trades=0 → no Kelly, size_mult=1.0
         let pct = position_size_pct(0.85, &metrics, false);
-        // base=0.08 × sharpe_mult(1.0 for <3 trades) × no-CB → 0.08
-        assert_eq!(pct, 0.08, "pre-Kelly high confidence: expected 8%");
+        // base=0.15 × sharpe_mult(1.0 for <3 trades) × no-CB → 0.15
+        assert_eq!(pct, 0.15, "pre-Kelly high confidence: expected 15%");
     }
 
     #[test]
     fn position_size_pct_pre_kelly_mid_confidence() {
         let metrics = PerformanceMetrics::default();
         let pct = position_size_pct(0.75, &metrics, false);
-        assert_eq!(pct, 0.06, "pre-Kelly mid confidence: expected 6%");
+        assert_eq!(pct, 0.12, "pre-Kelly mid confidence: expected 12%");
     }
 
     #[test]
     fn position_size_pct_pre_kelly_min_confidence() {
         let metrics = PerformanceMetrics::default();
         let pct = position_size_pct(MIN_CONFIDENCE, &metrics, false);
-        assert_eq!(pct, 0.04, "pre-Kelly min confidence: expected 4%");
+        assert_eq!(pct, 0.08, "pre-Kelly min confidence: expected 8%");
     }
 
     #[test]

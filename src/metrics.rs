@@ -131,8 +131,8 @@ impl PerformanceMetrics {
 
     /// Sharpe-based size multiplier. Layered on top of Kelly (or fallback tiers).
     pub fn size_multiplier(&self) -> f64 {
-        if self.total_trades < 3 {
-            return 1.0; // not enough data yet, use neutral
+        if self.total_trades < 10 {
+            return 1.0; // not enough data for Sharpe to be meaningful — neutral
         }
         // Circuit breaker overrides everything
         if self.in_circuit_breaker() {
@@ -142,9 +142,9 @@ impl PerformanceMetrics {
             s if s > 2.5  => 1.25,
             s if s > 1.5  => 1.10,
             s if s > 0.5  => 1.00,
-            s if s > 0.0  => 0.80,
-            s if s > -0.5 => 0.60,
-            _             => 0.40,
+            s if s > 0.0  => 0.90,  // was 0.80 — less punishing for neutral Sharpe
+            s if s > -0.5 => 0.75,  // was 0.60 — floor raised
+            _             => 0.60,  // was 0.40 — never crush position size below 60%
         }
     }
 
@@ -159,26 +159,34 @@ impl PerformanceMetrics {
 
     /// Dynamic confidence floor based on performance metrics.
     ///
-    /// Starts with `min_confidence` and adds penalties if metrics are weak:
-    /// - If profit_factor < 1.2: +0.07 (not enough upside per downside)
-    /// - If expectancy < 0.003: +0.05 (expected return too small)
-    /// - If sortino < 0.5: +0.03 (poor downside-adjusted return)
+    /// Only applies after 10+ trades — before that, metrics are noisy and
+    /// punishing early trades creates a self-fulfilling bad-data loop.
     ///
-    /// Total adjustment capped at 0.12, final result capped at 0.92.
+    /// Starts with `min_confidence` and adds penalties if metrics are weak:
+    /// - If profit_factor < 1.0: +0.05 (consistently losing)
+    /// - If expectancy < 0.001: +0.03 (near-zero expected return)
+    /// - If sortino < 0.3: +0.02 (very poor risk-adjusted return)
+    ///
+    /// Total adjustment capped at 0.08, final result capped at 0.88.
     pub fn confidence_floor(&self, min_confidence: f64) -> f64 {
+        // Don't penalise until there's enough history for metrics to be meaningful
+        if self.total_trades < 10 {
+            return min_confidence;
+        }
+
         let mut adjustment: f64 = 0.0;
 
-        if self.profit_factor < 1.2 {
-            adjustment += 0.07;
+        if self.profit_factor < 1.0 {
+            adjustment += 0.05;  // genuinely losing, not just early-phase
         }
-        if self.expectancy < 0.003 {
-            adjustment += 0.05;
-        }
-        if self.sortino < 0.5 {
+        if self.expectancy < 0.001 {
             adjustment += 0.03;
         }
+        if self.sortino < 0.3 {
+            adjustment += 0.02;
+        }
 
-        adjustment = adjustment.min(0.12);
-        (min_confidence + adjustment).min(0.92)
+        adjustment = adjustment.min(0.08);  // was 0.12
+        (min_confidence + adjustment).min(0.88)  // was 0.92
     }
 }

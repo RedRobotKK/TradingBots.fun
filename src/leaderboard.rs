@@ -37,6 +37,7 @@ use crate::tenant::SharedTenantManager;
 #[derive(Debug, Clone, Serialize)]
 pub struct LeaderboardEntry {
     pub rank:             i64,
+    pub tenant_id:        Uuid,
     pub display_name:     String,
     /// Truncated wallet address shown on the leaderboard (privacy-preserving).
     pub wallet_short:     String,
@@ -117,7 +118,7 @@ pub async fn live_standings(
     limit: i64,
 ) -> Result<Vec<LeaderboardEntry>> {
     let rows = sqlx::query!(
-        r#"SELECT rank, display_name, wallet_address,
+        r#"SELECT rank, tenant_id, display_name, wallet_address,
                   equity_usd, start_equity_usd,
                   pct_return, trades_in_period
            FROM leaderboard_live
@@ -128,20 +129,22 @@ pub async fn live_standings(
     .await
     .map_err(|e| anyhow!("live_standings: {}", e))?;
 
-    Ok(rows.into_iter().map(|r| {
+    Ok(rows.into_iter().filter_map(|r| {
+        let tenant_id = r.tenant_id?; // skip rows without a tenant_id
         let wallet_short = r.wallet_address
-            .map(|w| format!("{}…{}", &w[..6], &w[w.len()-4..]))
+            .map(|w| if w.len() >= 10 { format!("{}…{}", &w[..6], &w[w.len()-4..]) } else { w })
             .unwrap_or_else(|| "—".to_string());
 
-        LeaderboardEntry {
+        Some(LeaderboardEntry {
             rank:             r.rank.unwrap_or(0),
+            tenant_id,
             display_name:     r.display_name.unwrap_or_else(|| "Anonymous".into()),
             wallet_short,
             equity_usd:       r.equity_usd.map(|d| d.to_string().parse::<f64>().unwrap_or(0.0)).unwrap_or(0.0),
             start_equity_usd: r.start_equity_usd.map(|d| d.to_string().parse::<f64>().unwrap_or(0.0)).unwrap_or(0.0),
             pct_return:       r.pct_return.map(|d| d.to_string().parse::<f64>().unwrap_or(0.0)).unwrap_or(0.0),
             trades_in_period: r.trades_in_period.unwrap_or(0),
-        }
+        })
     }).collect())
 }
 
@@ -184,36 +187,67 @@ pub async fn snapshot_daily(
             .collect()
     };
 
-    for (tid_str, current_equity) in tenant_ids {
-        let Ok(tenant_uuid) = Uuid::parse_str(&tid_str) else { continue };
+    // Parse all tenant UUIDs up-front, discard malformed ones
+    let tenants_parsed: Vec<(Uuid, f64)> = tenant_ids
+        .iter()
+        .filter_map(|(id, eq)| Uuid::parse_str(id).ok().map(|u| (u, *eq)))
+        .collect();
 
-        // Count trades in this campaign period (since campaign start)
-        let trades_in_period: i64 = sqlx::query_scalar!(
-            r#"SELECT count(*) FROM closed_trades ct
-               JOIN campaigns c ON c.id = $2
-               WHERE ct.tenant_id = $1
-                 AND ct.closed_at >= c.starts_at"#,
-            tenant_uuid,
-            campaign_id,
-        )
-        .fetch_one(db.pool())
-        .await
-        .unwrap_or(Some(0))
-        .unwrap_or(0);
+    if tenants_parsed.is_empty() {
+        return Ok(0);
+    }
 
-        // Check if this is the first snapshot for this (tenant, campaign)
-        let existing_start: Option<rust_decimal::Decimal> = sqlx::query_scalar!(
-            "SELECT start_equity_usd FROM leaderboard_snapshots WHERE tenant_id = $1 AND campaign_id = $2 ORDER BY snapshot_date ASC LIMIT 1",
-            tenant_uuid,
-            campaign_id,
-        )
-        .fetch_optional(db.pool())
-        .await
-        .unwrap_or(None);
+    let tenant_uuids: Vec<Uuid> = tenants_parsed.iter().map(|(u, _)| *u).collect();
 
-        let start_equity = existing_start
-            .map(|d: rust_decimal::Decimal| d.to_string().parse::<f64>().unwrap_or(current_equity))
-            .unwrap_or(current_equity);  // first snapshot: anchor to current equity
+    // Batch 1: count trades per tenant for this campaign in a single query
+    // Returns rows: (tenant_id, count)
+    let trade_counts: Vec<(Uuid, i64)> = sqlx::query!(
+        r#"SELECT ct.tenant_id, COUNT(*) AS cnt
+           FROM closed_trades ct
+           JOIN campaigns c ON c.id = $1
+           WHERE ct.tenant_id = ANY($2)
+             AND ct.closed_at >= c.starts_at
+           GROUP BY ct.tenant_id"#,
+        campaign_id,
+        &tenant_uuids,
+    )
+    .fetch_all(db.pool())
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|r| (r.tenant_id, r.cnt.unwrap_or(0)))
+    .collect();
+
+    let trade_count_map: std::collections::HashMap<Uuid, i64> =
+        trade_counts.into_iter().collect();
+
+    // Batch 2: get earliest start_equity_usd per tenant for this campaign
+    let start_equities: Vec<(Uuid, rust_decimal::Decimal)> = sqlx::query!(
+        r#"SELECT DISTINCT ON (tenant_id) tenant_id, start_equity_usd
+           FROM leaderboard_snapshots
+           WHERE tenant_id = ANY($1)
+             AND campaign_id = $2
+           ORDER BY tenant_id, snapshot_date ASC"#,
+        &tenant_uuids,
+        campaign_id,
+    )
+    .fetch_all(db.pool())
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .filter_map(|r| r.tenant_id.map(|tid| (tid, r.start_equity_usd)))
+    .collect();
+
+    let start_equity_map: std::collections::HashMap<Uuid, rust_decimal::Decimal> =
+        start_equities.into_iter().collect();
+
+    for (tenant_uuid, current_equity) in &tenants_parsed {
+        let trades_in_period = *trade_count_map.get(tenant_uuid).unwrap_or(&0);
+
+        let start_equity = start_equity_map
+            .get(tenant_uuid)
+            .map(|d| d.to_string().parse::<f64>().unwrap_or(*current_equity))
+            .unwrap_or(*current_equity);  // first snapshot: anchor to current equity
 
         let result = sqlx::query!(
             r#"INSERT INTO leaderboard_snapshots
@@ -224,7 +258,7 @@ pub async fn snapshot_daily(
                              trades_in_period = EXCLUDED.trades_in_period"#,
             tenant_uuid,
             campaign_id,
-            rust_decimal::Decimal::try_from(current_equity).unwrap_or_default(),
+            rust_decimal::Decimal::try_from(*current_equity).unwrap_or_default(),
             rust_decimal::Decimal::try_from(start_equity).unwrap_or_default(),
             trades_in_period as i32,
         )
@@ -233,7 +267,7 @@ pub async fn snapshot_daily(
 
         match result {
             Ok(_) => count += 1,
-            Err(e) => log::warn!("snapshot_daily failed for tenant {}: {}", tid_str, e),
+            Err(e) => log::warn!("snapshot_daily failed for tenant {}: {}", tenant_uuid, e),
         }
     }
 
@@ -280,15 +314,7 @@ pub async fn award_campaign_prizes(
     for tier in &prize_tiers {
         let Some(entry) = standings.get((tier.rank - 1) as usize) else { continue };
 
-        let tenant_uuid = sqlx::query_scalar!(
-            "SELECT tenant_id FROM leaderboard_live WHERE rank = $1 LIMIT 1",
-            entry.rank,
-        )
-        .fetch_optional(db.pool())
-        .await
-        .map_err(|e| anyhow!("award prizes tenant lookup: {}", e))?
-        .flatten()
-        .ok_or_else(|| anyhow!("no tenant at rank {}", tier.rank))?;
+        let tenant_uuid = entry.tenant_id;
 
         sqlx::query!(
             r#"INSERT INTO campaign_prizes

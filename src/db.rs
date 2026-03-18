@@ -115,9 +115,11 @@ impl Database {
     pub async fn connect(url: &str) -> Result<Self> {
         log::info!("🗄  Connecting to PostgreSQL…");
         let pool = PgPoolOptions::new()
-            .max_connections(12)  // 10 Axum handlers + 2 trading-loop writers
-            .min_connections(2)   // keep warm — avoids first-query latency
-            .acquire_timeout(std::time::Duration::from_secs(8))
+            .max_connections(20)  // 12 Axum handlers + 6 background tasks + 2 trading writers
+            .min_connections(3)   // keep warm — avoids first-query latency
+            .acquire_timeout(std::time::Duration::from_secs(30)) // was 8s — long enough to queue not fail-fast
+            .idle_timeout(std::time::Duration::from_secs(600))   // recycle idle connections every 10 min
+            .max_lifetime(std::time::Duration::from_secs(1800))  // retire connections after 30 min
             .connect(url)
             .await
             .with_context(|| format!("Cannot connect to PostgreSQL: {url}"))?;
