@@ -1138,11 +1138,22 @@ async fn apply_ai_review(
                 // Guardrails: prevent AI closing brand-new positions on noise,
                 // but otherwise trust it to cut losers early.
                 //
-                //   1. Min hold 20 min (40 cycles) — very early trades still need a chance
-                //   2. Normal path: Genuinely losing (R < -0.20) AND (DCA tried OR deep loss R < -0.40)
-                //   3. DCA-exhausted fast path: all DCA slots used (dca_count >= 2) AND any loss (R < -0.05)
-                //      → when we've thrown everything at the trade and it's still going against us,
-                //        trust the AI to cut it instead of waiting for R=-0.20
+                // AI close guardrail — four paths to an authorized close:
+                //
+                //   1. Normal loss path:
+                //      Min hold 20 min + genuinely losing (R < -0.20) + (DCA tried OR deep loss R < -0.40)
+                //
+                //   2. DCA-exhausted fast path (patience scales with conviction depth):
+                //      How many DCAs taken reflects how confident the original signal was.
+                //      More DCAs = higher confidence required → give more room before forcing close.
+                //        dca=2 (standard, 65%+): close at R < -0.05 (cut fast — DCA budget spent)
+                //        dca=3 (high, 75%+):      close at R < -0.15 (give room for conviction play)
+                //        dca=4 (very high, 85%+): close at R < -0.25 (maximum room)
+                //
+                //   3. Momentum-stall path:
+                //      Trade is essentially flat (|R| < 0.10) after DCA + 60+ min hold.
+                //      Dead money — DCA went nowhere and there's no momentum either direction.
+                //      Close and redeploy capital elsewhere.
                 let should_close = {
                     let s = bot_state.read().await;
                     s.positions.iter().find(|p| p.symbol == rec.symbol)
@@ -1150,15 +1161,25 @@ async fn apply_ai_review(
                             let r = if p.r_dollars_risked > 1e-8 {
                                 p.unrealised_pnl / p.r_dollars_risked
                             } else { 0.0 };
-                            let min_hold_met      = p.cycles_held >= 40; // 20 min
+                            let min_hold_met      = p.cycles_held >= 40;  // 20 min
+                            let long_hold         = p.cycles_held >= 120; // 60 min
                             let genuinely_losing  = r < -0.20;
                             let dca_tried         = p.dca_count >= 1;
                             let deep_loss         = r < -0.40;
-                            // DCA exhausted fast-path: all standard slots used AND any loss.
-                            // This covers both normal cap (2) and high-conviction cap (3-4):
-                            // we trust the AI to cut the trade once DCA is fully deployed.
-                            let dca_exhausted     = p.dca_count >= 2 && r < -0.05;
-                            min_hold_met && (dca_exhausted || (genuinely_losing && (dca_tried || deep_loss)))
+
+                            // DCA-exhausted: patience scales with how many add-ons were used
+                            let dca_exhausted = match p.dca_count {
+                                0 | 1 => false,        // not exhausted yet
+                                2     => r < -0.05,    // standard — cut fast
+                                3     => r < -0.15,    // high-conviction — give room
+                                _     => r < -0.25,    // very high conviction — most room
+                            };
+
+                            // Momentum stall: DCA used, trade is flat after 60+ min, no momentum
+                            let momentum_stall = long_hold && dca_tried && r.abs() < 0.10;
+
+                            min_hold_met && (dca_exhausted || momentum_stall
+                                           || (genuinely_losing && (dca_tried || deep_loss)))
                         })
                         .unwrap_or(false)
                 };

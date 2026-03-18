@@ -97,7 +97,7 @@ pub struct PaperPosition {
     pub partial_closed:   bool,      // true once first tranche taken
     // ── Professional quant fields ─────────────────────────────────────────
     pub r_dollars_risked: f64,       // dollars at risk on entry = |entry−stop| × qty_at_entry
-    pub tranches_closed:  u8,        // 0=none, 1=first 1/3 at 2R, 2=second 1/3 at 4R
+    pub tranches_closed:  u8,        // 0=none, 1=¼ at 1R banked, 2=⅓ at 2R banked, 3=⅓ at 4R banked
     #[serde(default)]
     pub dca_count:        u8,        // number of DCA add-ons executed (averaging down)
     #[serde(default = "default_leverage")]
@@ -339,10 +339,12 @@ async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
             let bar_pct = ((r_mult + 1.0) / 6.0 * 100.0).clamp(0.0, 100.0);
             let bar_colour = if r_mult >= 2.0 { "#3fb950" } else if r_mult >= 0.0 { "#388bfd" } else { "#f85149" };
 
+            // Tranche ladder: 0=none, 1=¼@1R done, 2=¼+⅓@2R done, 3=¼+⅓+⅓@4R done
             let tranche_label = match p.tranches_closed {
-                0 => "target <b>2R</b>".to_string(),
-                1 => "<span style='color:#3fb950'>⅓ banked</span> · target <b>4R</b>".to_string(),
-                _ => "<span style='color:#3fb950'>⅔ banked</span> · trailing".to_string(),
+                0 => "target <b>1R</b>".to_string(),
+                1 => "<span style='color:#3fb950'>¼ banked</span> · target <b>2R</b>".to_string(),
+                2 => "<span style='color:#3fb950'>¼+⅓ banked</span> · target <b>4R</b>".to_string(),
+                _ => "<span style='color:#3fb950'>⅝ banked</span> · trailing".to_string(),
             };
 
             // DCA badge — shown when we've averaged down
@@ -415,7 +417,7 @@ async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
   <div id="pos-{sym_id}-pnl" class="pos-pnl" style="color:{pc}">{ps}{pnl:.2} ({ps}{pct:.1}%) &nbsp; <b style="font-size:1.1em">{r:+.2}R</b></div>
   <div class="pos-bar-wrap">
     <div id="pos-{sym_id}-bar" class="pos-bar" style="width:{bp:.0}%;background:{bc}"></div>
-    <div class="pos-bar-marks"><span>-1R</span><span>0</span><span>2R</span><span>4R</span></div>
+    <div class="pos-bar-marks"><span>-1R</span><span>0</span><span>1R</span><span>2R</span><span>4R</span></div>
   </div>
   <div class="pos-meta">Avg <b>${entry:.4}</b> &nbsp;·&nbsp; Stop <span id="pos-{sym_id}-stop" style="color:#f85149">${stop:.4}</span> &nbsp;·&nbsp; TP <span style="color:#3fb950">${tp:.4}</span></div>
   <div class="pos-meta">
@@ -6376,33 +6378,48 @@ mod tests {
     fn tranche_0_shows_first_target() {
         let t = 0u8;
         let label = match t {
-            0 => "target 2R",
-            1 => "1/3 banked · target 4R",
-            _ => "2/3 banked · trailing",
+            0 => "target 1R",
+            1 => "1/4 banked · target 2R",
+            2 => "1/4+1/3 banked · target 4R",
+            _ => "5/8 banked · trailing",
         };
-        assert_eq!(label, "target 2R");
+        assert_eq!(label, "target 1R");
     }
 
     #[test]
-    fn tranche_1_shows_partial_banked() {
+    fn tranche_1_shows_quarter_banked() {
         let t = 1u8;
         let label = match t {
-            0 => "target 2R",
-            1 => "1/3 banked · target 4R",
-            _ => "2/3 banked · trailing",
+            0 => "target 1R",
+            1 => "1/4 banked · target 2R",
+            2 => "1/4+1/3 banked · target 4R",
+            _ => "5/8 banked · trailing",
         };
-        assert_eq!(label, "1/3 banked · target 4R");
+        assert_eq!(label, "1/4 banked · target 2R");
     }
 
     #[test]
-    fn tranche_2_shows_two_thirds_banked() {
+    fn tranche_2_shows_quarter_plus_third_banked() {
         let t = 2u8;
         let label = match t {
-            0 => "target 2R",
-            1 => "1/3 banked · target 4R",
-            _ => "2/3 banked · trailing",
+            0 => "target 1R",
+            1 => "1/4 banked · target 2R",
+            2 => "1/4+1/3 banked · target 4R",
+            _ => "5/8 banked · trailing",
         };
-        assert_eq!(label, "2/3 banked · trailing");
+        assert_eq!(label, "1/4+1/3 banked · target 4R");
+    }
+
+    #[test]
+    fn tranche_3_shows_five_eighths_banked() {
+        let t = 3u8;
+        let label = match t {
+            0 => "target 1R",
+            1 => "1/4 banked · target 2R",
+            2 => "1/4+1/3 banked · target 4R",
+            _ => "5/8 banked · trailing",
+        };
+        assert_eq!(label, "5/8 banked · trailing");
     }
 
     // ── Dashboard slot badge correctness ──────────────────────────────────────
