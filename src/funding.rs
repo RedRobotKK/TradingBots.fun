@@ -73,6 +73,84 @@ pub struct FundingData {
     pub funding_delta: f64,
 }
 
+/// The funding cycle phase, computed from UTC time relative to the 8-hour
+/// settlement windows (00:00, 08:00, 16:00 UTC on all major exchanges).
+///
+/// Settlement times create predictable price patterns:
+///  • Pre-settlement:  paying side (longs if +ve funding) closes to avoid cost
+///                     → price moves in the direction that hurts the payer
+///  • Post-settlement: rate resets, crowd repositions, often brief reversal
+///  • Mid-cycle:       no structural cycle pressure; signal unchanged
+#[derive(Debug, Clone, PartialEq)]
+pub enum FundingCyclePhase {
+    /// < 90 minutes to next settlement — maximum closing pressure from payers.
+    PreSettlement { hours_remaining: f64 },
+    /// 0–30 minutes after settlement — repositioning window, potential flip.
+    PostSettlement { minutes_elapsed: f64 },
+    /// Everything else — no structural cycle pressure.
+    MidCycle { hours_to_next: f64 },
+}
+
+impl FundingCyclePhase {
+    /// Compute the current cycle phase from the given UTC timestamp (seconds since epoch).
+    pub fn from_utc_secs(utc_secs: i64) -> Self {
+        // 8-hour cycle: settlements at 0h, 8h, 16h UTC → every 28800 seconds
+        const PERIOD: i64 = 8 * 3600; // 28800 seconds
+        let seconds_into_cycle = utc_secs.rem_euclid(PERIOD);
+        let seconds_to_next    = PERIOD - seconds_into_cycle;
+        let hours_to_next      = seconds_to_next as f64 / 3600.0;
+
+        if seconds_into_cycle < 1800 {
+            // Within 30 min AFTER a settlement → post-settlement repositioning
+            FundingCyclePhase::PostSettlement {
+                minutes_elapsed: seconds_into_cycle as f64 / 60.0,
+            }
+        } else if seconds_to_next < 5400 {
+            // Within 90 min BEFORE next settlement → pre-settlement closing pressure
+            FundingCyclePhase::PreSettlement { hours_remaining: hours_to_next }
+        } else {
+            FundingCyclePhase::MidCycle { hours_to_next }
+        }
+    }
+
+    /// Signal amplifier for the funding signal given current cycle phase.
+    ///
+    /// Returns a multiplier in [0.5, 1.8]:
+    ///  • Pre-settlement with significant funding → amplify (closing pressure is real)
+    ///  • Post-settlement → reduce (rate just reset, direction uncertain)
+    ///  • Mid-cycle → neutral multiplier (1.0)
+    pub fn signal_multiplier(&self, funding_rate: f64) -> f64 {
+        match self {
+            FundingCyclePhase::PreSettlement { hours_remaining } => {
+                // Closer to settlement = stronger closing pressure
+                // 0–30 min → 1.8×, 30–60 min → 1.5×, 60–90 min → 1.2×
+                if funding_rate.abs() > 0.0002 {
+                    if *hours_remaining < 0.5 { 1.80 }
+                    else if *hours_remaining < 1.0 { 1.50 }
+                    else { 1.20 }
+                } else {
+                    1.0 // neutral funding — cycle phase doesn't matter
+                }
+            }
+            FundingCyclePhase::PostSettlement { .. } => {
+                // Rate just reset; avoid being whipsawed by immediate repositioning
+                0.60
+            }
+            FundingCyclePhase::MidCycle { .. } => 1.0,
+        }
+    }
+}
+
+/// Returns the current cycle phase based on the system clock (UTC).
+pub fn current_cycle_phase() -> FundingCyclePhase {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let utc_secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    FundingCyclePhase::from_utc_secs(utc_secs)
+}
+
 impl FundingData {
     /// Annualised rate as a percentage (rate × 3 payments/day × 365 days × 100).
     #[allow(dead_code)]
@@ -80,17 +158,29 @@ impl FundingData {
         self.funding_rate * 3.0 * 365.0 * 100.0
     }
 
-    /// Contrarian signal strength in **[−1.0, +1.0]**.
+    /// Contrarian signal strength in **[−1.0, +1.0]**, cycle-phase adjusted.
     ///
-    /// Blends current funding (60 %) with predicted funding (40 %) so that
-    /// a building position (predicted rising faster than current) weighs in
-    /// before it fully hits the current-rate reading.
+    /// Blends current funding (60 %) with predicted funding (40 %) for forward-
+    /// looking sensitivity, then amplifies or reduces based on where we are in
+    /// the 8-hour settlement cycle:
+    ///
+    ///  • Pre-settlement + significant funding → amplified (closing pressure)
+    ///  • Post-settlement → reduced (rate just reset, uncertain)
+    ///  • Mid-cycle → standard signal
     ///
     /// * Positive → bullish lean (shorts overcrowded → squeeze risk).
     /// * Negative → bearish lean (longs overcrowded → liquidation risk).
     /// * Zero     → neutral / below noise threshold.
     pub fn signal_strength(&self) -> f64 {
-        // Blend: 60 % current, 40 % predicted — rewards forward-looking signal.
+        let blended  = self.funding_rate * 0.60 + self.predicted_rate * 0.40;
+        let raw      = self.strength_from_rate(blended);
+        let phase    = current_cycle_phase();
+        let mult     = phase.signal_multiplier(self.funding_rate);
+        (raw * mult).clamp(-1.0, 1.0)
+    }
+
+    /// Raw signal strength without cycle-phase adjustment (for testing).
+    pub fn raw_signal_strength(&self) -> f64 {
         let blended = self.funding_rate * 0.60 + self.predicted_rate * 0.40;
         self.strength_from_rate(blended)
     }
@@ -120,6 +210,15 @@ impl FundingData {
         if      r >  0.0005 { "🔴" }  // elevated longs → bearish
         else if r < -0.0005 { "🟢" }  // elevated shorts → bullish
         else                { "🟡" }  // neutral
+    }
+
+    /// Phase-aware emoji: shows cycle context alongside funding direction.
+    pub fn cycle_emoji(&self) -> &'static str {
+        match current_cycle_phase() {
+            FundingCyclePhase::PreSettlement { .. }  => "⏰",
+            FundingCyclePhase::PostSettlement { .. } => "🔄",
+            FundingCyclePhase::MidCycle { .. }       => "·",
+        }
     }
 }
 
@@ -311,5 +410,90 @@ impl FundingCache {
             map.get("SOL").map(|d| d.funding_rate   * 100.0).unwrap_or(0.0),
         );
         Ok(map)
+    }
+}
+
+// ─────────────────────────── Tests ───────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // 8-hour cycle: settlements at 0, 28800, 57600, 86400 seconds past epoch.
+    // 00:00 UTC = 0s, 08:00 UTC = 28800s, 16:00 UTC = 57600s
+
+    #[test]
+    fn phase_mid_cycle_at_4h_mark() {
+        // 4 hours into the cycle = 14400s — well away from settlement
+        let phase = FundingCyclePhase::from_utc_secs(14400);
+        match phase {
+            FundingCyclePhase::MidCycle { hours_to_next } => {
+                assert!((hours_to_next - 4.0).abs() < 0.01,
+                    "4h into cycle should have 4h remaining, got {hours_to_next}");
+            }
+            other => panic!("expected MidCycle, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn phase_pre_settlement_at_45min_before() {
+        // 45 min before settlement = cycle at 8h - 45min = 27000s into cycle
+        let phase = FundingCyclePhase::from_utc_secs(27000);
+        match phase {
+            FundingCyclePhase::PreSettlement { hours_remaining } => {
+                assert!((hours_remaining - 0.5).abs() < 0.01,
+                    "45 min before settlement should give 0.5h remaining, got {hours_remaining}");
+            }
+            other => panic!("expected PreSettlement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn phase_post_settlement_at_10min_after() {
+        // 10 min after settlement = 600s into cycle
+        let phase = FundingCyclePhase::from_utc_secs(600);
+        match phase {
+            FundingCyclePhase::PostSettlement { minutes_elapsed } => {
+                assert!((minutes_elapsed - 10.0).abs() < 0.1,
+                    "10 min after settlement, got {minutes_elapsed}");
+            }
+            other => panic!("expected PostSettlement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pre_settlement_amplifies_significant_funding() {
+        // Positive funding 0.06% (elevated longs) + 30 min to settlement → 1.8× amplifier
+        let phase = FundingCyclePhase::PreSettlement { hours_remaining: 0.4 };
+        let mult = phase.signal_multiplier(0.0006); // 0.06% > 0.02% threshold
+        assert_eq!(mult, 1.80, "< 30 min to settlement with significant funding → 1.8×");
+    }
+
+    #[test]
+    fn pre_settlement_no_amp_for_neutral_funding() {
+        // Neutral funding (0.01%) + near settlement → no amplification
+        let phase = FundingCyclePhase::PreSettlement { hours_remaining: 0.2 };
+        let mult = phase.signal_multiplier(0.0001); // below 0.02% threshold
+        assert_eq!(mult, 1.0, "neutral funding rate should not be amplified by cycle phase");
+    }
+
+    #[test]
+    fn post_settlement_reduces_signal() {
+        let phase = FundingCyclePhase::PostSettlement { minutes_elapsed: 15.0 };
+        let mult = phase.signal_multiplier(0.0008);
+        assert_eq!(mult, 0.60, "post-settlement should dampen the signal to 0.6×");
+    }
+
+    #[test]
+    fn signal_strength_clamped_to_unit_range() {
+        // Even with large amplifier the output should stay in [-1, 1]
+        let data = FundingData {
+            symbol:        "SOL".to_string(),
+            funding_rate:  0.0020, // very high positive → raw = -1.0
+            predicted_rate: 0.0010,
+            funding_delta: 0.0001,
+        };
+        let s = data.raw_signal_strength();
+        assert!(s >= -1.0 && s <= 1.0, "raw signal out of range: {s}");
     }
 }

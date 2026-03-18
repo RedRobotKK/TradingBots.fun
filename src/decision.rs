@@ -829,12 +829,21 @@ pub fn make_decision(
     let fund_tag = funding
         .filter(|f| f.is_significant())
         .map(|f| {
+            use crate::funding::{current_cycle_phase, FundingCyclePhase};
             let delta_str = if f.funding_delta.abs() > 0.0001 {
                 format!(" Δ{:+.3}%", f.funding_delta * 100.0)
             } else {
                 String::new()
             };
-            format!(" 💰FR:{:+.3}%({}{})", f.funding_rate * 100.0, f.emoji(), delta_str)
+            let phase_str = match current_cycle_phase() {
+                FundingCyclePhase::PreSettlement { hours_remaining } =>
+                    format!(" ⏰{:.0}m-to-settle", hours_remaining * 60.0),
+                FundingCyclePhase::PostSettlement { minutes_elapsed } =>
+                    format!(" 🔄+{:.0}m-post", minutes_elapsed),
+                FundingCyclePhase::MidCycle { hours_to_next } =>
+                    format!(" ({:.1}h-to-settle)", hours_to_next),
+            };
+            format!(" 💰FR:{:+.3}%({}{}{})", f.funding_rate * 100.0, f.emoji(), delta_str, phase_str)
         })
         .unwrap_or_default();
 
