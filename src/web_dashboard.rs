@@ -1872,7 +1872,7 @@ fn consumer_shell_close() -> &'static str {
   <div style="display:flex;gap:8px;align-items:center;">
     <span style="font-size:1rem;flex-shrink:0;">🤖</span>
     <input id="thesis-input" type="text"
-      placeholder='e.g. "only BTC ETH SOL", "meme coins max 3x", "reset"'
+      placeholder="Ask the AI or set a strategy…"
       style="
         flex:1;background:#161b22;border:1px solid #30363d;border-radius:6px;
         padding:7px 12px;color:#e6edf3;font-size:.82rem;outline:none;
@@ -1885,6 +1885,17 @@ fn consumer_shell_close() -> &'static str {
       color:#fff;font-size:.80rem;padding:7px 14px;cursor:pointer;
       white-space:nowrap;font-family:inherit;
     ">Send</button>
+  </div>
+
+  <!-- Suggestion chips -->
+  <div style="display:flex;flex-wrap:wrap;gap:5px;padding-left:28px;">
+    <button onclick="sendThesisCmd('only BTC ETH SOL')" style="background:none;border:1px solid #30363d;border-radius:10px;color:#8b949e;font-size:.70rem;padding:2px 9px;cursor:pointer;font-family:inherit;white-space:nowrap;" onmouseover="this.style.borderColor='#58a6ff';this.style.color='#58a6ff'" onmouseout="this.style.borderColor='#30363d';this.style.color='#8b949e'">only BTC ETH SOL</button>
+    <button onclick="sendThesisCmd('meme coins only')" style="background:none;border:1px solid #30363d;border-radius:10px;color:#8b949e;font-size:.70rem;padding:2px 9px;cursor:pointer;font-family:inherit;white-space:nowrap;" onmouseover="this.style.borderColor='#58a6ff';this.style.color='#58a6ff'" onmouseout="this.style.borderColor='#30363d';this.style.color='#8b949e'">meme coins only</button>
+    <button onclick="sendThesisCmd('max 5x leverage')" style="background:none;border:1px solid #30363d;border-radius:10px;color:#8b949e;font-size:.70rem;padding:2px 9px;cursor:pointer;font-family:inherit;white-space:nowrap;" onmouseover="this.style.borderColor='#58a6ff';this.style.color='#58a6ff'" onmouseout="this.style.borderColor='#30363d';this.style.color='#8b949e'">max 5x leverage</button>
+    <button onclick="sendThesisCmd('aggressive')" style="background:none;border:1px solid #30363d;border-radius:10px;color:#8b949e;font-size:.70rem;padding:2px 9px;cursor:pointer;font-family:inherit;white-space:nowrap;" onmouseover="this.style.borderColor='#f78166';this.style.color='#f78166'" onmouseout="this.style.borderColor='#30363d';this.style.color='#8b949e'">aggressive</button>
+    <button onclick="sendThesisCmd('conservative')" style="background:none;border:1px solid #30363d;border-radius:10px;color:#8b949e;font-size:.70rem;padding:2px 9px;cursor:pointer;font-family:inherit;white-space:nowrap;" onmouseover="this.style.borderColor='#3fb950';this.style.color='#3fb950'" onmouseout="this.style.borderColor='#30363d';this.style.color='#8b949e'">conservative</button>
+    <button onclick="sendThesisCmd('show recent trades')" style="background:none;border:1px solid #30363d;border-radius:10px;color:#8b949e;font-size:.70rem;padding:2px 9px;cursor:pointer;font-family:inherit;white-space:nowrap;" onmouseover="this.style.borderColor='#58a6ff';this.style.color='#58a6ff'" onmouseout="this.style.borderColor='#30363d';this.style.color='#8b949e'">show recent trades</button>
+    <button onclick="sendThesisCmd('reset')" style="background:none;border:1px solid #30363d;border-radius:10px;color:#8b949e;font-size:.70rem;padding:2px 9px;cursor:pointer;font-family:inherit;white-space:nowrap;" onmouseover="this.style.borderColor='#8b949e';this.style.color='#c9d1d9'" onmouseout="this.style.borderColor='#30363d';this.style.color='#8b949e'">reset</button>
   </div>
 
   <!-- Response panel (slides in after submit) -->
