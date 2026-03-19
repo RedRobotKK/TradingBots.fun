@@ -710,43 +710,56 @@ async fn run_cycle(
             let atr = pos.atr_at_entry.max(pos.entry_price * 0.001);
 
             // ── Trailing stop logic ───────────────────────────────────────
-            // Three-tier approach so profits are protected progressively:
-            //   0.75R → tight 0.6×ATR trail (allows small giveback, catches reversals early)
-            //   1.0R  → stop moves to breakeven (guaranteed no-loss outcome)
-            //   1.5R  → wider 1.2×ATR trail (lets winner breathe and run further)
+            // Four-tier approach — every early gain gets a safety net:
+            //
+            //   Tier 0 │ 0.30R │ 0.4×ATR trail, stays below entry
+            //           │       │ Catches fast reversals ("false breakout" protection)
+            //   Tier 1 │ 0.75R │ 0.6×ATR trail, stays below entry
+            //           │       │ Tightens as trade proves itself
+            //   Tier 2 │ 1.0R  │ Stop → exact breakeven (no-loss guaranteed)
+            //   Tier 3 │ 1.5R  │ 1.2×ATR trail, no ceiling (let winner run)
+            //
+            // Each tier only advances the stop — never retreats it.
             if pos.side == "LONG" {
-                // Tier 3: Wide trail once deeply profitable (1.5R+)
                 if r_mult >= 1.5 {
+                    // Tier 3: Wide trail — let runner breathe
                     let trail = pos.high_water_mark - atr * 1.2;
-                    if trail > pos.stop_loss {
-                        pos.stop_loss = trail;
-                    }
-                // Tier 2: Lock in breakeven at 1R
+                    if trail > pos.stop_loss { pos.stop_loss = trail; }
                 } else if r_mult >= 1.0 && pos.stop_loss < pos.entry_price {
+                    // Tier 2: Lock in breakeven
                     pos.stop_loss = pos.entry_price;
                     info!("📌 {} LONG stop → breakeven ${:.4}", pos.symbol, pos.entry_price);
-                // Tier 1: Tight trail at 0.75R — don't give back early gains
                 } else if r_mult >= 0.75 {
+                    // Tier 1: Tighter trail as trade matures
                     let trail = pos.high_water_mark - atr * 0.6;
                     if trail > pos.stop_loss && trail < pos.entry_price {
-                        // Only tighten below entry — don't over-ride breakeven once set
+                        pos.stop_loss = trail;
+                    }
+                } else if r_mult >= 0.30 {
+                    // Tier 0: Very tight early trail — protect first signs of profit
+                    let trail = pos.high_water_mark - atr * 0.4;
+                    if trail > pos.stop_loss && trail < pos.entry_price {
                         pos.stop_loss = trail;
                     }
                 }
             } else { // SHORT
-                // Tier 3: Wide trail once deeply profitable (1.5R+)
                 if r_mult >= 1.5 {
+                    // Tier 3: Wide trail
                     let trail = pos.low_water_mark + atr * 1.2;
-                    if trail < pos.stop_loss {
-                        pos.stop_loss = trail;
-                    }
-                // Tier 2: Lock in breakeven at 1R
+                    if trail < pos.stop_loss { pos.stop_loss = trail; }
                 } else if r_mult >= 1.0 && pos.stop_loss > pos.entry_price {
+                    // Tier 2: Breakeven
                     pos.stop_loss = pos.entry_price;
                     info!("📌 {} SHORT stop → breakeven ${:.4}", pos.symbol, pos.entry_price);
-                // Tier 1: Tight trail at 0.75R — don't give back early gains
                 } else if r_mult >= 0.75 {
+                    // Tier 1: Tighter trail
                     let trail = pos.low_water_mark + atr * 0.6;
+                    if trail < pos.stop_loss && trail > pos.entry_price {
+                        pos.stop_loss = trail;
+                    }
+                } else if r_mult >= 0.30 {
+                    // Tier 0: Early tight trail
+                    let trail = pos.low_water_mark + atr * 0.4;
                     if trail < pos.stop_loss && trail > pos.entry_price {
                         pos.stop_loss = trail;
                     }
@@ -770,6 +783,33 @@ async fn run_cycle(
             //   • Post-DCA bleeder: DCA didn't rescue it after another 2 hrs
             //     → cycles_held ≥ 480 (240 min) AND r_mult < -0.60 AND dca_count > 0
             //   • Never time-exit within 0.10R of stop (let stop-loss handle)
+            // ── False-breakout detection ──────────────────────────────────
+            // Pattern: trade shows early promise, then rapidly reverses — a
+            // failed breakout that should be cut before it bleeds further.
+            //
+            // Peak R-multiple computed from HWM (LONG) or LWM (SHORT):
+            //   peak_r = max-favourable move expressed in R units
+            let peak_r = if pos.r_dollars_risked > 1e-8 {
+                if pos.side == "LONG" {
+                    (pos.high_water_mark - pos.entry_price) * pos.quantity
+                        / pos.r_dollars_risked
+                } else {
+                    (pos.entry_price - pos.low_water_mark) * pos.quantity
+                        / pos.r_dollars_risked
+                }
+            } else { 0.0 };
+            //
+            // Conditions (all must hold):
+            //   • Was genuinely profitable at some point (peak_r ≥ 0.10R)
+            //   • Has since reversed into a loss (r_mult < −0.05R)
+            //   • Still within the first 60 min — rapid reversal = failed signal
+            //   • No DCA taken yet — DCA means we chose to double down; let that play
+            let false_breakout = peak_r >= 0.10
+                && r_mult < -0.05
+                && pos.cycles_held >= 30   // at least 15 min before declaring failure
+                && pos.cycles_held < 120   // still within the 60-min "fresh" window
+                && pos.dca_count == 0;
+
             let truly_flat         = pos.cycles_held >= 240 && r_mult.abs() < 0.20;
             let chronic_loss       = pos.cycles_held >= 360 && r_mult < -0.45 && r_mult > -0.90 && pos.dca_count == 0;
             // Post-DCA: sooner exit when more DCA slots have been used up
@@ -782,6 +822,10 @@ async fn run_cycle(
                 to_close.push((pos.symbol.clone(), cur, "StopLoss".to_string()));
             } else if hit_tp {
                 to_close.push((pos.symbol.clone(), cur, "TakeProfit".to_string()));
+            } else if false_breakout {
+                to_close.push((pos.symbol.clone(), cur, "FalseBreakout".to_string()));
+                info!("🔙 {} false-breakout exit — peaked {:.2}R, now {:.2}R after {} cycles",
+                      pos.symbol, peak_r, r_mult, pos.cycles_held);
             } else if stale {
                 let reason_detail = if truly_flat { "flat" } else if chronic_loss { "chronic loss" }
                                    else if post_dca_exhausted { "DCA exhausted" } else { "post-DCA loss" };
@@ -2918,5 +2962,120 @@ mod tests {
             (new_stop - 105.1).abs() < 1e-10,
             "trailing stop at 1.5R should be HWM - 1.2×ATR = 105.1, got {new_stop}"
         );
+    }
+
+    #[test]
+    fn tier0_trail_at_0_30r_for_long() {
+        // At 0.30R profit: 0.4×ATR trail activates, protecting early gains.
+        let entry: f64 = 100.0;
+        let stop    = 95.0;
+        let atr     = 2.0;
+        let qty     = 3.0;
+        let r_risk  = (entry - stop) * qty; // $15
+
+        // Price at exactly 0.30R: entry + 0.30 × (entry−stop) = $101.50
+        let cur    = 101.5;
+        let unr    = (cur - entry) * qty; // $4.50
+        let r_mult = unr / r_risk; // 0.30
+        assert!((r_mult - 0.30).abs() < 1e-10, "should be 0.30R at $101.50");
+
+        let hwm = cur;
+        let trail = hwm - atr * 0.4; // 101.5 - 0.8 = 100.7
+        // Only set if trail > current stop AND trail < entry
+        let new_stop = if r_mult >= 0.30 && trail > stop && trail < entry { trail } else { stop };
+        assert!(
+            (new_stop - 100.7).abs() < 1e-10,
+            "tier-0 trail at 0.30R should be HWM - 0.4×ATR = 100.7, got {new_stop}"
+        );
+    }
+
+    #[test]
+    fn tier0_trail_below_entry_only() {
+        // If tier-0 trail would land above entry (shouldn't happen until near
+        // breakeven), it must NOT fire — breakeven is tier-2's job.
+        let entry: f64 = 100.0;
+        let stop    = 95.0;
+        let atr     = 5.0;  // wide ATR
+        let qty     = 3.0;
+        let r_risk  = (entry - stop) * qty;
+
+        let cur    = 101.5; // 0.30R
+        let unr    = (cur - entry) * qty;
+        let r_mult = unr / r_risk; // 0.30
+        let hwm = cur;
+        let trail = hwm - atr * 0.4; // 101.5 - 2.0 = 99.5 — below entry, should fire
+        let new_stop_should_fire = if r_mult >= 0.30 && trail > stop && trail < entry { trail } else { stop };
+        assert!((new_stop_should_fire - 99.5).abs() < 1e-10,
+            "tier-0 trail below entry should fire, got {new_stop_should_fire}");
+
+        // Now with very wide ATR: trail lands above entry → must NOT override breakeven
+        let atr_wide = 12.0;
+        let trail_above_entry = hwm - atr_wide * 0.4; // 101.5 - 4.8 = 96.7, still below entry
+        // Actually with these numbers it's still below entry.
+        // Use stop already at entry to verify tier-0 doesn't fire when trail <= stop
+        let stop_at_be = entry; // 100.0
+        let new_stop_be = if r_mult >= 0.30 && trail_above_entry > stop_at_be && trail_above_entry < entry {
+            trail_above_entry
+        } else { stop_at_be };
+        assert_eq!(new_stop_be, stop_at_be,
+            "tier-0 must not override breakeven stop (trail must be strictly above current stop AND below entry)");
+    }
+
+    #[test]
+    fn false_breakout_detected_for_long() {
+        // Trade peaked at 0.15R, is now at -0.08R after 45 min with no DCA.
+        // Pattern: false breakout — should close.
+        let entry: f64 = 100.0;
+        let stop    = 95.0;
+        let qty     = 3.0;
+        let r_risk  = (entry - stop) * qty; // $15
+        let hwm     = 100.75; // peaked at +$0.75 per unit × 3 qty = $2.25 → 2.25/15 = 0.15R
+
+        let peak_r = (hwm - entry) * qty / r_risk; // 0.15
+        assert!((peak_r - 0.15).abs() < 1e-10, "peak should be 0.15R");
+
+        // Current price has reversed to -0.08R
+        let r_mult = -0.08_f64;
+        let cycles_held = 90_u32; // 45 min
+        let dca_count = 0_u32;
+
+        let false_breakout = peak_r >= 0.10
+            && r_mult < -0.05
+            && cycles_held >= 30
+            && cycles_held < 120
+            && dca_count == 0;
+        assert!(false_breakout, "REZ-type pattern should trigger false-breakout exit");
+    }
+
+    #[test]
+    fn false_breakout_not_triggered_with_dca() {
+        // Same reversal pattern but DCA was taken — we committed, let it play.
+        let peak_r = 0.15_f64;
+        let r_mult = -0.08_f64;
+        let cycles_held = 90_u32;
+        let dca_count = 1_u32; // DCA taken
+
+        let false_breakout = peak_r >= 0.10
+            && r_mult < -0.05
+            && cycles_held >= 30
+            && cycles_held < 120
+            && dca_count == 0;
+        assert!(!false_breakout, "false-breakout must not fire when DCA has been deployed");
+    }
+
+    #[test]
+    fn false_breakout_not_triggered_after_60min() {
+        // After 60 min, time-exit rules take over — don't re-fire false_breakout.
+        let peak_r = 0.15_f64;
+        let r_mult = -0.08_f64;
+        let cycles_held = 130_u32; // 65 min > 60 min window
+        let dca_count = 0_u32;
+
+        let false_breakout = peak_r >= 0.10
+            && r_mult < -0.05
+            && cycles_held >= 30
+            && cycles_held < 120
+            && dca_count == 0;
+        assert!(!false_breakout, "false-breakout window closes after 60 min (120 cycles)");
     }
 }
