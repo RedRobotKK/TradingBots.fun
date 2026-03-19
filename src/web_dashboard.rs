@@ -1951,6 +1951,274 @@ window.doResetStats = function() {{
 }};
 </script>
 {tracking_js}
+
+<!-- ── Floating AI Command Bar ──────────────────────────────────────────── -->
+<style>
+#ai-bar-tabs button {{ transition: color .15s, border-color .15s; }}
+#ai-bar-tabs button.tab-active {{ color:#e6edf3 !important; border-color: var(--tab-col) !important; }}
+#ai-cmd-input:focus {{ border-color:#388bfd !important; outline:none; }}
+.ai-chip-btn {{ background:none; border:1px solid #30363d; border-radius:10px;
+  color:#8b949e; font-size:.70rem; padding:2px 9px; cursor:pointer;
+  font-family:inherit; white-space:nowrap; transition: color .12s, border-color .12s; }}
+.ai-chip-btn:hover {{ color: var(--chip-hover-col, #58a6ff); border-color: var(--chip-hover-col, #58a6ff); }}
+</style>
+
+<div id="ai-bar" style="
+  position:fixed;bottom:0;left:0;right:0;z-index:9999;
+  background:rgba(13,17,23,0.93);
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  border-top:1px solid #30363d;
+  padding:8px 16px 10px;
+  display:flex;flex-direction:column;gap:5px;
+">
+  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+    <div id="ai-bar-tabs" style="display:flex;gap:0;border:1px solid #30363d;border-radius:7px;overflow:hidden;flex-shrink:0;">
+      <button id="tab-trade" onclick="setTab('trade')"
+        style="--tab-col:#f0883e;background:#161b22;border:none;padding:4px 12px;
+               font-size:.72rem;cursor:pointer;font-family:inherit;color:#8b949e;"
+        class="tab-active">⚡ Trade</button>
+      <button id="tab-strategy" onclick="setTab('strategy')"
+        style="--tab-col:#58a6ff;background:#161b22;border:none;border-left:1px solid #30363d;
+               padding:4px 12px;font-size:.72rem;cursor:pointer;font-family:inherit;color:#8b949e;">
+        🎯 Strategy</button>
+    </div>
+    <div id="thesis-chip" style="display:none;align-items:center;gap:5px;font-size:.72rem;">
+      <span style="color:#8b949e">Strategy:</span>
+      <span id="thesis-chip-text" style="
+        background:#1f6feb22;border:1px solid #1f6feb88;color:#58a6ff;
+        padding:1px 8px;border-radius:10px;font-size:.69rem;
+      "></span>
+      <button onclick="sendThesisCmd('reset')" style="
+        background:none;border:none;color:#8b949e;cursor:pointer;font-size:.68rem;padding:0 3px;
+      " title="Clear strategy">✕</button>
+    </div>
+    <div id="cmd-queued-badge" style="display:none;font-size:.70rem;color:#f0883e;
+         background:#2d1f0a;border:1px solid #f0883e66;border-radius:8px;padding:1px 8px;">
+      ⏱ executing on next cycle…
+    </div>
+  </div>
+
+  <div style="display:flex;gap:8px;align-items:center;">
+    <span id="ai-bar-icon" style="font-size:1rem;flex-shrink:0;">⚡</span>
+    <input id="ai-cmd-input" type="text"
+      placeholder="close kFloki  ·  take profit SOL  ·  close all"
+      style="
+        flex:1;background:#161b22;border:1px solid #30363d;border-radius:6px;
+        padding:7px 12px;color:#e6edf3;font-size:.82rem;font-family:inherit;
+        transition: border-color .15s;
+      "
+      onkeydown="if(event.key==='Enter')submitAiCmd()"
+      oninput="onCmdInput(this.value)"
+    />
+    <button id="ai-send-btn" onclick="submitAiCmd()" style="
+      background:#238636;border:none;border-radius:6px;
+      color:#fff;font-size:.80rem;padding:7px 14px;cursor:pointer;
+      white-space:nowrap;font-family:inherit;transition:background .15s;
+    ">Send</button>
+  </div>
+
+  <div id="chips-trade" style="display:flex;flex-wrap:wrap;gap:5px;padding-left:26px;">
+    <button class="ai-chip-btn" style="--chip-hover-col:#f0883e"
+      onclick="tradeCmd('close all')">🔴 close all</button>
+    <button class="ai-chip-btn" style="--chip-hover-col:#3fb950"
+      onclick="tradeCmd('take profits')">💰 take profits</button>
+    <button class="ai-chip-btn" style="--chip-hover-col:#f0883e"
+      id="chip-top-winner" onclick="tradeCmd('')" style="display:none">
+      tp top winner</button>
+    <button class="ai-chip-btn" style="--chip-hover-col:#58a6ff"
+      onclick="sendThesisCmd('show recent trades')">📋 recent trades</button>
+  </div>
+  <div id="chips-strategy" style="display:none;flex-wrap:wrap;gap:5px;padding-left:26px;">
+    <button class="ai-chip-btn" style="--chip-hover-col:#58a6ff"
+      onclick="setTab('strategy');sendThesisCmd('only BTC ETH SOL')">only BTC ETH SOL</button>
+    <button class="ai-chip-btn" style="--chip-hover-col:#58a6ff"
+      onclick="setTab('strategy');sendThesisCmd('meme coins only')">meme coins only</button>
+    <button class="ai-chip-btn" style="--chip-hover-col:#58a6ff"
+      onclick="setTab('strategy');sendThesisCmd('max 5x leverage')">max 5× leverage</button>
+    <button class="ai-chip-btn" style="--chip-hover-col:#f78166"
+      onclick="setTab('strategy');sendThesisCmd('aggressive')">aggressive</button>
+    <button class="ai-chip-btn" style="--chip-hover-col:#3fb950"
+      onclick="setTab('strategy');sendThesisCmd('conservative')">conservative</button>
+    <button class="ai-chip-btn" style="--chip-hover-col:#8b949e"
+      onclick="setTab('strategy');sendThesisCmd('reset')">reset strategy</button>
+  </div>
+
+  <div id="ai-response" style="
+    display:none;
+    border-radius:6px;padding:9px 13px;font-size:.80rem;
+    max-height:110px;overflow-y:auto;line-height:1.5;
+  "></div>
+</div>
+
+<script>
+(function() {{
+  var currentTab = 'trade';
+  var topWinnerSym = null;
+
+  window.setTab = function(tab) {{
+    currentTab = tab;
+    var isTrade = tab === 'trade';
+    document.getElementById('tab-trade').classList.toggle('tab-active', isTrade);
+    document.getElementById('tab-strategy').classList.toggle('tab-active', !isTrade);
+    document.getElementById('chips-trade').style.display    = isTrade ? 'flex' : 'none';
+    document.getElementById('chips-strategy').style.display = isTrade ? 'none' : 'flex';
+    var inp = document.getElementById('ai-cmd-input');
+    var icon = document.getElementById('ai-bar-icon');
+    if (isTrade) {{
+      inp.placeholder = 'close kFloki  ·  tp SOL  ·  close all  ·  take profits';
+      icon.textContent = '⚡';
+      document.getElementById('ai-send-btn').style.background = '#b94300';
+    }} else {{
+      inp.placeholder = 'only BTC ETH  ·  max 5x  ·  meme coins  ·  reset';
+      icon.textContent = '🎯';
+      document.getElementById('ai-send-btn').style.background = '#1f6feb';
+    }}
+  }};
+
+  var tradeKeywords = ['close','exit','sell','tp','take profit','take profits'];
+  var stratKeywords = ['only','max','leverage','meme','btc','eth','sol','aggressive','conservative','reset','sector'];
+  window.onCmdInput = function(val) {{
+    var lc = val.toLowerCase().trim();
+    if (!lc) return;
+    if (tradeKeywords.some(function(k){{ return lc.startsWith(k); }})) {{
+      if (currentTab !== 'trade') setTab('trade');
+    }} else if (stratKeywords.some(function(k){{ return lc.includes(k); }})) {{
+      if (currentTab !== 'strategy') setTab('strategy');
+    }}
+  }};
+
+  window.submitAiCmd = function() {{
+    var inp = document.getElementById('ai-cmd-input');
+    var cmd = (inp.value || '').trim();
+    if (!cmd) return;
+    inp.value = '';
+    if (currentTab === 'trade') {{ sendTradeCmd(cmd); }} else {{ sendThesisCmd(cmd); }}
+  }};
+
+  window.tradeCmd = function(cmd) {{
+    if (!cmd && topWinnerSym) cmd = 'tp ' + topWinnerSym;
+    if (!cmd) {{ showResp('⚠ No open positions found.', 'warn'); return; }}
+    sendTradeCmd(cmd);
+  }};
+
+  window.sendTradeCmd = function(cmd) {{
+    showResp('⏳ Parsing command…', 'info');
+    fetch('/api/command', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{command: cmd}})
+    }}).then(function(r){{ return r.json(); }}).then(function(d) {{
+      if (d.ok) {{
+        showResp('✅ ' + d.msg, 'ok');
+        var badge = document.getElementById('cmd-queued-badge');
+        badge.style.display = 'block';
+        setTimeout(function(){{ badge.style.display = 'none'; }}, 32000);
+        addCmdHistory((d.action || cmd) + (d.symbol ? ' ' + d.symbol : ''));
+      }} else {{
+        showResp('⚠ ' + d.msg, 'warn');
+      }}
+    }}).catch(function() {{
+      showResp('⚠ Network error — is the bot running?', 'warn');
+    }});
+  }};
+
+  window.sendThesisCmd = function(cmd) {{
+    showResp('⏳ Updating strategy…', 'info');
+    fetch('/api/thesis', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{command: cmd}})
+    }}).then(function(r){{ return r.json(); }}).then(function(d) {{
+      if (d.type === 'query') {{
+        showResp('📋 <b>Recent trades:</b><br>' + (d.message || 'No trades found.'), 'ok', true);
+      }} else if (d.summary) {{
+        showResp('✅ ' + d.message, 'ok');
+        showChip(d.summary);
+      }} else {{
+        showResp('✅ ' + (d.message || 'Strategy cleared'), 'ok');
+        clearChip();
+      }}
+    }}).catch(function() {{
+      showResp('⚠ Could not update strategy. Please try again.', 'warn');
+    }});
+  }};
+
+  var cmdHistory = [];
+  function addCmdHistory(label) {{
+    cmdHistory.unshift(label);
+    if (cmdHistory.length > 3) cmdHistory.pop();
+    renderCmdHistory();
+  }}
+  function renderCmdHistory() {{
+    var el = document.getElementById('cmd-history');
+    if (!el) return;
+    el.innerHTML = cmdHistory.map(function(c){{
+      return '<span style="font-size:.65rem;color:#484f58;background:#161b22;border:1px solid #21262d;border-radius:8px;padding:1px 7px;">✓ ' + c + '</span>';
+    }}).join(' ');
+  }}
+
+  function showResp(html, type, isHtml) {{
+    var el = document.getElementById('ai-response');
+    el.style.display = 'block';
+    var bg  = type === 'ok' ? '#0d2018' : type === 'warn' ? '#2d1a0e' : '#0d1117';
+    var col = type === 'ok' ? '#3fb950' : type === 'warn' ? '#e3b341'  : '#8b949e';
+    el.style.background = bg;
+    el.style.border = '1px solid ' + col + '44';
+    el.style.color = col;
+    if (isHtml) {{ el.innerHTML = html; }} else {{ el.textContent = html; }}
+    clearTimeout(el._hide);
+    if (type !== 'info') {{
+      el._hide = setTimeout(function(){{ el.style.display = 'none'; }}, 5000);
+    }}
+  }}
+
+  function showChip(summary) {{
+    var chip = document.getElementById('thesis-chip');
+    document.getElementById('thesis-chip-text').textContent = '🎯 ' + summary;
+    chip.style.display = 'flex';
+  }}
+  function clearChip() {{
+    document.getElementById('thesis-chip').style.display = 'none';
+  }}
+
+  fetch('/api/thesis').then(function(r){{ return r.json(); }}).then(function(d){{
+    if (d.summary) showChip(d.summary);
+  }}).catch(function(){{}});
+
+  function refreshState() {{
+    fetch('/api/state').then(function(r){{ return r.json(); }}).then(function(s){{
+      var best = null, bestPnl = 0;
+      (s.positions || []).forEach(function(p){{
+        if (p.unrealised_pnl > bestPnl) {{ bestPnl = p.unrealised_pnl; best = p.symbol; }}
+      }});
+      topWinnerSym = best;
+      var chipBtn = document.getElementById('chip-top-winner');
+      if (chipBtn) {{
+        if (best) {{
+          chipBtn.style.display = 'inline';
+          chipBtn.textContent = 'tp ' + best + ' ($' + bestPnl.toFixed(2) + ')';
+        }} else {{
+          chipBtn.style.display = 'none';
+        }}
+      }}
+    }}).catch(function(){{}});
+  }}
+  refreshState();
+  setInterval(refreshState, 30000);
+
+  (function(){{
+    var ct = document.getElementById('chips-trade');
+    if (!ct) return;
+    var hr = document.createElement('div');
+    hr.id = 'cmd-history';
+    hr.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;padding-left:26px;';
+    ct.parentNode.insertBefore(hr, ct.nextSibling);
+  }})();
+
+  setTab('trade');
+}})();
+</script>
+
 </body></html>"#,
         last_update  = s.last_update,
         equity       = equity,
