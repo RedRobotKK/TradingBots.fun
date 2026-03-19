@@ -383,20 +383,25 @@ mod tests {
 
     #[test]
     fn multi_level_volumes_summed_correctly() {
-        // 3 bid levels totalling 300, 2 ask levels totalling 100 → whole-book ratio = 3.0
-        // near-price depth (within 0.5% of mid≈100.3) includes levels within ±0.5% = 99.8–100.8
-        // bids: 100.5 (in range, 100), 100.0 (in range, 150), 99.5 (out: 99.5 < 99.8, so 0) = 250
-        // asks: 100.6 (in range, 60), 101.0 (out: 101 > 100.8, so 0) = 60
-        // near imbalance = 250/60 ≈ 4.2 → weighted composite = (3.0 + 2×4.2)/3 = 3.8 > 3.0 → conf=0.95
+        // Book with 3:1 whole-book imbalance AND strong near-price imbalance.
+        //
+        // Levels (best bid 100.0, best ask 100.1 → mid = 100.05):
+        //   bids: (100.0, 250) — 0.05/100.05 = 0.05% < 0.5% ✓ near   bid_total = 300
+        //         ( 99.0,  50) — 1.05/100.05 = 1.05% > 0.5% ✗ far
+        //   asks: (100.1,  60) — 0.05/100.05 = 0.05% < 0.5% ✓ near   ask_total = 100
+        //         (101.5,  40) — 1.45/100.05 = 1.45% > 0.5% ✗ far
+        //
+        // near_bid = 250, near_ask = 60 → near_imbalance = 4.17
+        // composite = (3.0 + 2 × 4.17) / 3 = 3.78 → base_conf = 0.95 (> 3.0 tier)
         let b = multi_level_book(
-            &[(100.5, 100.0), (100.0, 150.0), (99.5, 50.0)],
-            &[(100.6,  60.0), (101.0,  40.0)],
+            &[(100.0, 250.0), (99.0, 50.0)],
+            &[(100.1,  60.0), (101.5, 40.0)],
         );
         let sig = detect_order_flow(&b).unwrap();
         assert_eq!(sig.bid_volume, 300.0);
         assert_eq!(sig.ask_volume, 100.0);
         assert_eq!(sig.direction, "LONG", "3:1 bid:ask with deep near-side should be LONG");
-        // composite is dominated by near-price (250:60 ≈ 4.2) → confidence ≥ 0.85
+        // near-price imbalance (250:60 ≈ 4.2) pushes composite to 3.78 → confidence ≥ 0.85
         assert!(sig.confidence >= 0.85, "confidence={} should be ≥ 0.85", sig.confidence);
     }
 
