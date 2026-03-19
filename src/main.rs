@@ -569,6 +569,84 @@ async fn run_cycle(
     let candidates_raw = market.filter_candidates(&current_mids, prev_mids);
     *prev_mids = current_mids.clone();
 
+    // ── Drain manual commands queued via the AI interface ─────────────────
+    {
+        let cmds: Vec<web_dashboard::BotCommand> = {
+            let mut s = bot_state.write().await;
+            s.pending_cmds.drain(..).collect()
+        };
+        for cmd in cmds {
+            use web_dashboard::BotCommand;
+            match cmd {
+                BotCommand::ClosePosition { ref symbol } => {
+                    let price = current_mids.get(symbol.as_str())
+                        .copied()
+                        .or_else(|| {
+                            let lc = symbol.to_lowercase();
+                            current_mids.iter()
+                                .find(|(k, _)| k.to_lowercase() == lc)
+                                .map(|(_, &v)| v)
+                        });
+                    if let Some(px) = price {
+                        info!("🤖 Manual close: {symbol} @ {px}");
+                        close_paper_position(symbol, px, "Manual-Close",
+                            bot_state, weights, trade_logger, notifier, db,
+                            single_op_tenant()).await;
+                    } else {
+                        warn!("🤖 Manual close: {symbol} not found in price feed");
+                    }
+                }
+                BotCommand::TakePartial { ref symbol } => {
+                    let price = current_mids.get(symbol.as_str())
+                        .copied()
+                        .or_else(|| {
+                            let lc = symbol.to_lowercase();
+                            current_mids.iter()
+                                .find(|(k, _)| k.to_lowercase() == lc)
+                                .map(|(_, &v)| v)
+                        });
+                    if let Some(px) = price {
+                        info!("🤖 Manual take-partial: {symbol} @ {px}");
+                        take_partial(symbol, px, 0, bot_state, weights, trade_logger).await;
+                    } else {
+                        warn!("🤖 Manual take-partial: {symbol} not found in price feed");
+                    }
+                }
+                BotCommand::CloseAll => {
+                    let open: Vec<(String, f64)> = {
+                        let s = bot_state.read().await;
+                        s.positions.iter()
+                            .filter_map(|p| current_mids.get(p.symbol.as_str())
+                                .map(|&px| (p.symbol.clone(), px)))
+                            .collect()
+                    };
+                    info!("🤖 Manual close-all: {} positions", open.len());
+                    for (sym, px) in open {
+                        close_paper_position(&sym, px, "Manual-CloseAll",
+                            bot_state, weights, trade_logger, notifier, db,
+                            single_op_tenant()).await;
+                    }
+                }
+                BotCommand::CloseProfitable => {
+                    let profitable: Vec<(String, f64)> = {
+                        let s = bot_state.read().await;
+                        s.positions.iter()
+                            .filter(|p| p.unrealised_pnl > 0.0)
+                            .filter_map(|p| current_mids.get(p.symbol.as_str())
+                                .map(|&px| (p.symbol.clone(), px)))
+                            .collect()
+                    };
+                    info!("🤖 Manual take-profits: {} winning positions", profitable.len());
+                    for (sym, px) in profitable {
+                        close_paper_position(&sym, px, "Manual-TakeProfit",
+                            bot_state, weights, trade_logger, notifier, db,
+                            single_op_tenant()).await;
+                    }
+                }
+            }
+        }
+    }
+
     // ── Investment thesis: read current constraints (lock-free snapshot) ──
     let thesis_snap = global_thesis.read().await.clone();
 

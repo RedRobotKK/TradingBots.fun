@@ -293,6 +293,27 @@ pub struct BotState {
     /// Used to show "own capital at risk" vs "house money at risk" split on dashboard.
     #[serde(default)]
     pub pool_deployed_usd: f64,
+
+    // ── Manual command queue (AI interface) ──────────────────────────────
+    /// Commands typed by the operator via the AI bar and queued for execution
+    /// on the next trading cycle.  Drained at the top of `run_cycle()`.
+    #[serde(default)]
+    pub pending_cmds: std::collections::VecDeque<BotCommand>,
+}
+
+/// A manual trade-execution command queued by the operator via the AI bar.
+/// Processed by `run_cycle()` with live prices before any autonomous logic runs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum BotCommand {
+    /// Close the named position at current market price.
+    ClosePosition { symbol: String },
+    /// Take a partial profit (tranche 0 = first 1/3) on the named position.
+    TakePartial    { symbol: String },
+    /// Close every open position immediately.
+    CloseAll,
+    /// Close all positions that are currently in profit.
+    CloseProfitable,
 }
 
 impl Default for BotState {
@@ -314,6 +335,7 @@ impl Default for BotState {
             house_money_pool: 0.0,
             recently_closed:  std::collections::VecDeque::new(),
             pool_deployed_usd: 0.0,
+            pending_cmds:      std::collections::VecDeque::new(),
         }
     }
 }
@@ -2007,118 +2029,300 @@ fn consumer_shell_close() -> &'static str {
   <a href="/app/onboarding" style="color:#484f58;text-decoration:none">Terms &amp; Risk Disclosure</a>
 </footer>
 
-<!-- ── Floating AI Thesis Bar ─────────────────────────────────────────── -->
-<div id="thesis-bar" style="
+<!-- ── Floating AI Command Bar ──────────────────────────────────────────── -->
+<style>
+#ai-bar-tabs button { transition: color .15s, border-color .15s; }
+#ai-bar-tabs button.tab-active { color:#e6edf3 !important; border-color: var(--tab-col) !important; }
+#ai-cmd-input:focus { border-color:#388bfd !important; outline:none; }
+.ai-chip-btn { background:none; border:1px solid #30363d; border-radius:10px;
+  color:#8b949e; font-size:.70rem; padding:2px 9px; cursor:pointer;
+  font-family:inherit; white-space:nowrap; transition: color .12s, border-color .12s; }
+.ai-chip-btn:hover { color: var(--chip-hover-col, #58a6ff); border-color: var(--chip-hover-col, #58a6ff); }
+</style>
+
+<div id="ai-bar" style="
   position:fixed;bottom:0;left:0;right:0;z-index:9999;
-  background:rgba(13,17,23,0.92);
-  backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+  background:rgba(13,17,23,0.93);
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
   border-top:1px solid #30363d;
-  padding:10px 16px 12px;
-  display:flex;flex-direction:column;gap:6px;
+  padding:8px 16px 10px;
+  display:flex;flex-direction:column;gap:5px;
 ">
-  <!-- Active thesis chip (hidden when empty) -->
-  <div id="thesis-chip" style="display:none;align-items:center;gap:6px;font-size:.72rem;">
-    <span style="color:#8b949e">Active:</span>
-    <span id="thesis-chip-text" style="
-      background:#1f6feb22;border:1px solid #1f6feb88;color:#58a6ff;
-      padding:2px 8px;border-radius:10px;font-size:.70rem;
-    "></span>
-    <button onclick="sendThesisCmd('reset')" style="
-      background:none;border:none;color:#8b949e;cursor:pointer;
-      font-size:.68rem;padding:0 4px;line-height:1.4;
-    " title="Clear thesis">✕</button>
+  <!-- ── Top row: tabs + active-thesis chip ─────────────────────────── -->
+  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+    <!-- Mode tabs -->
+    <div id="ai-bar-tabs" style="display:flex;gap:0;border:1px solid #30363d;border-radius:7px;overflow:hidden;flex-shrink:0;">
+      <button id="tab-trade" onclick="setTab('trade')"
+        style="--tab-col:#f0883e;background:#161b22;border:none;padding:4px 12px;
+               font-size:.72rem;cursor:pointer;font-family:inherit;color:#8b949e;"
+        class="tab-active">⚡ Trade</button>
+      <button id="tab-strategy" onclick="setTab('strategy')"
+        style="--tab-col:#58a6ff;background:#161b22;border:none;border-left:1px solid #30363d;
+               padding:4px 12px;font-size:.72rem;cursor:pointer;font-family:inherit;color:#8b949e;">
+        🎯 Strategy</button>
+    </div>
+    <!-- Active thesis chip -->
+    <div id="thesis-chip" style="display:none;align-items:center;gap:5px;font-size:.72rem;">
+      <span style="color:#8b949e">Strategy:</span>
+      <span id="thesis-chip-text" style="
+        background:#1f6feb22;border:1px solid #1f6feb88;color:#58a6ff;
+        padding:1px 8px;border-radius:10px;font-size:.69rem;
+      "></span>
+      <button onclick="sendThesisCmd('reset')" style="
+        background:none;border:none;color:#8b949e;cursor:pointer;font-size:.68rem;padding:0 3px;
+      " title="Clear strategy">✕</button>
+    </div>
+    <!-- Queued-command badge -->
+    <div id="cmd-queued-badge" style="display:none;font-size:.70rem;color:#f0883e;
+         background:#2d1f0a;border:1px solid #f0883e66;border-radius:8px;padding:1px 8px;">
+      ⏱ executing on next cycle…
+    </div>
   </div>
 
-  <!-- Input row -->
+  <!-- ── Input row ───────────────────────────────────────────────────── -->
   <div style="display:flex;gap:8px;align-items:center;">
-    <span style="font-size:1rem;flex-shrink:0;">🤖</span>
-    <input id="thesis-input" type="text"
-      placeholder="Ask the AI or set a strategy…"
+    <span id="ai-bar-icon" style="font-size:1rem;flex-shrink:0;">⚡</span>
+    <input id="ai-cmd-input" type="text"
+      placeholder="close kFloki  ·  take profit SOL  ·  close all"
       style="
         flex:1;background:#161b22;border:1px solid #30363d;border-radius:6px;
-        padding:7px 12px;color:#e6edf3;font-size:.82rem;outline:none;
-        font-family:inherit;
+        padding:7px 12px;color:#e6edf3;font-size:.82rem;font-family:inherit;
+        transition: border-color .15s;
       "
-      onkeydown="if(event.key==='Enter')submitThesis()"
+      onkeydown="if(event.key==='Enter')submitAiCmd()"
+      oninput="onCmdInput(this.value)"
     />
-    <button onclick="submitThesis()" style="
+    <button id="ai-send-btn" onclick="submitAiCmd()" style="
       background:#238636;border:none;border-radius:6px;
       color:#fff;font-size:.80rem;padding:7px 14px;cursor:pointer;
-      white-space:nowrap;font-family:inherit;
+      white-space:nowrap;font-family:inherit;transition:background .15s;
     ">Send</button>
   </div>
 
-  <!-- Suggestion chips -->
-  <div style="display:flex;flex-wrap:wrap;gap:5px;padding-left:28px;">
-    <button onclick="sendThesisCmd('only BTC ETH SOL')" style="background:none;border:1px solid #30363d;border-radius:10px;color:#8b949e;font-size:.70rem;padding:2px 9px;cursor:pointer;font-family:inherit;white-space:nowrap;" onmouseover="this.style.borderColor='#58a6ff';this.style.color='#58a6ff'" onmouseout="this.style.borderColor='#30363d';this.style.color='#8b949e'">only BTC ETH SOL</button>
-    <button onclick="sendThesisCmd('meme coins only')" style="background:none;border:1px solid #30363d;border-radius:10px;color:#8b949e;font-size:.70rem;padding:2px 9px;cursor:pointer;font-family:inherit;white-space:nowrap;" onmouseover="this.style.borderColor='#58a6ff';this.style.color='#58a6ff'" onmouseout="this.style.borderColor='#30363d';this.style.color='#8b949e'">meme coins only</button>
-    <button onclick="sendThesisCmd('max 5x leverage')" style="background:none;border:1px solid #30363d;border-radius:10px;color:#8b949e;font-size:.70rem;padding:2px 9px;cursor:pointer;font-family:inherit;white-space:nowrap;" onmouseover="this.style.borderColor='#58a6ff';this.style.color='#58a6ff'" onmouseout="this.style.borderColor='#30363d';this.style.color='#8b949e'">max 5x leverage</button>
-    <button onclick="sendThesisCmd('aggressive')" style="background:none;border:1px solid #30363d;border-radius:10px;color:#8b949e;font-size:.70rem;padding:2px 9px;cursor:pointer;font-family:inherit;white-space:nowrap;" onmouseover="this.style.borderColor='#f78166';this.style.color='#f78166'" onmouseout="this.style.borderColor='#30363d';this.style.color='#8b949e'">aggressive</button>
-    <button onclick="sendThesisCmd('conservative')" style="background:none;border:1px solid #30363d;border-radius:10px;color:#8b949e;font-size:.70rem;padding:2px 9px;cursor:pointer;font-family:inherit;white-space:nowrap;" onmouseover="this.style.borderColor='#3fb950';this.style.color='#3fb950'" onmouseout="this.style.borderColor='#30363d';this.style.color='#8b949e'">conservative</button>
-    <button onclick="sendThesisCmd('show recent trades')" style="background:none;border:1px solid #30363d;border-radius:10px;color:#8b949e;font-size:.70rem;padding:2px 9px;cursor:pointer;font-family:inherit;white-space:nowrap;" onmouseover="this.style.borderColor='#58a6ff';this.style.color='#58a6ff'" onmouseout="this.style.borderColor='#30363d';this.style.color='#8b949e'">show recent trades</button>
-    <button onclick="sendThesisCmd('reset')" style="background:none;border:1px solid #30363d;border-radius:10px;color:#8b949e;font-size:.70rem;padding:2px 9px;cursor:pointer;font-family:inherit;white-space:nowrap;" onmouseover="this.style.borderColor='#8b949e';this.style.color='#c9d1d9'" onmouseout="this.style.borderColor='#30363d';this.style.color='#8b949e'">reset</button>
+  <!-- ── Chip rows ───────────────────────────────────────────────────── -->
+  <!-- Trade chips (default visible) -->
+  <div id="chips-trade" style="display:flex;flex-wrap:wrap;gap:5px;padding-left:26px;">
+    <button class="ai-chip-btn" style="--chip-hover-col:#f0883e"
+      onclick="tradeCmd('close all')">🔴 close all</button>
+    <button class="ai-chip-btn" style="--chip-hover-col:#3fb950"
+      onclick="tradeCmd('take profits')">💰 take profits</button>
+    <button class="ai-chip-btn" style="--chip-hover-col:#f0883e"
+      id="chip-top-winner" onclick="tradeCmd('')" style="display:none">
+      tp top winner</button>
+    <button class="ai-chip-btn" style="--chip-hover-col:#58a6ff"
+      onclick="sendThesisCmd('show recent trades')">📋 recent trades</button>
+  </div>
+  <!-- Strategy chips (hidden until tab switched) -->
+  <div id="chips-strategy" style="display:none;flex-wrap:wrap;gap:5px;padding-left:26px;">
+    <button class="ai-chip-btn" style="--chip-hover-col:#58a6ff"
+      onclick="setTab('strategy');sendThesisCmd('only BTC ETH SOL')">only BTC ETH SOL</button>
+    <button class="ai-chip-btn" style="--chip-hover-col:#58a6ff"
+      onclick="setTab('strategy');sendThesisCmd('meme coins only')">meme coins only</button>
+    <button class="ai-chip-btn" style="--chip-hover-col:#58a6ff"
+      onclick="setTab('strategy');sendThesisCmd('max 5x leverage')">max 5× leverage</button>
+    <button class="ai-chip-btn" style="--chip-hover-col:#f78166"
+      onclick="setTab('strategy');sendThesisCmd('aggressive')">aggressive</button>
+    <button class="ai-chip-btn" style="--chip-hover-col:#3fb950"
+      onclick="setTab('strategy');sendThesisCmd('conservative')">conservative</button>
+    <button class="ai-chip-btn" style="--chip-hover-col:#8b949e"
+      onclick="setTab('strategy');sendThesisCmd('reset')">reset strategy</button>
   </div>
 
-  <!-- Response panel (slides in after submit) -->
-  <div id="thesis-response" style="
+  <!-- ── Response panel ─────────────────────────────────────────────── -->
+  <div id="ai-response" style="
     display:none;
-    background:#161b22;border:1px solid #21262d;border-radius:6px;
-    padding:10px 14px;font-size:.80rem;color:#8b949e;
-    max-height:120px;overflow-y:auto;
-    line-height:1.5;
+    border-radius:6px;padding:9px 13px;font-size:.80rem;
+    max-height:110px;overflow-y:auto;line-height:1.5;
   "></div>
 </div>
 
 <script>
 (function() {
-  // Load current thesis on page load
-  fetch('/api/thesis').then(r=>r.json()).then(d=>{
-    if(d.summary) showChip(d.summary);
-  }).catch(()=>{});
+  var currentTab = 'trade';
+  var topWinnerSym = null;   // populated by /api/state poll
 
-  window.submitThesis = function() {
-    var inp = document.getElementById('thesis-input');
-    var cmd = (inp.value||'').trim();
-    if(!cmd) return;
-    sendThesisCmd(cmd);
-    inp.value = '';
+  // ── Tab switching ─────────────────────────────────────────────────────
+  window.setTab = function(tab) {
+    currentTab = tab;
+    var isTrade = tab === 'trade';
+    document.getElementById('tab-trade').classList.toggle('tab-active', isTrade);
+    document.getElementById('tab-strategy').classList.toggle('tab-active', !isTrade);
+    document.getElementById('chips-trade').style.display    = isTrade ? 'flex' : 'none';
+    document.getElementById('chips-strategy').style.display = isTrade ? 'none' : 'flex';
+    var inp = document.getElementById('ai-cmd-input');
+    var icon = document.getElementById('ai-bar-icon');
+    if (isTrade) {
+      inp.placeholder = 'close kFloki  ·  tp SOL  ·  close all  ·  take profits';
+      icon.textContent = '⚡';
+      document.getElementById('ai-send-btn').style.background = '#b94300';
+    } else {
+      inp.placeholder = 'only BTC ETH  ·  max 5x  ·  meme coins  ·  reset';
+      icon.textContent = '🎯';
+      document.getElementById('ai-send-btn').style.background = '#1f6feb';
+    }
   };
 
-  window.sendThesisCmd = function(cmd) {
-    var resp = document.getElementById('thesis-response');
-    resp.style.display = 'block';
-    resp.textContent = '⏳ Processing…';
-    fetch('/api/thesis', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
+  // ── Input hint: auto-detect trade vs strategy ────────────────────────
+  var tradeKeywords = ['close','exit','sell','tp','take profit','take profits'];
+  var stratKeywords = ['only','max','leverage','meme','btc','eth','sol','aggressive','conservative','reset','sector'];
+  window.onCmdInput = function(val) {
+    var lc = val.toLowerCase().trim();
+    if (!lc) return;
+    if (tradeKeywords.some(function(k){ return lc.startsWith(k); })) {
+      if (currentTab !== 'trade') setTab('trade');
+    } else if (stratKeywords.some(function(k){ return lc.includes(k); })) {
+      if (currentTab !== 'strategy') setTab('strategy');
+    }
+  };
+
+  // ── Main submit ───────────────────────────────────────────────────────
+  window.submitAiCmd = function() {
+    var inp = document.getElementById('ai-cmd-input');
+    var cmd = (inp.value || '').trim();
+    if (!cmd) return;
+    inp.value = '';
+    if (currentTab === 'trade') {
+      sendTradeCmd(cmd);
+    } else {
+      sendThesisCmd(cmd);
+    }
+  };
+
+  // ── Trade command path ────────────────────────────────────────────────
+  window.tradeCmd = function(cmd) {
+    if (!cmd && topWinnerSym) cmd = 'tp ' + topWinnerSym;
+    if (!cmd) { showResp('⚠ No open positions found.', 'warn'); return; }
+    sendTradeCmd(cmd);
+  };
+
+  window.sendTradeCmd = function(cmd) {
+    showResp('⏳ Parsing command…', 'info');
+    fetch('/api/command', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({command: cmd})
-    }).then(r=>r.json()).then(d=>{
-      if(d.type === 'query') {
-        // Trade query response
-        resp.innerHTML = '📋 <b>Recent trades:</b><br>' + (d.message || 'No trades found');
-      } else if(d.summary) {
-        resp.textContent = '✅ ' + d.message;
-        showChip(d.summary);
+    }).then(function(r){ return r.json(); }).then(function(d) {
+      if (d.ok) {
+        var sym = d.symbol ? ' ' + d.symbol : '';
+        showResp('✅ ' + d.msg, 'ok');
+        // Show the "executing on next cycle" badge
+        var badge = document.getElementById('cmd-queued-badge');
+        badge.style.display = 'block';
+        setTimeout(function(){ badge.style.display = 'none'; }, 32000);
+        addCmdHistory(d.action + sym);
       } else {
-        resp.textContent = '✅ ' + (d.message || 'Thesis cleared — AI decides everything');
-        clearChip();
+        showResp('⚠ ' + d.msg, 'warn');
       }
-      setTimeout(()=>{ resp.style.display='none'; }, 4000);
-    }).catch(()=>{
-      resp.textContent = '⚠ Could not update thesis. Please try again.';
+    }).catch(function() {
+      showResp('⚠ Network error — is the bot running?', 'warn');
     });
   };
 
-  function showChip(summary) {
-    var chip = document.getElementById('thesis-chip');
-    var txt  = document.getElementById('thesis-chip-text');
-    chip.style.display = 'flex';
-    txt.textContent = '🎯 ' + summary;
+  // ── Strategy / thesis path (unchanged) ───────────────────────────────
+  window.sendThesisCmd = function(cmd) {
+    showResp('⏳ Updating strategy…', 'info');
+    fetch('/api/thesis', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({command: cmd})
+    }).then(function(r){ return r.json(); }).then(function(d) {
+      if (d.type === 'query') {
+        showResp('📋 <b>Recent trades:</b><br>' + (d.message || 'No trades found.'), 'ok', true);
+      } else if (d.summary) {
+        showResp('✅ ' + d.message, 'ok');
+        showChip(d.summary);
+      } else {
+        showResp('✅ ' + (d.message || 'Strategy cleared — AI decides everything'), 'ok');
+        clearChip();
+      }
+    }).catch(function() {
+      showResp('⚠ Could not update strategy. Please try again.', 'warn');
+    });
+  };
+
+  // ── Command history (last 3 executions, shown as faded chips) ────────
+  var cmdHistory = [];
+  function addCmdHistory(label) {
+    cmdHistory.unshift(label);
+    if (cmdHistory.length > 3) cmdHistory.pop();
+    renderCmdHistory();
+  }
+  function renderCmdHistory() {
+    var el = document.getElementById('cmd-history');
+    if (!el) return;
+    el.innerHTML = cmdHistory.map(function(c){
+      return '<span style="font-size:.65rem;color:#484f58;background:#161b22;border:1px solid #21262d;border-radius:8px;padding:1px 7px;">✓ ' + c + '</span>';
+    }).join(' ');
   }
 
+  // ── Response panel helper ─────────────────────────────────────────────
+  function showResp(html, type, isHtml) {
+    var el = document.getElementById('ai-response');
+    el.style.display = 'block';
+    var bg = type === 'ok'   ? '#0d2018' :
+             type === 'warn' ? '#2d1a0e' : '#0d1117';
+    var col = type === 'ok'  ? '#3fb950' :
+              type === 'warn'? '#e3b341' : '#8b949e';
+    el.style.background = bg;
+    el.style.border = '1px solid ' + col + '44';
+    el.style.color = col;
+    if (isHtml) { el.innerHTML = html; } else { el.textContent = html; }
+    clearTimeout(el._hide);
+    if (type !== 'info') {
+      el._hide = setTimeout(function(){ el.style.display = 'none'; }, 5000);
+    }
+  }
+
+  // ── Thesis chip helpers ───────────────────────────────────────────────
+  function showChip(summary) {
+    var chip = document.getElementById('thesis-chip');
+    document.getElementById('thesis-chip-text').textContent = '🎯 ' + summary;
+    chip.style.display = 'flex';
+  }
   function clearChip() {
     document.getElementById('thesis-chip').style.display = 'none';
   }
+
+  // ── On load: restore thesis chip + identify top winner ───────────────
+  fetch('/api/thesis').then(function(r){ return r.json(); }).then(function(d){
+    if (d.summary) showChip(d.summary);
+  }).catch(function(){});
+
+  // Poll /api/state every 30 s to keep chip labels fresh & find top winner
+  function refreshState() {
+    fetch('/api/state').then(function(r){ return r.json(); }).then(function(s){
+      // top profitable position for the "tp top winner" chip
+      var best = null, bestPnl = 0;
+      (s.positions || []).forEach(function(p){
+        if (p.unrealised_pnl > bestPnl) { bestPnl = p.unrealised_pnl; best = p.symbol; }
+      });
+      topWinnerSym = best;
+      var chipBtn = document.getElementById('chip-top-winner');
+      if (chipBtn) {
+        if (best) {
+          chipBtn.style.display = 'inline';
+          chipBtn.textContent = 'tp ' + best + ' ($' + bestPnl.toFixed(2) + ')';
+        } else {
+          chipBtn.style.display = 'none';
+        }
+      }
+    }).catch(function(){});
+  }
+  refreshState();
+  setInterval(refreshState, 30000);
+
+  // Inject command-history row after chips-trade
+  (function(){
+    var ct = document.getElementById('chips-trade');
+    if (!ct) return;
+    var hr = document.createElement('div');
+    hr.id = 'cmd-history';
+    hr.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;padding-left:26px;';
+    ct.parentNode.insertBefore(hr, ct.nextSibling);
+  })();
+
+  // Init trade tab as default
+  setTab('trade');
 })();
 </script>
 
@@ -5230,6 +5434,162 @@ async fn hl_export_key_handler(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+//  AI Trade Command API  — /api/command
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[derive(serde::Deserialize)]
+struct CommandRequest {
+    command: String,
+}
+
+/// Parse a natural-language operator command into a `BotCommand`.
+///
+/// Recognised patterns (case-insensitive):
+///   "close all" / "close everything" / "exit all"  → CloseAll
+///   "take profits" / "take all profits"             → CloseProfitable
+///   "take profit from <sym>" / "take profit <sym>"  → TakePartial { symbol }
+///   "close <sym>" / "exit <sym>" / "sell <sym>"     → ClosePosition { symbol }
+///   "tp <sym>"                                       → TakePartial { symbol }
+fn parse_trade_command(cmd: &str) -> Option<BotCommand> {
+    let lower = cmd.trim().to_lowercase();
+    let words: Vec<&str> = lower.split_whitespace().collect();
+
+    // ── "close all" variants ──────────────────────────────────────────────
+    if lower.contains("close all") || lower.contains("close everything")
+        || lower.contains("exit all") || lower.contains("sell all")
+        || lower.contains("close every")
+    {
+        return Some(BotCommand::CloseAll);
+    }
+
+    // ── "take profits" with no specific symbol ────────────────────────────
+    if (lower.contains("take profit") || lower.contains("take profits"))
+        && !lower.contains(" from ")
+        && words.len() <= 3
+    {
+        return Some(BotCommand::CloseProfitable);
+    }
+
+    // ── Word-by-word scan for close / take-profit + symbol ────────────────
+    for (i, word) in words.iter().enumerate() {
+        match *word {
+            "close" | "exit" | "sell" => {
+                // "close kFloki", "exit BTC"
+                if let Some(sym) = words.get(i + 1).filter(|&&w| w != "all") {
+                    return Some(BotCommand::ClosePosition { symbol: sym.to_uppercase() });
+                }
+            }
+            "tp" => {
+                // "tp SOL"
+                if let Some(sym) = words.get(i + 1) {
+                    return Some(BotCommand::TakePartial { symbol: sym.to_uppercase() });
+                }
+            }
+            "profit" | "profits" => {
+                // "take profit from kFloki", "take profit BTC"
+                // skip optional "from"
+                let next = words.get(i + 1);
+                let sym = if next == Some(&"from") {
+                    words.get(i + 2)
+                } else {
+                    next
+                };
+                if let Some(s) = sym {
+                    return Some(BotCommand::TakePartial { symbol: s.to_uppercase() });
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
+/// `POST /api/command` — queue a manual trade-execution command.
+///
+/// Body:  `{"command": "take profit from kFloki"}`
+///
+/// The command is parsed into a `BotCommand` and appended to `pending_cmds`
+/// in `BotState`.  It executes at the start of the **next trading cycle**
+/// (~30 seconds) with a live market price.
+///
+/// Response:
+///   `{"ok":true,  "action":"TakePartial","symbol":"KFLOKI","msg":"Queued…"}`
+///   `{"ok":false, "msg":"Could not parse…"}`
+async fn command_handler(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+    axum::Json(req): axum::Json<CommandRequest>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    // Operator-only — must be authenticated
+    if get_session_tenant_id(&headers, &app.session_secret).is_none() {
+        return axum::http::StatusCode::UNAUTHORIZED.into_response();
+    }
+
+    // Basic length guard
+    if req.command.len() > 200 {
+        return axum::response::Json(serde_json::json!({
+            "ok": false,
+            "msg": "Command too long (max 200 chars)."
+        })).into_response();
+    }
+
+    let cmd_clean: String = req.command
+        .chars()
+        .map(|c| if (c as u32) < 32 && c != ' ' { ' ' } else { c })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    match parse_trade_command(&cmd_clean) {
+        Some(bot_cmd) => {
+            // Build a human-readable description for the response
+            let (action, symbol, msg) = match &bot_cmd {
+                BotCommand::ClosePosition { symbol } =>
+                    ("ClosePosition", symbol.clone(),
+                     format!("Closing {symbol} on next cycle ⏱")),
+                BotCommand::TakePartial { symbol } =>
+                    ("TakePartial", symbol.clone(),
+                     format!("Taking partial profit on {symbol} (tranche 1/3) on next cycle ⏱")),
+                BotCommand::CloseAll =>
+                    ("CloseAll", String::new(),
+                     "Closing ALL positions on next cycle ⏱".to_string()),
+                BotCommand::CloseProfitable =>
+                    ("CloseProfitable", String::new(),
+                     "Taking profits on all winning positions on next cycle ⏱".to_string()),
+            };
+
+            // Push to queue
+            {
+                let mut s = app.bot_state.write().await;
+                s.pending_cmds.push_back(bot_cmd);
+            }
+
+            axum::response::Json(serde_json::json!({
+                "ok":     true,
+                "action": action,
+                "symbol": symbol,
+                "msg":    msg,
+            })).into_response()
+        }
+        None => {
+            // Not a recognised trade command — tell the caller
+            axum::response::Json(serde_json::json!({
+                "ok":  false,
+                "msg": format!(
+                    "Couldn't parse "{}" as a trade command. \
+                     Try: "close SOL", "take profit ETH", "close all", "take profits".",
+                    cmd_clean
+                )
+            })).into_response()
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 //  Investment thesis API
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -6177,6 +6537,8 @@ pub async fn serve(app_state: AppState, port: u16) -> Result<(), Box<dyn std::er
         .route("/api/leaderboard",      get(api_leaderboard_handler))
         // ── Investment thesis ────────────────────────────────────────────────
         .route("/api/thesis",           get(thesis_get_handler).post(thesis_update_handler))
+        // ── AI trade commands ────────────────────────────────────────────────
+        .route("/api/command",          post(command_handler))
         .with_state(app_state);
     let addr = format!("0.0.0.0:{}", port);
     log::info!("🌐 Dashboard at http://{}", addr);
