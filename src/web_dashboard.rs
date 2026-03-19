@@ -5977,7 +5977,7 @@ a{color:inherit;text-decoration:none}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.2}}
 
 /* ── Hero ── */
-.hero{text-align:center;padding:64px 24px 52px;background:radial-gradient(ellipse 120% 60% at 50% 0%,rgba(63,185,80,.07) 0%,transparent 70%)}
+.hero{text-align:center;padding:64px 24px 52px;background:radial-gradient(ellipse 120% 60% at 50% 0%,rgba(63,185,80,.07) 0%,transparent 70%);position:relative;overflow:hidden}
 .hero-eyebrow{display:inline-block;background:rgba(63,185,80,.1);border:1px solid rgba(63,185,80,.25);border-radius:20px;padding:4px 14px;font-size:.7rem;font-weight:700;color:var(--green);letter-spacing:.9px;text-transform:uppercase;margin-bottom:18px}
 .hero h1{font-size:clamp(2rem,4.5vw,3rem);font-weight:800;color:var(--text-hi);line-height:1.15;margin-bottom:12px}
 .hero h1 em{font-style:normal;background:linear-gradient(135deg,var(--green),#58e87a);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
@@ -6005,11 +6005,15 @@ a{color:inherit;text-decoration:none}
 .sec-title{font-size:.78rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.8px}
 .sec-line{flex:1;height:1px;background:var(--border)}
 
-/* ── AUM Chart ── */
-.chart-card{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:20px;position:relative;height:160px}
-#aum-canvas{width:100%;height:100%}
-.chart-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:.82rem;flex-direction:column;gap:6px}
-.chart-empty small{font-size:.68rem;color:#30363d}
+/* ── AUM Chart (hero background) ── */
+#aum-canvas{position:absolute;inset:0;width:100%;height:100%;opacity:.18;pointer-events:none}
+
+/* ── Stat bar (below hero) ── */
+.stat-bar{display:flex;justify-content:center;background:var(--bg2);border-bottom:1px solid var(--border);flex-wrap:wrap}
+.stat-cell{padding:18px 36px;text-align:center;border-right:1px solid var(--border);flex:1;min-width:140px}
+.stat-cell:last-child{border-right:none}
+.stat-val{font-size:1.45rem;font-weight:800;color:var(--text-hi);font-variant-numeric:tabular-nums;line-height:1}
+.stat-lbl{font-size:.64rem;color:var(--dim);text-transform:uppercase;letter-spacing:.75px;margin-top:5px}
 
 /* ── Algo cards ── */
 .algo-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}
@@ -6024,6 +6028,23 @@ a{color:inherit;text-decoration:none}
 .sig-pill{font-size:.68rem;padding:3px 9px;border-radius:5px;font-weight:600}
 .sig-primary{background:rgba(88,166,255,.12);color:var(--blue);border:1px solid rgba(88,166,255,.2)}
 .sig-secondary{background:rgba(72,79,88,.12);color:var(--muted);border:1px solid var(--border)}
+
+/* ── Position tile scroll strip ── */
+.pos-strip-wrap{overflow:hidden;border-top:1px solid var(--border);border-bottom:1px solid var(--border);background:var(--bg);padding:12px 0;min-height:110px;display:flex;align-items:center}
+.pos-strip{display:flex;gap:12px;animation:pan-tiles 30s linear infinite;white-space:nowrap;padding:0 16px;align-items:stretch}
+.pos-strip:hover{animation-play-state:paused}
+.pos-strip.no-anim{animation:none}
+@keyframes pan-tiles{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+.pos-tile{display:inline-flex;flex-direction:column;justify-content:space-between;gap:6px;background:var(--bg2);border:1px solid var(--border);border-radius:11px;padding:13px 16px;min-width:160px;cursor:default;transition:.15s;white-space:normal;vertical-align:top}
+.pos-tile:hover{border-color:rgba(88,166,255,.35);background:#111820}
+.pos-tile.long-tile{border-color:rgba(63,185,80,.25)}
+.pos-tile.short-tile{border-color:rgba(248,81,73,.25)}
+.pt-sym{font-size:1rem;font-weight:800;color:var(--text-hi);letter-spacing:-.3px}
+.pt-row{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.pt-entry{font-size:.7rem;color:var(--dim);font-variant-numeric:tabular-nums}
+.pt-pnl{font-size:.95rem;font-weight:700;font-variant-numeric:tabular-nums}
+.pt-meta{font-size:.65rem;color:var(--dim)}
+.pos-tile-empty{color:var(--dim);font-size:.82rem;padding:0 24px;white-space:nowrap}
 
 /* ── Signal weights ── */
 .weights-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px}
@@ -6087,31 +6108,47 @@ th{padding:9px 14px;font-size:.65rem;font-weight:700;color:var(--dim);text-trans
 
 <!-- ═══ HERO ═══ -->
 <section class="hero">
-  <div class="hero-eyebrow">🤖 Fully Autonomous · 10 Wallets · 24/7</div>
-  <h1>AI Bots Trading<br><em id="hero-aum">$2,122,120</em> Live</h1>
-  <p class="hero-sub">Real capital. Real trades. Every signal, metric, and decision logged in real time — nothing hidden.</p>
-  <div class="hero-btns">
-    <a href="/login" class="btn-p">Launch Your Bot →</a>
-    <a href="/leaderboard" class="btn-s">View Leaderboard</a>
+  <!-- AUM history sparkline renders here as a translucent background -->
+  <canvas id="aum-canvas"></canvas>
+  <div style="position:relative;z-index:1">
+    <div class="hero-eyebrow">🤖 Fully Autonomous · 10 Wallets · 24/7</div>
+    <h1>AI Bots Trading<br><em id="hero-aum">$2,122,120</em> Live</h1>
+    <p class="hero-sub">Real capital. Real trades. Every signal, metric, and decision logged in real time — nothing hidden.</p>
+    <div class="hero-btns">
+      <a href="/login" class="btn-p">Launch Your Bot →</a>
+      <a href="/leaderboard" class="btn-s">View Leaderboard</a>
+    </div>
   </div>
 </section>
 
-<!-- ═══ METRICS STRIP ═══ -->
-<div class="metrics-grid" id="metrics-grid">
-  <!-- injected by JS -->
-  <div class="m-cell"><div class="m-val" id="m-aum">—</div><div class="m-lbl">Total AUM</div><div class="m-sub">10 wallets</div></div>
-  <div class="m-cell"><div class="m-val b" id="m-pos">—</div><div class="m-lbl">Open Positions</div><div class="m-sub">live right now</div></div>
-  <div class="m-cell"><div class="m-val" id="m-pnl">—</div><div class="m-lbl">Total P&amp;L</div><div class="m-sub" id="m-pnl-sub">since launch</div></div>
-  <div class="m-cell"><div class="m-val b" id="m-trades">—</div><div class="m-lbl">Closed Trades</div><div class="m-sub">this session</div></div>
-  <div class="m-cell"><div class="m-val y" id="m-wr">—</div><div class="m-lbl">Win Rate</div><div class="m-sub" id="m-wl">— W / — L</div><div class="m-tip" title="% of closed trades that were profitable">ⓘ</div></div>
-  <div class="m-cell"><div class="m-val g" id="m-pf">—</div><div class="m-lbl">Profit Factor</div><div class="m-sub">gross profit ÷ loss</div><div class="m-tip" title="Gross profit divided by gross loss. &gt;1.5 is good, &gt;2 is excellent">ⓘ</div></div>
-  <div class="m-cell"><div class="m-val b" id="m-sharpe">—</div><div class="m-lbl">Sharpe Ratio</div><div class="m-sub">risk-adj return</div><div class="m-tip" title="Mean return ÷ return std-dev. &gt;1 is good">ⓘ</div></div>
-  <div class="m-cell"><div class="m-val b" id="m-sortino">—</div><div class="m-lbl">Sortino Ratio</div><div class="m-sub">downside-adj</div><div class="m-tip" title="Like Sharpe but only penalises downside volatility">ⓘ</div></div>
-  <div class="m-cell"><div class="m-val y" id="m-expect">—</div><div class="m-lbl">Expectancy</div><div class="m-sub">per-trade edge %</div><div class="m-tip" title="Expected % return per trade: win_rate×avg_win − loss_rate×avg_loss">ⓘ</div></div>
-  <div class="m-cell"><div class="m-val" id="m-dd">—</div><div class="m-lbl">Max Drawdown</div><div class="m-sub">peak to trough</div><div class="m-tip" title="Largest peak-to-trough cumulative P&amp;L loss">ⓘ</div></div>
-  <div class="m-cell"><div class="m-val g" id="m-kelly">—</div><div class="m-lbl">Kelly %</div><div class="m-sub">optimal bet size</div><div class="m-tip" title="Half-Kelly Criterion: optimal position size given edge and variance">ⓘ</div></div>
-  <div class="m-cell"><div class="m-val" id="m-cb">Normal</div><div class="m-lbl">Circuit Breaker</div><div class="m-sub" id="m-cb-sub">risk normal</div><div class="m-tip" title="Activates when 7-day drawdown &gt;8%: cuts position sizes to 35%">ⓘ</div></div>
+<!-- ═══ STAT BAR ═══ -->
+<div class="stat-bar">
+  <div class="stat-cell">
+    <div class="stat-val" id="m-aum">—</div>
+    <div class="stat-lbl">Total AUM</div>
+  </div>
+  <div class="stat-cell">
+    <div class="stat-val" id="m-pos" style="color:var(--blue)">—</div>
+    <div class="stat-lbl">Open Positions</div>
+  </div>
+  <div class="stat-cell">
+    <div class="stat-val" id="m-pnl">—</div>
+    <div class="stat-lbl">Total P&amp;L</div>
+  </div>
+  <div class="stat-cell">
+    <div class="stat-val" id="m-cb" style="color:var(--green)">● Normal</div>
+    <div class="stat-lbl">Circuit Breaker</div>
+  </div>
 </div>
+
+<!-- ═══ POSITION TILES — horizontal scroll strip ═══ -->
+<div class="pos-strip-wrap" id="pos-strip-wrap">
+  <div class="pos-strip" id="pos-strip">
+    <!-- tiles injected by JS; duplicated for infinite scroll -->
+  </div>
+</div>
+
+<!-- metrics-grid removed — stats now in stat-bar, positions table above fold -->
 
 <!-- ═══ RECENT TRADES TICKER ═══ -->
 <div class="ticker-wrap" id="ticker-wrap" style="display:none">
@@ -6120,17 +6157,7 @@ th{padding:9px 14px;font-size:.65rem;font-weight:700;color:var(--dim);text-trans
 
 <div class="wrap">
 
-<!-- ═══ AUM CHART ═══ -->
-<section class="sec">
-  <div class="sec-head"><span class="sec-title">AUM History (30 days)</span><span class="sec-line"></span></div>
-  <div class="chart-card">
-    <canvas id="aum-canvas"></canvas>
-    <div class="chart-empty" id="chart-empty">
-      <span>Accumulating data…</span>
-      <small>Chart appears after daily snapshots begin</small>
-    </div>
-  </div>
-</section>
+<!-- AUM chart canvas is now in the hero section as a background -->
 
 <!-- ═══ TRADING ALGORITHMS ═══ -->
 <section class="sec">
@@ -6193,7 +6220,7 @@ th{padding:9px 14px;font-size:.65rem;font-weight:700;color:var(--dim);text-trans
   </div>
 </section>
 
-<!-- ═══ LIVE OPEN POSITIONS ═══ -->
+<!-- ═══ LIVE OPEN POSITIONS (detailed table — below fold) ═══ -->
 <section class="sec">
   <div class="sec-head"><span class="sec-title">Live Open Positions</span><span class="sec-line"></span></div>
   <div class="card">
@@ -6286,49 +6313,75 @@ const pClass  = (n) => n > 0.005 ? 'pos' : n < -0.005 ? 'neg' : 'neu';
 const fmtPrice = (n) => n >= 1000 ? '$'+n.toFixed(0) : n >= 1 ? '$'+n.toFixed(3) : '$'+n.toFixed(6);
 
 // ═══════════════════════════════════════════════════════
-//  Sparkline chart
+//  Hero background chart
 // ═══════════════════════════════════════════════════════
 function drawChart(points) {
   const cv = document.getElementById('aum-canvas');
   if (!cv || !points || points.length < 2) return;
-  document.getElementById('chart-empty').style.display = 'none';
-  const ctx = cv.getContext('2d');
-  const W = cv.offsetWidth, H = cv.offsetHeight;
+  // Size canvas to match hero (it fills via position:absolute)
+  const hero = cv.parentElement;
+  const W = hero.offsetWidth || window.innerWidth;
+  const H = hero.offsetHeight || 300;
   cv.width = W * devicePixelRatio; cv.height = H * devicePixelRatio;
+  cv.style.width = W + 'px'; cv.style.height = H + 'px';
+  const ctx = cv.getContext('2d');
   ctx.scale(devicePixelRatio, devicePixelRatio);
   const vals = points.map(p => p.aum);
   const minV = Math.min(...vals), maxV = Math.max(...vals), range = maxV - minV || 1;
-  const px = i => (i / (points.length-1)) * (W-2) + 1;
-  const py = v => H - ((v-minV)/range) * (H-20) - 10;
-  // Grid lines
-  ctx.strokeStyle = 'rgba(33,38,45,.8)'; ctx.lineWidth = 1;
-  [0.25,0.5,0.75].forEach(f => {
-    ctx.beginPath(); ctx.moveTo(0, H*f); ctx.lineTo(W, H*f); ctx.stroke();
-  });
-  // Fill
-  const grd = ctx.createLinearGradient(0,0,0,H);
-  grd.addColorStop(0,'rgba(63,185,80,.2)'); grd.addColorStop(1,'rgba(63,185,80,0)');
-  ctx.beginPath(); ctx.moveTo(px(0), py(vals[0]));
-  vals.forEach((v,i) => ctx.lineTo(px(i), py(v)));
+  const pxX = i => (i / (points.length-1)) * W;
+  const pxY = v => H - ((v-minV)/range) * (H * 0.7) - H * 0.1;
+  // Soft fill under curve
+  const grd = ctx.createLinearGradient(0, 0, 0, H);
+  grd.addColorStop(0, 'rgba(63,185,80,.22)');
+  grd.addColorStop(1, 'rgba(63,185,80,0)');
+  ctx.beginPath();
+  ctx.moveTo(pxX(0), pxY(vals[0]));
+  vals.forEach((v, i) => ctx.lineTo(pxX(i), pxY(v)));
   ctx.lineTo(W, H); ctx.lineTo(0, H); ctx.closePath();
   ctx.fillStyle = grd; ctx.fill();
-  // Line
-  ctx.beginPath(); ctx.moveTo(px(0), py(vals[0]));
-  vals.forEach((v,i) => ctx.lineTo(px(i), py(v)));
-  ctx.strokeStyle = '#3fb950'; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.stroke();
-  // Dot + label at end
-  const lx = px(vals.length-1), ly = py(vals[vals.length-1]);
-  ctx.beginPath(); ctx.arc(lx, ly, 4, 0, Math.PI*2);
-  ctx.fillStyle = '#3fb950'; ctx.fill();
-  // Y-axis labels
-  ctx.fillStyle = '#484f58'; ctx.font = '10px system-ui';
-  ctx.textAlign = 'left';
-  ctx.fillText(fmtUsd(maxV), 6, 14);
-  ctx.fillText(fmtUsd(minV), 6, H-4);
-  // Date range
-  if (points.length > 1) {
-    ctx.textAlign = 'left'; ctx.fillText(points[0].ts.slice(0,10), 60, H-4);
-    ctx.textAlign = 'right'; ctx.fillText(points[points.length-1].ts.slice(0,10), W-4, H-4);
+  // Chart line
+  ctx.beginPath();
+  ctx.moveTo(pxX(0), pxY(vals[0]));
+  vals.forEach((v, i) => ctx.lineTo(pxX(i), pxY(v)));
+  ctx.strokeStyle = 'rgba(63,185,80,.7)'; ctx.lineWidth = 1.5;
+  ctx.lineJoin = 'round'; ctx.stroke();
+}
+
+// ═══════════════════════════════════════════════════════
+//  Position tiles strip (panning carousel)
+// ═══════════════════════════════════════════════════════
+function renderPositionTiles(positions) {
+  const strip = document.getElementById('pos-strip');
+  if (!strip) return;
+  if (!positions || !positions.length) {
+    strip.className = 'pos-strip no-anim';
+    strip.innerHTML = '<div class="pos-tile-empty">🔍 No open positions — scanning for signals…</div>';
+    return;
+  }
+  const makeTile = p => {
+    const pnlCls  = p.unrealised_pnl > 0.5 ? 'pos' : p.unrealised_pnl < -0.5 ? 'neg' : 'neu';
+    const tileCls = p.side === 'LONG' ? 'pos-tile long-tile' : 'pos-tile short-tile';
+    const sideCls = p.side === 'LONG' ? 'side-long' : 'side-short';
+    const pnlStr  = (p.unrealised_pnl >= 0 ? '+' : '') + fmtUsd(p.unrealised_pnl);
+    return `<div class="${tileCls}">
+      <div class="pt-row">
+        <span class="pt-sym">${p.symbol}</span>
+        <span class="${sideCls}">${p.side}</span>
+      </div>
+      <div class="pt-pnl ${pnlCls}">${pnlStr}</div>
+      <div class="pt-row">
+        <span class="pt-entry">Entry ${fmtPrice(p.entry_price)}</span>
+        <span class="pt-meta">${p.leverage.toFixed(1)}× · ${fmtUsd(p.size_usd)}</span>
+      </div>
+    </div>`;
+  };
+  const tiles = positions.map(makeTile).join('');
+  // Duplicate for seamless infinite pan (only animate if multiple tiles)
+  strip.className = positions.length > 3 ? 'pos-strip' : 'pos-strip no-anim';
+  strip.innerHTML = tiles + (positions.length > 3 ? tiles : '');
+  // Set animation duration proportional to number of tiles
+  if (positions.length > 3) {
+    strip.style.animationDuration = Math.max(18, positions.length * 6) + 's';
   }
 }
 
@@ -6402,40 +6455,20 @@ async function loadState() {
     const s = await res.json();
     const m = s.metrics || {};
 
-    // ── Metrics strip ──
+    // ── Stat bar (4 key stats) ──
     const pnl = s.pnl || 0;
-    document.getElementById('m-pnl').textContent  = fmtUsd(pnl);
-    document.getElementById('m-pnl').className = 'm-val ' + (pnl>=0?'g':'r');
-    document.getElementById('m-pnl-sub').textContent = fmtPct((pnl/(s.initial_capital||1))*100) + ' of capital';
-    document.getElementById('m-trades').textContent = m.total_trades || '0';
-    if (m.win_rate > 0) {
-      document.getElementById('m-wr').textContent  = (m.win_rate*100).toFixed(1)+'%';
-      document.getElementById('m-wl').textContent  = `${m.wins}W / ${m.losses}L`;
-    }
-    if (m.profit_factor > 0) {
-      const pf = m.profit_factor === Infinity ? '∞' : m.profit_factor.toFixed(2);
-      document.getElementById('m-pf').textContent = pf;
-      document.getElementById('m-pf').className   = 'm-val '+(m.profit_factor>=1.5?'g':m.profit_factor>=1?'y':'r');
-    }
-    if (m.sharpe  !== 0) document.getElementById('m-sharpe').textContent  = fmtNum(m.sharpe);
-    if (m.sortino !== 0) document.getElementById('m-sortino').textContent = fmtNum(m.sortino);
-    if (m.expectancy !== 0) document.getElementById('m-expect').textContent = fmtNum(m.expectancy)+'%';
-    if (m.max_drawdown > 0) {
-      document.getElementById('m-dd').textContent  = fmtNum(m.max_drawdown)+'%';
-      document.getElementById('m-dd').className    = 'm-val r';
-    }
-    // Kelly
-    const wins=m.wins||0, losses=m.losses||0, aw=m.avg_win_pct/100||0, al=m.avg_loss_pct/100||0;
-    if (wins+losses >= 5 && al > 0) {
-      const kelly = ((m.win_rate*aw - (1-m.win_rate)*al) / al) * 0.5;
-      document.getElementById('m-kelly').textContent = kelly>0 ? fmtNum(kelly*100)+'%' : 'learning…';
+    const pnlEl = document.getElementById('m-pnl');
+    if (pnlEl) {
+      pnlEl.textContent = fmtUsd(pnl) + ' (' + fmtPct((pnl/(s.initial_capital||1))*100) + ')';
+      pnlEl.style.color = pnl >= 0 ? 'var(--green)' : 'var(--red)';
     }
     // Circuit breaker
     const cb = s.cb_active;
     const cbEl = document.getElementById('m-cb');
-    cbEl.textContent = cb ? '⚡ Active' : '● Normal';
-    cbEl.className   = 'm-val '+(cb?'r':'g');
-    document.getElementById('m-cb-sub').textContent = cb ? '0.35× size · DD limit hit' : '1.0× size · all clear';
+    if (cbEl) {
+      cbEl.textContent = cb ? '⚡ Active' : '● Normal';
+      cbEl.style.color = cb ? 'var(--red)' : 'var(--green)';
+    }
 
     // ── Signal weights ──
     renderWeights(s.signal_weights);
@@ -6443,7 +6476,10 @@ async function loadState() {
     // ── Regime highlight ──
     highlightRegime(s.candidates);
 
-    // ── Open positions ──
+    // ── Position tiles (panning strip above fold) ──
+    renderPositionTiles(s.positions);
+
+    // ── Open positions (detailed table below fold) ──
     const posBody = document.getElementById('pos-tbody');
     if (!s.positions || !s.positions.length) {
       posBody.innerHTML = '<tr class="tr"><td colspan="8" style="text-align:center;color:var(--dim);padding:24px">No open positions</td></tr>';
@@ -6466,7 +6502,8 @@ async function loadState() {
         </tr>`;
       }).join('');
     }
-    document.getElementById('m-pos').textContent = s.positions?.length || '0';
+    const posCountEl = document.getElementById('m-pos');
+    if (posCountEl) posCountEl.textContent = s.positions?.length || '0';
 
     // ── Closed trades ──
     renderTicker(s.closed_trades);
