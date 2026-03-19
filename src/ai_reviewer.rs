@@ -404,7 +404,7 @@ async fn review_inner(
             margin_usd:          (p.size_usd * 100.0).round() / 100.0,
             leverage:            p.leverage,
             notional_usd:        (p.size_usd * p.leverage * 100.0).round() / 100.0,
-            hold_time_minutes:   hold_min as u64,
+            hold_time_minutes:   u64::from(hold_min),
             dca_count:           p.dca_count,
             dca_remaining:       2u8.saturating_sub(p.dca_count),
             stop_loss:           p.stop_loss,

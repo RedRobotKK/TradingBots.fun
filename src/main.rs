@@ -1753,8 +1753,8 @@ async fn execute_paper_trade(
     notifier:     &Option<SharedNotifier>,
     db:           &Option<SharedDb>,
     tenant_id:    Uuid,
-    /// BTC 4h return this cycle (%) — used for per-trade budget + DCA thesis guard.
-    /// Pass 0.0 for BTC itself (no self-referential filter).
+    // BTC 4h return this cycle (%) — used for per-trade budget + DCA thesis guard.
+    // Pass 0.0 for BTC itself (no self-referential filter).
     btc_ret_4h:   f64,
 ) {
     let target_side = if dec.action == "BUY" { "LONG" } else { "SHORT" };
@@ -2237,7 +2237,7 @@ async fn dca_position(
     dec:        &decision::Decision,
     ind:        &indicators::TechnicalIndicators,
     bot_state:  &SharedState,
-    /// Current BTC 4h return — stored on position so thesis can be tracked.
+    // Current BTC 4h return — stored on position so thesis can be tracked.
     btc_ret_4h: f64,
 ) {
     let atr       = ind.atr.max(dec.entry_price * 0.001);
@@ -3210,9 +3210,12 @@ mod tests {
     #[test]
     fn trailing_stop_tier1_tight_trail_at_0_75r_for_long() {
         // At 0.75R profit: tight 0.6×ATR trail below HWM starts protecting early gains.
+        // Use atr=7.5 so the trail (99.25) lands below entry (100.0) — the condition
+        // `trail < entry` only fires when the stop is still in "protecting against loss"
+        // territory.  With a small ATR the trail would exceed entry, which is tier-2's job.
         let entry: f64 = 100.0;
         let stop    = 95.0;
-        let atr     = 2.0;
+        let atr     = 7.5;  // large enough so trail = hwm - 0.6×7.5 = 99.25 < entry
         let qty     = 3.0;
         let r_risk  = (entry - stop) * qty; // $15
 
@@ -3224,12 +3227,12 @@ mod tests {
         assert!((r_mult - 0.75).abs() < 1e-10, "should be 0.75R at $103.75");
 
         let hwm = cur;
-        let trail = hwm - atr * 0.6; // 103.75 - 1.2 = 102.55
+        let trail = hwm - atr * 0.6; // 103.75 - 4.5 = 99.25
         // Only set if trail > current stop AND trail < entry (below breakeven)
         let new_stop = if r_mult >= 0.75 && trail > stop && trail < entry { trail } else { stop };
         assert!(
-            (new_stop - 102.55).abs() < 1e-10,
-            "0.75R tight trail should be HWM - 0.6×ATR = 102.55, got {new_stop}"
+            (new_stop - 99.25).abs() < 1e-10,
+            "0.75R tight trail should be HWM - 0.6×ATR = 99.25, got {new_stop}"
         );
     }
 
@@ -3280,9 +3283,12 @@ mod tests {
     #[test]
     fn tier0_trail_at_0_30r_for_long() {
         // At 0.30R profit: 0.4×ATR trail activates, protecting early gains.
+        // Use atr=5.0 so the trail (99.5) lands below entry (100.0) — the condition
+        // `trail < entry` only fires when the stop is still in pre-breakeven territory.
+        // With a small ATR the trail would exceed entry (breakeven is tier-2's job).
         let entry: f64 = 100.0;
         let stop    = 95.0;
-        let atr     = 2.0;
+        let atr     = 5.0;  // large enough so trail = hwm - 0.4×5 = 99.5 < entry
         let qty     = 3.0;
         let r_risk  = (entry - stop) * qty; // $15
 
@@ -3293,12 +3299,12 @@ mod tests {
         assert!((r_mult - 0.30).abs() < 1e-10, "should be 0.30R at $101.50");
 
         let hwm = cur;
-        let trail = hwm - atr * 0.4; // 101.5 - 0.8 = 100.7
+        let trail = hwm - atr * 0.4; // 101.5 - 2.0 = 99.5
         // Only set if trail > current stop AND trail < entry
         let new_stop = if r_mult >= 0.30 && trail > stop && trail < entry { trail } else { stop };
         assert!(
-            (new_stop - 100.7).abs() < 1e-10,
-            "tier-0 trail at 0.30R should be HWM - 0.4×ATR = 100.7, got {new_stop}"
+            (new_stop - 99.5).abs() < 1e-10,
+            "tier-0 trail at 0.30R should be HWM - 0.4×ATR = 99.5, got {new_stop}"
         );
     }
 
