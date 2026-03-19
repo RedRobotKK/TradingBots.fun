@@ -1907,7 +1907,7 @@ async fn analyse_symbol(
         // and use it for DCA thesis validation later.
         // For BTC itself, use 0.0 (no self-referential filter).
         let cycle_btc_ret = if symbol == "BTC" { 0.0 } else { btc_ret_4h };
-        execute_paper_trade(symbol, &dec, &ind, bot_state, weights, trade_logger, notifier, db, single_op_tenant(), cycle_btc_ret).await;
+        execute_paper_trade(symbol, &dec, &ind, bot_state, weights, trade_logger, notifier, db, single_op_tenant(), cycle_btc_ret, hl, fee_bps, config.paper_trading).await;
     } else if !config.paper_trading && dec.action != "SKIP" {
         let account = hl.get_account().await?;
         if risk::should_trade(&dec, &account)? {
@@ -2054,6 +2054,9 @@ async fn execute_paper_trade(
     // BTC 4h return this cycle (%) — used for per-trade budget + DCA thesis guard.
     // Pass 0.0 for BTC itself (no self-referential filter).
     btc_ret_4h:   f64,
+    hl:           &Arc<exchange::HyperliquidClient>,
+    fee_bps:      u32,
+    paper:        bool,
 ) {
     let target_side = if dec.action == "BUY" { "LONG" } else { "SHORT" };
 
@@ -2139,7 +2142,7 @@ async fn execute_paper_trade(
             drop(s);
             info!("🔄 {} signal reversal: {} at {:.2}R  held={}  conf={:.0}%",
                   symbol, pos_side, r_mult_snap, cycles_snap, dec.confidence * 100.0);
-            close_paper_position(symbol, dec.entry_price, "SignalExit", bot_state, weights, trade_logger, notifier, db, tenant_id, hl, fee_bps, config.paper_trading).await;
+            close_paper_position(symbol, dec.entry_price, "SignalExit", bot_state, weights, trade_logger, notifier, db, tenant_id, hl, fee_bps, paper).await;
         }
         // No existing: fall through to new entry
     }
