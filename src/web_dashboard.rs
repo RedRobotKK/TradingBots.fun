@@ -5979,9 +5979,12 @@ a{color:inherit;text-decoration:none}
 /* ── Hero ── */
 .hero{text-align:center;padding:64px 24px 52px;background:radial-gradient(ellipse 120% 60% at 50% 0%,rgba(63,185,80,.07) 0%,transparent 70%);position:relative;overflow:hidden}
 .hero-eyebrow{display:inline-block;background:rgba(63,185,80,.1);border:1px solid rgba(63,185,80,.25);border-radius:20px;padding:4px 14px;font-size:.7rem;font-weight:700;color:var(--green);letter-spacing:.9px;text-transform:uppercase;margin-bottom:18px}
-.hero h1{font-size:clamp(2rem,4.5vw,3rem);font-weight:800;color:var(--text-hi);line-height:1.15;margin-bottom:12px}
+.hero h1{font-size:clamp(2rem,4.5vw,3rem);font-weight:800;color:var(--text-hi);line-height:1.15;margin-bottom:10px}
 .hero h1 em{font-style:normal;background:linear-gradient(135deg,var(--green),#58e87a);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-.hero-sub{font-size:.95rem;color:var(--muted);max-width:480px;margin:0 auto 32px;line-height:1.7}
+.hero-pnl{font-size:1.5rem;font-weight:800;color:var(--green);margin-bottom:10px;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.hero-pnl.neg{color:var(--red)}
+.hero-pnl-meta{font-size:.78rem;color:var(--muted);font-weight:400;margin-left:8px}
+.hero-sub{font-size:.88rem;color:var(--muted);max-width:420px;margin:0 auto 28px;line-height:1.6}
 .hero-btns{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
 .btn-p{background:var(--green);color:#0d1117;padding:12px 26px;border-radius:9px;font-weight:700;font-size:.9rem;transition:.15s;display:inline-block}
 .btn-p:hover{background:#52c965;transform:translateY(-1px)}
@@ -6087,8 +6090,16 @@ th{padding:9px 14px;font-size:.65rem;font-weight:700;color:var(--dim);text-trans
 .acct-cap{color:var(--muted);font-variant-numeric:tabular-nums}
 .acct-name{font-weight:700;color:var(--text-hi)}
 
+/* ── Compact win row ── */
+.win-row{display:flex;align-items:center;gap:10px;background:var(--bg2);border:1px solid var(--border);border-radius:9px;padding:10px 14px;font-size:.82rem}
+.win-row.profit{border-color:rgba(63,185,80,.2)}
+.win-row.loss{border-color:rgba(248,81,73,.15)}
+.win-sym{font-weight:700;color:var(--text-hi);min-width:72px}
+.win-pnl{font-weight:700;font-variant-numeric:tabular-nums;margin-left:auto}
+.win-meta{font-size:.7rem;color:var(--dim)}
+
 /* ── Footer ── */
-.footer{border-top:1px solid var(--border);padding:20px 32px;display:flex;justify-content:space-between;align-items:center;font-size:.73rem;color:var(--dim);flex-wrap:wrap;gap:12px;margin-top:56px}
+.footer{border-top:1px solid var(--border);padding:20px 32px;display:flex;justify-content:space-between;align-items:center;font-size:.73rem;color:var(--dim);flex-wrap:wrap;gap:12px;margin-top:40px}
 .footer-links{display:flex;gap:16px}
 .footer-link:hover{color:var(--muted)}
 .ts{font-size:.65rem;color:#30363d;margin-top:6px;text-align:center}
@@ -6100,7 +6111,7 @@ th{padding:9px 14px;font-size:.65rem;font-weight:700;color:var(--dim);text-trans
 <nav class="nav">
   <div class="nav-logo">TradingBots<span class="dot">.</span>fun</div>
   <div class="nav-links">
-    <span class="live-badge">Live</span>
+    <span class="live-badge"><span id="live-pill-text">1 Bot</span> Live</span>
     <a href="/leaderboard" class="nav-link">Leaderboard</a>
     <a href="/login" class="nav-cta">Start Trading</a>
   </div>
@@ -6111,12 +6122,16 @@ th{padding:9px 14px;font-size:.65rem;font-weight:700;color:var(--dim);text-trans
   <!-- AUM history sparkline renders here as a translucent background -->
   <canvas id="aum-canvas"></canvas>
   <div style="position:relative;z-index:1">
-    <div class="hero-eyebrow">🤖 Fully Autonomous · 10 Wallets · 24/7</div>
-    <h1>AI Bots Trading<br><em id="hero-aum">$2,122,120</em> Live</h1>
-    <p class="hero-sub">Real capital. Real trades. Every signal, metric, and decision logged in real time — nothing hidden.</p>
+    <div class="hero-eyebrow">🤖 Fully Autonomous · AI-Powered · 24/7</div>
+    <h1>AI Bot Managing<br><em id="hero-aum">—</em></h1>
+    <div id="hero-pnl" class="hero-pnl" style="display:none">
+      <span id="hero-pnl-val">+$0.00</span>
+      <span class="hero-pnl-meta">profit · <span id="hero-wr">—</span> win rate</span>
+    </div>
+    <p class="hero-sub">Real capital. Real trades. Every decision logged live — nothing hidden.</p>
     <div class="hero-btns">
       <a href="/login" class="btn-p">Launch Your Bot →</a>
-      <a href="/leaderboard" class="btn-s">View Leaderboard</a>
+      <a href="/leaderboard" class="btn-s">Leaderboard</a>
     </div>
   </div>
 </section>
@@ -6124,20 +6139,20 @@ th{padding:9px 14px;font-size:.65rem;font-weight:700;color:var(--dim);text-trans
 <!-- ═══ STAT BAR ═══ -->
 <div class="stat-bar">
   <div class="stat-cell">
-    <div class="stat-val" id="m-aum">—</div>
-    <div class="stat-lbl">Total AUM</div>
+    <div class="stat-val" id="m-pnl" style="color:var(--green)">—</div>
+    <div class="stat-lbl">Session Profit</div>
+  </div>
+  <div class="stat-cell">
+    <div class="stat-val" id="m-wr2" style="color:var(--yellow)">—</div>
+    <div class="stat-lbl">Win Rate</div>
   </div>
   <div class="stat-cell">
     <div class="stat-val" id="m-pos" style="color:var(--blue)">—</div>
-    <div class="stat-lbl">Open Positions</div>
+    <div class="stat-lbl">Open Now</div>
   </div>
   <div class="stat-cell">
-    <div class="stat-val" id="m-pnl">—</div>
-    <div class="stat-lbl">Total P&amp;L</div>
-  </div>
-  <div class="stat-cell">
-    <div class="stat-val" id="m-cb" style="color:var(--green)">● Normal</div>
-    <div class="stat-lbl">Circuit Breaker</div>
+    <div class="stat-val" id="m-trades2" style="color:var(--muted)">—</div>
+    <div class="stat-lbl">Trades Closed</div>
   </div>
 </div>
 
@@ -6157,134 +6172,23 @@ th{padding:9px 14px;font-size:.65rem;font-weight:700;color:var(--dim);text-trans
 
 <div class="wrap">
 
-<!-- AUM chart canvas is now in the hero section as a background -->
-
-<!-- ═══ TRADING ALGORITHMS ═══ -->
-<section class="sec">
-  <div class="sec-head"><span class="sec-title">Trading Algorithms Deployed</span><span class="sec-line"></span></div>
-  <div class="algo-grid">
-
-    <div class="algo-card" id="regime-trending">
-      <div class="algo-name">
-        📈 Momentum Strategy
-        <span class="algo-badge badge-standby" id="badge-trending">Standby</span>
-      </div>
-      <div class="algo-desc">Active when ADX &gt; 27. Rides directional price moves using EMA crossovers as the primary signal. Allows up to 5× leverage on high-conviction breakouts.</div>
-      <div class="algo-signals">
-        <span class="sig-pill sig-primary">EMA Cross ×1.4</span>
-        <span class="sig-pill sig-primary">MACD Histogram</span>
-        <span class="sig-pill sig-secondary">RSI momentum</span>
-        <span class="sig-pill sig-secondary">VWAP direction</span>
-        <span class="sig-pill sig-secondary">Funding rate</span>
-      </div>
-    </div>
-
-    <div class="algo-card" id="regime-ranging">
-      <div class="algo-name">
-        🔄 Mean-Reversion Strategy
-        <span class="algo-badge badge-standby" id="badge-ranging">Standby</span>
-      </div>
-      <div class="algo-desc">Active when ADX &lt; 19. Fades extremes using Z-score as the primary signal. Expects price to revert to the mean after statistical over-extension.</div>
-      <div class="algo-signals">
-        <span class="sig-pill sig-primary">Z-Score ×1.6</span>
-        <span class="sig-pill sig-primary">Bollinger band-touch</span>
-        <span class="sig-pill sig-secondary">RSI extremes</span>
-        <span class="sig-pill sig-secondary">Order flow</span>
-        <span class="sig-pill sig-secondary">Candle patterns</span>
-      </div>
-    </div>
-
-    <div class="algo-card" id="regime-neutral">
-      <div class="algo-name">
-        ⚖️ Balanced Strategy
-        <span class="algo-badge badge-standby" id="badge-neutral">Standby</span>
-      </div>
-      <div class="algo-desc">Active when ADX is 19–27. Equal weight across all signals with a tighter entry threshold. Manages position flow during transitional market structure.</div>
-      <div class="algo-signals">
-        <span class="sig-pill sig-primary">All signals equal</span>
-        <span class="sig-pill sig-secondary">Z-score</span>
-        <span class="sig-pill sig-secondary">EMA cross</span>
-        <span class="sig-pill sig-secondary">Social sentiment</span>
-        <span class="sig-pill sig-secondary">Chart patterns</span>
-      </div>
-    </div>
-
-  </div>
-</section>
-
-<!-- ═══ SIGNAL WEIGHTS (LIVE LEARNED) ═══ -->
-<section class="sec">
-  <div class="sec-head"><span class="sec-title">Live Signal Weights — AI-Learned from Closed Trades</span><span class="sec-line"></span></div>
-  <div class="weights-grid" id="weights-grid">
-    <!-- injected by JS -->
-  </div>
-</section>
-
-<!-- ═══ LIVE OPEN POSITIONS (detailed table — below fold) ═══ -->
-<section class="sec">
-  <div class="sec-head"><span class="sec-title">Live Open Positions</span><span class="sec-line"></span></div>
-  <div class="card">
-    <div class="card-head">
-      <span class="card-title">Active Trades</span>
-      <span class="live-dot">Updating every 30s</span>
-    </div>
-    <table>
-      <thead>
-        <tr>
-          <th>Symbol</th><th>Side</th><th>Entry</th><th>Size</th>
-          <th>Lev.</th><th>Unrealised P&amp;L</th><th>DCA</th><th>Regime Signal</th>
-        </tr>
-      </thead>
-      <tbody id="pos-tbody">
-        <tr class="tr"><td colspan="8" style="text-align:center;color:var(--dim);padding:28px">Loading…</td></tr>
-      </tbody>
-    </table>
-  </div>
-</section>
-
-<!-- ═══ CLOSED TRADES ═══ -->
-<section class="sec">
+<!-- ═══ RECENT CLOSED TRADES — compact list ═══ -->
+<section class="sec" id="wins-sec" style="display:none">
   <div class="sec-head"><span class="sec-title">Recent Closed Trades</span><span class="sec-line"></span></div>
-  <div class="card">
-    <div class="card-head">
-      <span class="card-title">Trade Log</span>
-      <span style="font-size:.72rem;color:var(--dim)" id="trade-count">—</span>
-    </div>
-    <table>
-      <thead>
-        <tr>
-          <th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th>
-          <th>P&amp;L</th><th>Return</th><th>Exit Reason</th><th>Closed</th>
-        </tr>
-      </thead>
-      <tbody id="trades-tbody">
-        <tr class="tr"><td colspan="8" style="text-align:center;color:var(--dim);padding:28px">Loading…</td></tr>
-      </tbody>
-    </table>
-  </div>
-</section>
-
-<!-- ═══ PORTFOLIO — ALL WALLETS ═══ -->
-<section class="sec">
-  <div class="sec-head"><span class="sec-title">All Wallets — Portfolio Overview</span><span class="sec-line"></span></div>
-  <div class="card">
-    <div class="card-head">
-      <span class="card-title">10 Accounts · <span id="wallet-count">—</span> Wallets · Total AUM <span id="footer-aum">—</span></span>
-      <span class="live-dot">Live</span>
-    </div>
-    <table>
-      <thead>
-        <tr><th>#</th><th>Bot</th><th>Initial Capital</th><th>Current Equity</th><th>Return</th><th>Open Pos.</th><th>Wallet</th></tr>
-      </thead>
-      <tbody id="wallets-tbody">
-        <tr class="tr"><td colspan="7" style="text-align:center;color:var(--dim);padding:28px">Loading…</td></tr>
-      </tbody>
-    </table>
-  </div>
-  <div class="ts" id="ts">—</div>
+  <div id="wins-list" style="display:flex;flex-direction:column;gap:6px"></div>
 </section>
 
 </div><!-- /wrap -->
+
+<!-- hidden tbody still needed for JS data processing -->
+<div style="display:none">
+  <table><tbody id="pos-tbody"></tbody></table>
+  <table><tbody id="trades-tbody"></tbody></table>
+  <span id="trade-count"></span>
+  <span id="footer-aum"></span>
+  <span id="wallet-count"></span>
+  <div id="weights-grid"></div>
+</div>
 
 <!-- ═══ FOOTER ═══ -->
 <footer class="footer">
@@ -6455,20 +6359,29 @@ async function loadState() {
     const s = await res.json();
     const m = s.metrics || {};
 
-    // ── Stat bar (4 key stats) ──
+    // ── Hero P&L sub-line ──
     const pnl = s.pnl || 0;
+    const heroP  = document.getElementById('hero-pnl');
+    const heroPV = document.getElementById('hero-pnl-val');
+    const heroWR = document.getElementById('hero-wr');
+    if (heroP && heroPV) {
+      heroP.style.display = '';
+      heroPV.textContent  = (pnl >= 0 ? '+' : '') + fmtUsd(pnl) +
+                            ' (' + fmtPct((pnl/(s.initial_capital||1))*100) + ')';
+      heroP.className = 'hero-pnl' + (pnl >= 0 ? '' : ' neg');
+    }
+    if (heroWR && m.win_rate > 0) heroWR.textContent = (m.win_rate*100).toFixed(0)+'%';
+
+    // ── Stat bar ──
     const pnlEl = document.getElementById('m-pnl');
     if (pnlEl) {
-      pnlEl.textContent = fmtUsd(pnl) + ' (' + fmtPct((pnl/(s.initial_capital||1))*100) + ')';
-      pnlEl.style.color = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+      pnlEl.textContent  = (pnl >= 0 ? '+' : '') + fmtUsd(pnl);
+      pnlEl.style.color  = pnl >= 0 ? 'var(--green)' : 'var(--red)';
     }
-    // Circuit breaker
-    const cb = s.cb_active;
-    const cbEl = document.getElementById('m-cb');
-    if (cbEl) {
-      cbEl.textContent = cb ? '⚡ Active' : '● Normal';
-      cbEl.style.color = cb ? 'var(--red)' : 'var(--green)';
-    }
+    const wr2El = document.getElementById('m-wr2');
+    if (wr2El) wr2El.textContent = m.win_rate > 0 ? (m.win_rate*100).toFixed(0)+'%' : '—';
+    const t2El = document.getElementById('m-trades2');
+    if (t2El) t2El.textContent = m.total_trades || '0';
 
     // ── Signal weights ──
     renderWeights(s.signal_weights);
@@ -6505,29 +6418,28 @@ async function loadState() {
     const posCountEl = document.getElementById('m-pos');
     if (posCountEl) posCountEl.textContent = s.positions?.length || '0';
 
-    // ── Closed trades ──
+    // ── Closed trades — compact wins list ──
     renderTicker(s.closed_trades);
-    const tBody = document.getElementById('trades-tbody');
-    const ct = document.getElementById('trade-count');
-    if (!s.closed_trades || !s.closed_trades.length) {
-      tBody.innerHTML = '<tr class="tr"><td colspan="8" style="text-align:center;color:var(--dim);padding:24px">No closed trades this session</td></tr>';
-      ct.textContent = '0 trades';
-    } else {
-      ct.textContent = s.closed_trades.length + ' trades this session';
-      tBody.innerHTML = [...s.closed_trades].reverse().slice(0,50).map(t => {
-        const pnlCls = pClass(t.pnl);
-        const pctCls = pClass(t.pnl_pct);
-        return `<tr class="tr">
-          <td style="font-weight:700;color:var(--text-hi)">${t.symbol}</td>
-          <td><span class="${t.side==='LONG'?'side-long':'side-short'}">${t.side}</span></td>
-          <td class="mono">${fmtPrice(t.entry)}</td>
-          <td class="mono">${fmtPrice(t.exit)}</td>
-          <td class="${pnlCls}">${fmtUsd(t.pnl)}</td>
-          <td class="${pctCls}">${fmtPct(t.pnl_pct)}</td>
-          <td><span class="reason-pill">${t.reason}</span></td>
-          <td style="color:var(--dim);font-size:.72rem">${t.closed_at?.slice(11,19)||'—'}</td>
-        </tr>`;
-      }).join('');
+    const winsSec  = document.getElementById('wins-sec');
+    const winsList = document.getElementById('wins-list');
+    if (winsSec && winsList) {
+      if (s.closed_trades && s.closed_trades.length) {
+        winsSec.style.display = '';
+        winsList.innerHTML = [...s.closed_trades].reverse().slice(0, 12).map(t => {
+          const isPnlPos = t.pnl >= 0;
+          const sideCls  = t.side === 'LONG' ? 'side-long' : 'side-short';
+          return `<div class="win-row ${isPnlPos ? 'profit' : 'loss'}">
+            <span class="win-sym">${t.symbol}</span>
+            <span class="${sideCls}">${t.side}</span>
+            <span class="win-meta">${fmtPrice(t.entry)} → ${fmtPrice(t.exit)}</span>
+            <span class="win-meta reason-pill">${t.reason}</span>
+            <span class="win-meta">${t.closed_at?.slice(11,19)||''}</span>
+            <span class="win-pnl ${isPnlPos ? 'pos' : 'neg'}">${isPnlPos ? '+' : ''}${fmtUsd(t.pnl)} (${fmtPct(t.pnl_pct)})</span>
+          </div>`;
+        }).join('');
+      } else {
+        winsSec.style.display = 'none';
+      }
     }
   } catch(e) { console.warn('state fetch failed', e); }
 }
@@ -6557,28 +6469,17 @@ async function loadWallets() {
   try {
     const res = await fetch('/api/public/stats');
     const d = await res.json();
-    const tbody = document.getElementById('wallets-tbody');
-    if (!d.accounts || !d.accounts.length) {
-      tbody.innerHTML = '<tr class="tr"><td colspan="7" style="text-align:center;color:var(--dim);padding:24px">No accounts</td></tr>';
-      return;
+    if (!d.accounts) return;
+    // Count bots that are actively trading (have open positions or non-zero equity)
+    const activeBots = d.accounts.filter(a => a.open_positions > 0 || a.current_equity > 0).length;
+    const pill = document.getElementById('live-pill-text');
+    if (pill) pill.textContent = activeBots + ' Bot' + (activeBots !== 1 ? 's' : '');
+    // Update footer AUM
+    const fAum = document.getElementById('footer-aum');
+    if (fAum) {
+      const total = d.accounts.reduce((s, a) => s + (a.current_equity || 0), 0);
+      if (total > 0) fAum.textContent = fmtUsd(total);
     }
-    document.getElementById('wallet-count').textContent = d.accounts.length;
-    tbody.innerHTML = d.accounts.map((a, i) => {
-      const ret  = a.initial_capital > 0 ? ((a.current_equity-a.initial_capital)/a.initial_capital*100) : 0;
-      const rCls = ret > 0.01 ? 'pos' : ret < -0.01 ? 'neg' : 'neu';
-      const w    = a.wallet_address && a.wallet_address.length >= 10
-        ? a.wallet_address.slice(0,6)+'…'+a.wallet_address.slice(-4) : '—';
-      return `<tr class="tr">
-        <td style="color:var(--dim)">${i+1}</td>
-        <td class="acct-name">${a.display_name}</td>
-        <td class="acct-cap">${fmtUsd(a.initial_capital)}</td>
-        <td style="font-weight:600;font-variant-numeric:tabular-nums">${fmtUsd(a.current_equity)}</td>
-        <td class="${rCls}" style="font-weight:700">${fmtPct(ret)}</td>
-        <td style="color:var(--muted);text-align:center">${a.open_positions}</td>
-        <td class="mono">${w}</td>
-      </tr>`;
-    }).join('');
-    document.getElementById('ts').textContent = 'Last updated: ' + new Date().toLocaleTimeString();
   } catch(e) { console.warn('wallets failed', e); }
 }
 
