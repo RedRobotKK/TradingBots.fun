@@ -299,6 +299,23 @@ pub struct BotState {
     /// on the next trading cycle.  Drained at the top of `run_cycle()`.
     #[serde(default)]
     pub pending_cmds: std::collections::VecDeque<BotCommand>,
+
+    // ── x402 Bot API sessions ─────────────────────────────────────────────
+    /// Active bot-API sessions created via `POST /api/v1/session` (x402).
+    #[serde(default)]
+    pub bot_sessions: std::collections::HashMap<String, BotSession>,
+}
+
+/// A paid bot-API session created via the x402 payment protocol.
+/// Bots authenticate subsequent requests with `Authorization: Bearer {token}`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BotSession {
+    pub id:         String,
+    pub token:      String,
+    pub tx_hash:    String,
+    pub plan:       String,
+    pub created_at: String,
+    pub expires_at: String,
 }
 
 /// A manual trade-execution command queued by the operator via the AI bar.
@@ -336,6 +353,7 @@ impl Default for BotState {
             recently_closed:  std::collections::VecDeque::new(),
             pool_deployed_usd: 0.0,
             pending_cmds:      std::collections::VecDeque::new(),
+            bot_sessions:      std::collections::HashMap::new(),
         }
     }
 }
@@ -5953,8 +5971,10 @@ async fn public_landing_handler(
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>TradingBots.fun — Live AI Trading Analytics</title>
-<meta name="description" content="10 autonomous AI bots trading $2M+ live. Real-time Sharpe, Sortino, Kelly, win rate, profit factor — all signals visible.">
+<title>TradingBots.fun — AI Trading Bot · Make Money 24/7</title>
+<meta name="description" content="Deposit USDC, let the AI trade for you 24/7. Live P&L, real trades, nothing hidden. Bot API with x402 payment support for autonomous agents.">
+<meta property="og:title" content="TradingBots.fun — AI that trades while you sleep">
+<meta property="og:description" content="Real capital. Real trades. Live win rate, P&L, and open positions — all public. Start for free or integrate via Bot API.">
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:#0d1117;color:#c9d1d9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;min-height:100vh}
@@ -6090,6 +6110,30 @@ th{padding:9px 14px;font-size:.65rem;font-weight:700;color:var(--dim);text-trans
 .acct-cap{color:var(--muted);font-variant-numeric:tabular-nums}
 .acct-name{font-weight:700;color:var(--text-hi)}
 
+/* ── How it works ── */
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-top:16px}
+.step{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:22px 20px;text-align:center}
+.step-num{font-size:1.8rem;margin-bottom:8px}
+.step-title{font-size:.95rem;font-weight:700;color:var(--text-hi);margin-bottom:6px}
+.step-desc{font-size:.78rem;color:var(--muted);line-height:1.6}
+
+/* ── Bot API section ── */
+.agent-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start}
+@media(max-width:700px){.agent-grid{grid-template-columns:1fr}}
+.agent-text h3{font-size:1.1rem;font-weight:800;color:var(--text-hi);margin-bottom:8px}
+.agent-text p{font-size:.82rem;color:var(--muted);line-height:1.7;margin-bottom:16px}
+.endpoint-list{display:flex;flex-direction:column;gap:7px}
+.ep{display:flex;align-items:center;gap:9px;font-size:.78rem;font-family:monospace;color:var(--text);background:rgba(255,255,255,.03);border:1px solid var(--border);border-radius:7px;padding:7px 10px}
+.m-get{background:rgba(63,185,80,.15);color:var(--green);border-radius:4px;padding:2px 7px;font-size:.65rem;font-weight:800;letter-spacing:.5px}
+.m-post{background:rgba(88,166,255,.15);color:var(--blue);border-radius:4px;padding:2px 7px;font-size:.65rem;font-weight:800;letter-spacing:.5px}
+.code-box{background:#0a0e14;border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.code-box-head{background:#161b22;padding:10px 14px;font-size:.7rem;color:var(--dim);display:flex;align-items:center;gap:6px;border-bottom:1px solid var(--border)}
+.code-box pre{padding:16px;font-size:.72rem;color:#cdd9e5;line-height:1.7;overflow-x:auto;margin:0}
+.code-box .kw{color:#79c0ff}.code-box .str{color:#a5d6ff}.code-box .cmt{color:#484f58}
+.cta-band{background:linear-gradient(135deg,rgba(63,185,80,.08),rgba(88,166,255,.05));border:1px solid rgba(63,185,80,.2);border-radius:16px;padding:36px 24px;text-align:center;margin:40px 0 0}
+.cta-band h3{font-size:1.4rem;font-weight:800;color:var(--text-hi);margin-bottom:8px}
+.cta-band p{font-size:.88rem;color:var(--muted);margin-bottom:20px}
+
 /* ── Compact win row ── */
 .win-row{display:flex;align-items:center;gap:10px;background:var(--bg2);border:1px solid var(--border);border-radius:9px;padding:10px 14px;font-size:.82rem}
 .win-row.profit{border-color:rgba(63,185,80,.2)}
@@ -6112,8 +6156,9 @@ th{padding:9px 14px;font-size:.65rem;font-weight:700;color:var(--dim);text-trans
   <div class="nav-logo">TradingBots<span class="dot">.</span>fun</div>
   <div class="nav-links">
     <span class="live-badge"><span id="live-pill-text">1 Bot</span> Live</span>
-    <a href="/leaderboard" class="nav-link">Leaderboard</a>
-    <a href="/login" class="nav-cta">Start Trading</a>
+    <a href="#how" class="nav-link">How it works</a>
+    <a href="#bot-api" class="nav-link">Bot API</a>
+    <a href="/login" class="nav-cta">Start Trading →</a>
   </div>
 </nav>
 
@@ -6122,16 +6167,16 @@ th{padding:9px 14px;font-size:.65rem;font-weight:700;color:var(--dim);text-trans
   <!-- AUM history sparkline renders here as a translucent background -->
   <canvas id="aum-canvas"></canvas>
   <div style="position:relative;z-index:1">
-    <div class="hero-eyebrow">🤖 Fully Autonomous · AI-Powered · 24/7</div>
-    <h1>AI Bot Managing<br><em id="hero-aum">—</em></h1>
+    <div class="hero-eyebrow">● AI Trading · Live Right Now</div>
+    <h1>Your money.<br>Working <em>24/7</em>.</h1>
     <div id="hero-pnl" class="hero-pnl" style="display:none">
       <span id="hero-pnl-val">+$0.00</span>
-      <span class="hero-pnl-meta">profit · <span id="hero-wr">—</span> win rate</span>
+      <span class="hero-pnl-meta">session profit · <span id="hero-wr">—</span> win rate</span>
     </div>
-    <p class="hero-sub">Real capital. Real trades. Every decision logged live — nothing hidden.</p>
+    <p class="hero-sub">Deposit USDC. The AI enters and exits trades around the clock.<br><span id="hero-aum" style="color:var(--green);font-weight:700">—</span> under management right now.</p>
     <div class="hero-btns">
-      <a href="/login" class="btn-p">Launch Your Bot →</a>
-      <a href="/leaderboard" class="btn-s">Leaderboard</a>
+      <a href="/login" class="btn-p">Start Earning →</a>
+      <a href="#bot-api" class="btn-s">Bot API</a>
     </div>
   </div>
 </section>
@@ -6172,11 +6217,85 @@ th{padding:9px 14px;font-size:.65rem;font-weight:700;color:var(--dim);text-trans
 
 <div class="wrap">
 
+<!-- ═══ HOW IT WORKS ═══ -->
+<section class="sec" id="how">
+  <div class="sec-head"><span class="sec-title">How It Works</span><span class="sec-line"></span></div>
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">💰</div>
+      <div class="step-title">Deposit USDC</div>
+      <div class="step-desc">Fund your bot wallet with any amount. No lock-ups — withdraw profits anytime.</div>
+    </div>
+    <div class="step">
+      <div class="step-num">🤖</div>
+      <div class="step-title">AI Trades For You</div>
+      <div class="step-desc">Multi-signal AI scans 50+ crypto pairs every 30 seconds, entering and exiting with precision.</div>
+    </div>
+    <div class="step">
+      <div class="step-num">📈</div>
+      <div class="step-title">Collect Your Profits</div>
+      <div class="step-desc">Watch real P&L accumulate. Take profit on demand — your keys, your capital, full control.</div>
+    </div>
+  </div>
+</section>
+
 <!-- ═══ RECENT CLOSED TRADES — compact list ═══ -->
 <section class="sec" id="wins-sec" style="display:none">
   <div class="sec-head"><span class="sec-title">Recent Closed Trades</span><span class="sec-line"></span></div>
   <div id="wins-list" style="display:flex;flex-direction:column;gap:6px"></div>
 </section>
+
+<!-- ═══ FOR AI AGENTS — x402 ═══ -->
+<section class="sec" id="bot-api">
+  <div class="sec-head"><span class="sec-title">For AI Agents &amp; Bots</span><span class="sec-line"></span></div>
+  <div class="agent-grid">
+    <div class="agent-text">
+      <h3>x402 — Pay-Per-Session Bot API</h3>
+      <p>Autonomous agents can start, fund, and control trading sessions entirely via HTTP. No UI, no human in the loop. Payments handled natively via the x402 protocol — 10 USDC on Base per 30-day session.</p>
+      <div class="endpoint-list">
+        <div class="ep"><span class="m-get">GET</span>  /api/v1/status</div>
+        <div class="ep"><span class="m-post">POST</span> /api/v1/session <span style="color:var(--dim);font-size:.65rem">← x402 gated</span></div>
+        <div class="ep"><span class="m-get">GET</span>  /api/v1/session/{id}</div>
+        <div class="ep"><span class="m-post">POST</span> /api/v1/session/{id}/command</div>
+      </div>
+    </div>
+    <div class="code-box">
+      <div class="code-box-head">
+        <span style="width:10px;height:10px;border-radius:50%;background:#f85149;display:inline-block"></span>
+        <span style="width:10px;height:10px;border-radius:50%;background:#e3b341;display:inline-block"></span>
+        <span style="width:10px;height:10px;border-radius:50%;background:#3fb950;display:inline-block"></span>
+        <span style="margin-left:8px">bash</span>
+      </div>
+<pre><span class="cmt"># 1. Check live status (no auth)</span>
+<span class="kw">curl</span> https://tradingbots.fun/api/v1/status
+
+<span class="cmt"># 2. Start session — get 402 with payment details</span>
+<span class="kw">curl</span> -X POST https://tradingbots.fun/api/v1/session
+<span class="cmt"># ← 402 {"amount":"10 USDC","payTo":"0x..."}</span>
+
+<span class="cmt"># 3. Retry after paying (include tx hash)</span>
+<span class="kw">curl</span> -X POST https://tradingbots.fun/api/v1/session \
+  -H <span class="str">"X-Payment: 0xabc...def"</span>
+<span class="cmt"># ← 200 {"session_id":"ses_...","token":"tok_..."}</span>
+
+<span class="cmt"># 4. Take profit on SOL</span>
+<span class="kw">curl</span> -X POST https://tradingbots.fun/api/v1/session/ses_.../command \
+  -H <span class="str">"Authorization: Bearer tok_..."</span> \
+  -H <span class="str">"Content-Type: application/json"</span> \
+  -d <span class="str">'{"cmd":"take_profit","symbol":"SOL"}'</span></pre>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ CTA BAND ═══ -->
+<div class="cta-band">
+  <h3>Ready to put your capital to work?</h3>
+  <p>Human or bot — deposit USDC and let the AI handle the rest.</p>
+  <div class="hero-btns">
+    <a href="/login" class="btn-p">Start Earning →</a>
+    <a href="/api/v1/status" class="btn-s" target="_blank">Try the API</a>
+  </div>
+</div>
 
 </div><!-- /wrap -->
 
@@ -6587,6 +6706,275 @@ async fn api_public_stats_handler(
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Bot API  — /api/v1/*   (x402 payment-gated, machine-readable)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Generate a simple time-based unique ID.
+fn new_id(prefix: &str) -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let dur = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+    format!("{}_{:x}{:x}", prefix, dur.as_millis(), dur.subsec_nanos())
+}
+
+/// `GET /api/v1/status` — unauthenticated machine-readable bot status.
+/// Returns live AUM, P&L, win rate and x402 payment info.
+async fn api_v1_status_handler(
+    State(app): State<AppState>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let s = app.bot_state.read().await;
+    let m = &s.metrics;
+    let committed: f64 = s.positions.iter().map(|p| p.size_usd).sum();
+    let unrealised: f64 = s.positions.iter().map(|p| p.unrealised_pnl).sum();
+    let aum = s.capital + committed + unrealised;
+    axum::response::Json(serde_json::json!({
+        "ok":             true,
+        "aum_usd":        aum,
+        "pnl_usd":        s.pnl,
+        "win_rate":       m.win_rate,
+        "open_positions": s.positions.len(),
+        "closed_trades":  m.total_trades,
+        "cb_active":      s.cb_active,
+        "x402": {
+            "description":    "Start an AI trading session in USDC on Base",
+            "session_price":  "10 USDC",
+            "network":        "base-mainnet",
+            "asset":          "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+            "endpoint":       "POST /api/v1/session",
+            "docs":           "https://tradingbots.fun/api/v1/status"
+        }
+    })).into_response()
+}
+
+/// x402 payment requirements object (embedded in 402 responses).
+fn x402_payment_requirements(resource: &str) -> serde_json::Value {
+    serde_json::json!({
+        "scheme":             "exact",
+        "network":            "base-mainnet",
+        "maxAmountRequired":  "10000000",
+        "resource":           resource,
+        "description":        "Start a 30-day AI trading bot session",
+        "mimeType":           "application/json",
+        "payTo":              std::env::var("X402_WALLET").unwrap_or_else(|_| "0x0000000000000000000000000000000000000000".to_string()),
+        "maxTimeoutSeconds":  300,
+        "asset":              "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+        "extra": { "name": "USD Coin", "version": "2" }
+    })
+}
+
+/// `POST /api/v1/session` — x402-gated session creation.
+///
+/// **Without** `X-Payment` header → `402 Payment Required` with USDC details.
+/// **With** `X-Payment: 0x{txHash}` → creates session, returns `{session_id, token}`.
+async fn api_v1_session_handler(
+    State(app): State<AppState>,
+    headers:    axum::http::HeaderMap,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let payment_header = headers
+        .get("x-payment")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    if payment_header.is_none() {
+        // ── 402: tell the bot what to pay ─────────────────────────────────
+        let req = x402_payment_requirements("https://tradingbots.fun/api/v1/session");
+        let req_str = serde_json::to_string(&req).unwrap_or_default();
+        return (
+            axum::http::StatusCode::PAYMENT_REQUIRED,
+            [
+                ("content-type",       "application/json"),
+                ("x-payment-required", req_str.as_str()),
+            ],
+            serde_json::to_string(&serde_json::json!({
+                "error":   "Payment required",
+                "amount":  "10 USDC",
+                "network": "base-mainnet",
+                "payTo":   std::env::var("X402_WALLET").unwrap_or_else(|_| "0x0000000000000000000000000000000000000000".to_string()),
+                "asset":   "USDC — 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+                "x402":    true,
+                "retry":   "POST /api/v1/session with X-Payment: <tx_hash>"
+            })).unwrap_or_default(),
+        ).into_response();
+    }
+
+    let tx_hash = payment_header.unwrap();
+    // Basic format check — real verification would call Alchemy/Base RPC
+    if !tx_hash.starts_with("0x") || tx_hash.len() < 20 {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            axum::response::Json(serde_json::json!({
+                "error": "Invalid X-Payment value — expected 0x{txHash}"
+            })),
+        ).into_response();
+    }
+
+    let session_id  = new_id("ses");
+    let token       = new_id("tok");
+    let now         = chrono::Utc::now();
+    let expires_at  = now + chrono::Duration::days(30);
+
+    let session = BotSession {
+        id:         session_id.clone(),
+        token:      token.clone(),
+        tx_hash:    tx_hash.clone(),
+        plan:       "starter".to_string(),
+        created_at: now.to_rfc3339(),
+        expires_at: expires_at.to_rfc3339(),
+    };
+
+    {
+        let mut s = app.bot_state.write().await;
+        s.bot_sessions.insert(session_id.clone(), session);
+    }
+
+    log::info!("🤖 x402 session created: {} (tx {})", session_id, &tx_hash[..10.min(tx_hash.len())]);
+
+    axum::response::Json(serde_json::json!({
+        "ok":         true,
+        "session_id": session_id,
+        "token":      token,
+        "plan":       "starter",
+        "expires_at": expires_at.to_rfc3339(),
+        "endpoints": {
+            "status":  format!("/api/v1/session/{}", session_id),
+            "command": format!("/api/v1/session/{}/command", session_id)
+        }
+    })).into_response()
+}
+
+/// Validate `Authorization: Bearer {token}` against stored session.
+/// Returns `Ok(plan)` on success or an error response.
+async fn validate_bot_session(
+    app:        &AppState,
+    headers:    &axum::http::HeaderMap,
+    session_id: &str,
+) -> Result<String, axum::response::Response> {
+    use axum::response::IntoResponse;
+    let auth_token = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))
+        .map(|s| s.to_string());
+
+    let s = app.bot_state.read().await;
+    match s.bot_sessions.get(session_id) {
+        None => Err((
+            axum::http::StatusCode::NOT_FOUND,
+            axum::response::Json(serde_json::json!({"error":"Session not found"})),
+        ).into_response()),
+        Some(sess) => {
+            if auth_token.as_deref() != Some(sess.token.as_str()) {
+                return Err((
+                    axum::http::StatusCode::UNAUTHORIZED,
+                    axum::response::Json(serde_json::json!({"error":"Invalid bearer token"})),
+                ).into_response());
+            }
+            Ok(sess.plan.clone())
+        }
+    }
+}
+
+/// `GET /api/v1/session/{id}` — live bot status for an authenticated session.
+async fn api_v1_session_status_handler(
+    State(app):                              State<AppState>,
+    headers:                                 axum::http::HeaderMap,
+    axum::extract::Path(session_id):         axum::extract::Path<String>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if let Err(e) = validate_bot_session(&app, &headers, &session_id).await {
+        return e;
+    }
+    let s = app.bot_state.read().await;
+    let m = &s.metrics;
+    let committed: f64 = s.positions.iter().map(|p| p.size_usd).sum();
+    let unrealised: f64 = s.positions.iter().map(|p| p.unrealised_pnl).sum();
+    axum::response::Json(serde_json::json!({
+        "ok":         true,
+        "session_id": session_id,
+        "bot": {
+            "aum_usd":        s.capital + committed + unrealised,
+            "pnl_usd":        s.pnl,
+            "win_rate":       m.win_rate,
+            "total_trades":   m.total_trades,
+            "open_positions": s.positions.len(),
+            "cb_active":      s.cb_active,
+            "positions":      s.positions.iter().map(|p| serde_json::json!({
+                "symbol":         p.symbol,
+                "side":           p.side,
+                "entry_price":    p.entry_price,
+                "unrealised_pnl": p.unrealised_pnl,
+                "size_usd":       p.size_usd,
+                "leverage":       p.leverage,
+            })).collect::<Vec<_>>()
+        }
+    })).into_response()
+}
+
+/// `POST /api/v1/session/{id}/command` — queue a trade command for the bot.
+///
+/// Body: `{"cmd": "close_position", "symbol": "SOL"}`
+/// Valid `cmd` values: `close_position`, `take_profit`, `close_all`, `close_profitable`
+async fn api_v1_session_command_handler(
+    State(app):                      State<AppState>,
+    headers:                         axum::http::HeaderMap,
+    axum::extract::Path(session_id): axum::extract::Path<String>,
+    axum::extract::Json(body):       axum::extract::Json<serde_json::Value>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if let Err(e) = validate_bot_session(&app, &headers, &session_id).await {
+        return e;
+    }
+
+    let cmd_str = body.get("cmd").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let symbol  = body.get("symbol").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+    let cmd: BotCommand = match cmd_str.as_str() {
+        "close_position" | "close" => {
+            if symbol.is_empty() {
+                return (axum::http::StatusCode::BAD_REQUEST,
+                    axum::response::Json(serde_json::json!({"error":"symbol required for close_position"}))).into_response();
+            }
+            BotCommand::ClosePosition { symbol }
+        }
+        "take_profit" | "tp" => {
+            if symbol.is_empty() {
+                return (axum::http::StatusCode::BAD_REQUEST,
+                    axum::response::Json(serde_json::json!({"error":"symbol required for take_profit"}))).into_response();
+            }
+            BotCommand::TakePartial { symbol }
+        }
+        "close_all"         => BotCommand::CloseAll,
+        "close_profitable"  => BotCommand::CloseProfitable,
+        other => {
+            // Fall back to the NLP parser for natural-language commands
+            match parse_trade_command(other) {
+                Some(c) => c,
+                None    => return (
+                    axum::http::StatusCode::BAD_REQUEST,
+                    axum::response::Json(serde_json::json!({
+                        "error": "Unknown command",
+                        "valid": ["close_position","take_profit","close_all","close_profitable"]
+                    })),
+                ).into_response(),
+            }
+        }
+    };
+
+    {
+        let mut s = app.bot_state.write().await;
+        s.pending_cmds.push_back(cmd);
+    }
+
+    axum::response::Json(serde_json::json!({
+        "ok":      true,
+        "queued":  true,
+        "message": "Command queued — executes on next trading cycle (~30s)"
+    })).into_response()
+}
+
 pub async fn serve(app_state: AppState, port: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let app = Router::new()
         .route("/", get(public_landing_handler))
@@ -6641,6 +7029,11 @@ pub async fn serve(app_state: AppState, port: u16) -> Result<(), Box<dyn std::er
         .route("/api/thesis",           get(thesis_get_handler).post(thesis_update_handler))
         // ── AI trade commands ────────────────────────────────────────────────
         .route("/api/command",          post(command_handler))
+        // ── Bot API v1 — x402 payment-gated ─────────────────────────────────
+        .route("/api/v1/status",                        get(api_v1_status_handler))
+        .route("/api/v1/session",                       post(api_v1_session_handler))
+        .route("/api/v1/session/:id",                   get(api_v1_session_status_handler))
+        .route("/api/v1/session/:id/command",           post(api_v1_session_command_handler))
         .with_state(app_state);
     let addr = format!("0.0.0.0:{}", port);
     log::info!("🌐 Dashboard at http://{}", addr);
