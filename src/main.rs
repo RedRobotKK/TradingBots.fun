@@ -1706,7 +1706,11 @@ fn portfolio_heat(positions: &[PaperPosition], equity: f64) -> f64 {
             } else {
                 (p.stop_loss - p.entry_price) * p.quantity
             };
-            current_risk.max(0.0) / equity
+            // Pool-funded positions count at 50% heat weight — they represent
+            // captured profits (house money) not own capital, so a full stop-out
+            // merely returns the pool to zero rather than hurting base equity.
+            let heat_weight = if p.funded_from_pool { 0.5 } else { 1.0 };
+            current_risk.max(0.0) / equity * heat_weight
         })
         .sum::<f64>()
 }
@@ -1971,11 +1975,67 @@ async fn execute_paper_trade(
         size_usd = allowed;  // apply the reduction — enforce the heat limit
     }
     // Guard: total portfolio heat ≤ MAX_PORTFOLIO_HEAT
+    // Pool-funded positions count at 50% heat weight (see portfolio_heat), so
+    // we check against the own-capital heat ceiling while remaining open to
+    // pool-funded entries that don't burn through base capital at all.
     let p_heat = portfolio_heat(&s.positions, equity);
     if p_heat >= MAX_PORTFOLIO_HEAT {
         info!("🔥 {} skipped — portfolio heat {:.1}% (max {:.0}%)",
               symbol, p_heat * 100.0, MAX_PORTFOLIO_HEAT * 100.0);
         return;
+    }
+
+    // ── Re-entry detection + pool-funded sizing ──────────────────────────
+    // If the same coin had a profitable close within the last 60 cycles
+    // (~30 min) and the house-money pool is large enough, we size from the
+    // pool rather than own capital.  This implements "finance the next move
+    // with profits" — we're playing with house money so we:
+    //   • Don't deduct from s.capital
+    //   • Allow up to 2× standard size on confirmed re-entries
+    //   • Bypass the own-capital minimum-capital guard (pool has its own check)
+    //
+    // If there is NO recent profitable close but the pool is healthy (≥ size_usd),
+    // we still prefer the pool for any new trade so own-capital heat is preserved.
+    let cycle_now = s.cycle_count;
+    let reentry_profit: f64 = s.recently_closed.iter()
+        .filter(|(sym, _, at)| sym == symbol && cycle_now.saturating_sub(*at) <= 60)
+        .map(|(_, pnl, _)| *pnl)
+        .sum();
+
+    let pool_available = s.house_money_pool;
+    // Require pool to cover at least the standard size_usd before preferring it.
+    // This prevents deploying a half-sized pool stake that's worse than own-capital
+    // sizing.
+    let pool_qualifies = pool_available >= size_usd;
+
+    let (funded_from_pool, pool_stake_usd): (bool, f64);
+    if pool_qualifies {
+        // Re-entry on same coin → up to 2× standard size from the pool
+        let pool_target = if reentry_profit > 0.0 {
+            let two_x = size_usd * 2.0;
+            if pool_available >= two_x {
+                info!("🏦 {} re-entry × 2 from house-money pool \
+                       (recent profit ${:.2}, pool ${:.2})",
+                      symbol, reentry_profit, pool_available);
+                two_x
+            } else {
+                info!("🏦 {} re-entry from pool (partial 2× — pool ${:.2} < 2×${:.2})",
+                      symbol, pool_available, size_usd);
+                pool_available.min(size_usd * 2.0)
+            }
+        } else {
+            info!("🏦 {} funded from house-money pool ${:.2} (preserving own capital)",
+                  symbol, pool_available);
+            size_usd // standard size, from pool
+        };
+        size_usd         = pool_target;
+        funded_from_pool = true;
+        pool_stake_usd   = pool_target;
+        s.house_money_pool  -= pool_target;
+        s.pool_deployed_usd += pool_target;
+    } else {
+        funded_from_pool = false;
+        pool_stake_usd   = 0.0;
     }
 
     // Apply confidence-scaled leverage — quantity based on notional, capital deducted at margin
@@ -1997,7 +2057,12 @@ async fn execute_paper_trade(
     let budget_mult = (entry_dca_max as f64 - 1.0).max(1.0); // 1.0/2.0/3.0
     let trade_budget_usd = size_usd * budget_mult;
 
-    s.capital -= size_usd;  // only deduct margin, not notional
+    // Deduct from the right bucket: pool-funded entries don't touch own capital
+    if funded_from_pool {
+        // pool already debited above; capital unchanged
+    } else {
+        s.capital -= size_usd;  // only deduct margin, not notional
+    }
     s.positions.push(PaperPosition {
         symbol:           symbol.to_string(),
         side:             target_side.to_string(),
@@ -2029,16 +2094,19 @@ async fn execute_paper_trade(
         ob_bid_wall_near:   false,
         ob_ask_wall_near:   false,
         ob_adverse_cycles:  0,
+        funded_from_pool,
+        pool_stake_usd,
     });
 
     let kelly_str = if metrics.kelly_fraction() > 0.0 {
         format!("Kelly={:.1}%", metrics.kelly_fraction() * 100.0)
     } else { "pre-Kelly".to_string() };
 
-    info!("📝 {} {} @ ${:.4}  margin=${:.2}  {:.1}×lev  notional=${:.2}  R=${:.2}  heat={:.1}%  [{}]",
+    let funding_tag = if funded_from_pool { "🏦POOL" } else { "💵OWN" };
+    info!("📝 {} {} @ ${:.4}  margin=${:.2}  {:.1}×lev  notional=${:.2}  R=${:.2}  heat={:.1}%  {}  [{}]",
         target_side, symbol, dec.entry_price,
         size_usd, leverage, notional,
-        r_risk, p_heat * 100.0, kelly_str);
+        r_risk, p_heat * 100.0, funding_tag, kelly_str);
 
     // Snapshot position for collective upsert (must happen before drop(s))
     let hp_snap = s.positions.last().cloned();
@@ -2101,7 +2169,12 @@ async fn pyramid_position(
     if let Some(idx) = idx {
         // Add-on size = 50% of the current remaining position size
         let add_size = s.positions[idx].size_usd * 0.5;
-        if s.capital < add_size || add_size < 1.0 { return; }
+        let is_pool  = s.positions[idx].funded_from_pool;
+        if is_pool {
+            if s.house_money_pool < add_size || add_size < 1.0 { return; }
+        } else {
+            if s.capital < add_size || add_size < 1.0 { return; }
+        }
 
         // Apply the same leverage as the original position so the new shares
         // carry the same notional exposure per dollar of margin.
@@ -2115,7 +2188,13 @@ async fn pyramid_position(
         let new_qty   = old_qty + add_qty;
         let avg_entry = (old_entry * old_qty + dec.entry_price * add_qty) / new_qty;
 
-        s.capital -= add_size;
+        if is_pool {
+            s.house_money_pool  -= add_size;
+            s.pool_deployed_usd += add_size;
+            s.positions[idx].pool_stake_usd += add_size;
+        } else {
+            s.capital -= add_size;
+        }
 
         s.positions[idx].quantity         = new_qty;
         s.positions[idx].size_usd         += add_size;
@@ -2167,7 +2246,13 @@ async fn dca_position(
 
     if let Some(idx) = idx {
         let add_size = s.positions[idx].size_usd * 0.50;
-        if s.capital < add_size || add_size < 1.0 {
+        let is_pool  = s.positions[idx].funded_from_pool;
+        if is_pool {
+            if s.house_money_pool < add_size || add_size < 1.0 {
+                info!("⚠ DCA {} skipped — insufficient pool (${:.2})", symbol, s.house_money_pool);
+                return;
+            }
+        } else if s.capital < add_size || add_size < 1.0 {
             info!("⚠ DCA {} skipped — insufficient capital (${:.2})", symbol, s.capital);
             return;
         }
@@ -2211,7 +2296,13 @@ async fn dca_position(
             new_stop.min(s.positions[idx].stop_loss) // lower stop = better for SHORT
         };
 
-        s.capital -= add_size;
+        if is_pool {
+            s.house_money_pool  -= add_size;
+            s.pool_deployed_usd += add_size;
+            s.positions[idx].pool_stake_usd += add_size;
+        } else {
+            s.capital -= add_size;
+        }
         s.positions[idx].quantity        = new_qty;
         s.positions[idx].size_usd       += add_size;
         s.positions[idx].entry_price     = avg_entry;
@@ -2286,14 +2377,36 @@ async fn take_partial(
         s.positions[idx].tranches_closed   = tranche + 1;
         s.positions[idx].partial_closed    = true;
 
-        s.capital += close_size + trade_pnl;
-        s.pnl     += trade_pnl;
+        // ── Profit recycling: route profits to house_money_pool ───────────
+        // Margin fraction returns to capital (it was always ours).
+        // Profit goes to the pool — available to finance the next move
+        // without touching original capital.
+        // For pool-funded positions, the margin fraction also returns to pool.
+        let funded = s.positions[idx].funded_from_pool;
+        if funded {
+            // Pool stake reducing proportionally
+            let stake_reduction = s.positions[idx].pool_stake_usd * close_frac;
+            s.positions[idx].pool_stake_usd -= stake_reduction;
+            s.pool_deployed_usd = (s.pool_deployed_usd - stake_reduction).max(0.0);
+            s.house_money_pool  += stake_reduction; // margin fraction back to pool
+        } else {
+            s.capital += close_size; // margin fraction back to capital
+        }
+        // Profit (positive P&L) always goes to house_money_pool regardless
+        if trade_pnl > 0.0 {
+            s.house_money_pool += trade_pnl;
+        } else {
+            // Loss is absorbed from capital (even on pool-funded, the pool is already returned)
+            s.capital += trade_pnl; // negative amount
+        }
+        s.pnl += trade_pnl;
 
         let pnl_pct    = trade_pnl / close_size * 100.0;
         let frac_label = if tranche == 0 { "¼" } else { "⅓" };
 
-        info!("💰 {}R PARTIAL {} {} @ ${:.4}  P&L {:+.2} ({:+.1}%)  [{} closed]",
-            r_num, side, symbol, exit_price, trade_pnl, pnl_pct, frac_label);
+        info!("💰 {}R PARTIAL {} {} @ ${:.4}  P&L {:+.2} ({:+.1}%)  [{} closed]  pool=${:.2}",
+            r_num, side, symbol, exit_price, trade_pnl, pnl_pct, frac_label,
+            s.house_money_pool);
 
         let partial_breakdown = Some(format!(
             "<div style='font-size:.78em;padding:4px 0;line-height:1.7'>\
@@ -2392,16 +2505,42 @@ async fn close_paper_position(
             (pos.entry_price - exit_price) * pos.quantity
         };
 
-        s.capital += pos.size_usd + trade_pnl;
-        s.pnl     += trade_pnl;
+        // ── Profit recycling: route profits to house_money_pool ───────────
+        // Full close: margin + loss/gain.  Profit goes to pool to finance
+        // future moves (including a re-entry on the same coin).
+        let cycle_now = s.cycle_count;
+        if pos.funded_from_pool {
+            // Pool stake fully returned
+            s.house_money_pool  += pos.pool_stake_usd;
+            s.pool_deployed_usd  = (s.pool_deployed_usd - pos.pool_stake_usd).max(0.0);
+        } else {
+            s.capital += pos.size_usd; // own-capital margin returned
+        }
+        if trade_pnl > 0.0 {
+            // Profit → pool (available for the next move)
+            s.house_money_pool += trade_pnl;
+        } else {
+            // Loss → deducted from capital
+            s.capital += trade_pnl;
+        }
+        s.pnl += trade_pnl;
+
+        // Record close for re-entry detection (keep last 30)
+        if trade_pnl > 0.0 {
+            s.recently_closed.push_back((symbol.to_string(), trade_pnl, cycle_now));
+            while s.recently_closed.len() > 30 {
+                s.recently_closed.pop_front();
+            }
+        }
 
         let pnl_pct    = trade_pnl / pos.size_usd * 100.0;
         let profitable = trade_pnl > 0.0;
         let was_long   = pos.side == "LONG";
         let r_at_close = if pos.r_dollars_risked > 1e-8 { trade_pnl / pos.r_dollars_risked } else { 0.0 };
 
-        info!("📝 CLOSE {} {} @ ${:.4} → {:+.2} ({:+.1}% / {:.2}R) [{}]",
-            pos.side, symbol, exit_price, trade_pnl, pnl_pct, r_at_close, reason);
+        info!("📝 CLOSE {} {} @ ${:.4} → {:+.2} ({:+.1}% / {:.2}R) [{}]  pool=${:.2}",
+            pos.side, symbol, exit_price, trade_pnl, pnl_pct, r_at_close, reason,
+            s.house_money_pool);
 
         // ── Build verbose breakdown for the click-to-expand dashboard row ────────
         let hold_mins = pos.cycles_held / 2;
@@ -2623,6 +2762,8 @@ mod tests {
             ob_bid_wall_near:   false,
             ob_ask_wall_near:   false,
             ob_adverse_cycles:  0,
+            funded_from_pool:   false,
+            pool_stake_usd:     0.0,
         }
     }
 

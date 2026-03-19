@@ -152,6 +152,18 @@ pub struct PaperPosition {
     /// can trigger an early partial or exit to protect profits / cut losses.
     #[serde(default)]
     pub ob_adverse_cycles:  u32,
+    // ── Profit-pool funding ───────────────────────────────────────────────
+    /// True when this position was opened using profits from house_money_pool
+    /// rather than the original base capital.  Pool-funded positions:
+    ///   • Count at 50% weight in portfolio heat (we're playing with profits)
+    ///   • Can be sized up to 2× the standard Kelly-sized amount
+    ///   • When closed, net profit goes back to the pool (not general capital)
+    #[serde(default)]
+    pub funded_from_pool:   bool,
+    /// USD drawn from house_money_pool to open this position.
+    /// Returned to pool (not capital) when the position is closed.
+    #[serde(default)]
+    pub pool_stake_usd:     f64,
 }
 
 fn default_min_confidence() -> f64 { 0.68 }
@@ -257,6 +269,30 @@ pub struct BotState {
     /// Example: "🤖 3 reviewed · SOL hold · ETH scale_down"
     #[serde(default)]
     pub ai_status:        String,
+
+    // ── Profit recycling ─────────────────────────────────────────────────
+    /// Accumulated realized profits (from partial + full closes with positive P&L)
+    /// held separately from the base capital.  This is "house money" — profits the
+    /// market has paid us.  New entries can draw from this pool first, maximising
+    /// exposure using profits rather than risking the original capital.
+    ///
+    /// Flow:
+    ///   profitable close  → trade_pnl added here
+    ///   new entry (pool)  → deducted here, position marked `funded_from_pool = true`
+    ///   pool-funded close → margin + pnl returned to capital, new profit → pool again
+    #[serde(default)]
+    pub house_money_pool: f64,
+    /// Ring buffer of the last 30 profitable closes for re-entry detection.
+    /// Each entry: (symbol, profit_usd, cycle_at_close).
+    /// When a symbol signals again within 60 cycles (30 min) of a profitable close,
+    /// the new entry is a "re-entry" and is sized from the pool preferentially.
+    #[serde(default)]
+    pub recently_closed:  std::collections::VecDeque<(String, f64, u64)>,
+    /// Total USD currently deployed from house_money_pool (in open positions).
+    /// = sum(size_usd for pos where funded_from_pool).
+    /// Used to show "own capital at risk" vs "house money at risk" split on dashboard.
+    #[serde(default)]
+    pub pool_deployed_usd: f64,
 }
 
 impl Default for BotState {
@@ -273,8 +309,11 @@ impl Default for BotState {
             session_prices: HashMap::new(),
             status: String::new(), last_update: String::new(), next_cycle_at: 0,
             equity_history: vec![],
-            referral_code:  None,
-            ai_status:      String::new(),
+            referral_code:   None,
+            ai_status:       String::new(),
+            house_money_pool: 0.0,
+            recently_closed:  std::collections::VecDeque::new(),
+            pool_deployed_usd: 0.0,
         }
     }
 }
@@ -456,6 +495,17 @@ async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
                           🏦 principal ✓</span>")
             } else { String::new() };
 
+            // ── Pool-funded badge ──────────────────────────────────────────
+            // Shows when a position was opened using the house-money pool (not own capital).
+            // Also shows the pool stake so the user can see how much profit is at work.
+            let pool_badge = if p.funded_from_pool {
+                format!(" <span title='Opened with house-money pool — own capital not at risk. Pool stake ${:.2}' \
+                          style='background:#0d1d2e;color:#388bfd;border:1px solid #388bfd60;\
+                          border-radius:4px;padding:1px 5px;font-size:.68em'>\
+                          💰 house money ${:.2}</span>",
+                         p.pool_stake_usd, p.pool_stake_usd)
+            } else { String::new() };
+
             // Convert cycles to human-readable hold time
             let hold_mins = p.cycles_held / 2; // 30s cycles → minutes
             let hold_str = if hold_mins < 60 {
@@ -578,7 +628,7 @@ async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
                 risk     = risk_usd,
                 rpct     = risk_pct,
                 time      = p.entry_time,
-                ob_badges = format!("{}{}", ob_badge, principal_badge),
+                ob_badges = format!("{}{}{}", ob_badge, principal_badge, pool_badge),
                 ai_row    = ai_row,
             )
         }).collect()
@@ -1398,7 +1448,8 @@ tr:hover td{{background:rgba(255,255,255,.025)}}
   <div class="eq-left">
     <div class="eq-label">Total Equity</div>
     <div id="equity-val" class="eq-val">${equity:.2}</div>
-    <div id="equity-label" class="eq-label" style="margin-top:3px">Free $<span id="equity-free">{capital:.2}</span></div>
+    <div id="equity-label" class="eq-label" style="margin-top:3px">Free $<span id="equity-free">{capital:.2}</span>
+      &nbsp;·&nbsp; <span title="House-money pool: accumulated profits available for re-deployment" style="color:{pool_col_op}">🏦 $<span id="op-pool">{pool_bal:.2}</span></span></div>
     <div id="pnl-badge" class="pnl-badge" style="color:{pnl_colour};border:1px solid {pnl_colour}40;background:{pnl_colour}15;margin-top:8px;display:inline-block">
       {pnl_sign}${total_pnl:.2} &nbsp; {pnl_sign}{total_pnl_pct:.2}%
     </div>
@@ -1579,6 +1630,7 @@ function toggleDetail(id){{
 
     var ef=$id('equity-free');
     if(ef)ef.textContent=s.capital.toFixed(2);
+    var op=$id('op-pool');if(op){{op.textContent=(s.house_money_pool||0).toFixed(2);op.parentElement.style.color=(s.house_money_pool||0)>0?'#3fb950':'#8b949e';}}
 
     var pb=$id('pnl-badge');
     if(pb){{
@@ -1786,6 +1838,8 @@ function toggleDetail(id){{
         last_update  = s.last_update,
         equity       = equity,
         capital      = s.capital,
+        pool_bal     = s.house_money_pool,
+        pool_col_op  = if s.house_money_pool > 0.0 { "#3fb950" } else { "#8b949e" },
         pnl_colour   = pnl_colour,
         pnl_sign     = pnl_sign,
         total_pnl    = total_pnl.abs(),
@@ -2198,6 +2252,12 @@ async fn consumer_app_handler(
 <div class="card">
   <div class="metric-row"><span class="ml">Free capital</span>
     <span id="app-capital" class="mv">${capital:.2}</span></div>
+  <div class="metric-row" title="Accumulated profits recycled for future trades — these positions do not consume own capital">
+    <span class="ml">🏦 House-money pool</span>
+    <span id="app-pool" class="mv" style="color:{pool_col}">${pool:.2}</span></div>
+  <div class="metric-row" title="USD currently deployed in pool-funded open positions">
+    <span class="ml" style="font-size:.85em;color:#8b949e">  ↳ deployed</span>
+    <span id="app-pool-deployed" class="mv" style="font-size:.85em;color:#8b949e">${pool_deployed:.2}</span></div>
   <div class="metric-row"><span class="ml">Open positions</span>
     <span id="app-positions" class="mv">{open_n}</span></div>
   <div class="metric-row"><span class="ml">Closed trades</span>
@@ -2248,6 +2308,8 @@ async fn consumer_app_handler(
       pnlb.textContent=sg+'$'+fmt2(total_pnl)+' \u00a0 '+sg+Math.abs(pnl_pct).toFixed(2)+'%';
       pnlb.style.color=c;pnlb.style.borderColor=c+'40';pnlb.style.background=c+'12';}}
     var cap=$id('app-capital');if(cap)cap.textContent='$'+s.capital.toFixed(2);
+    var pool=$id('app-pool');if(pool){{pool.textContent='$'+(s.house_money_pool||0).toFixed(2);pool.style.color=(s.house_money_pool||0)>0?'#3fb950':'#8b949e';}}
+    var pd=$id('app-pool-deployed');if(pd)pd.textContent='$'+(s.pool_deployed_usd||0).toFixed(2);
     var posEl=$id('app-positions');if(posEl)posEl.textContent=(s.positions||[]).length;
     var clEl=$id('app-closed');if(clEl)clEl.textContent=(s.closed_trades||[]).length;
   }}
@@ -2262,6 +2324,9 @@ async fn consumer_app_handler(
         pnl             = total_pnl.abs(),
         pp              = pnl_pct.abs(),
         capital         = s.capital,
+        pool            = s.house_money_pool,
+        pool_col        = if s.house_money_pool > 0.0 { "#3fb950" } else { "#8b949e" },
+        pool_deployed   = s.pool_deployed_usd,
         open_n          = s.positions.len(),
         closed_n        = s.closed_trades.len(),
         init            = s.initial_capital,
@@ -6161,10 +6226,12 @@ mod tests {
             dca_spent_usd:    0.0,
             btc_ret_at_entry: 0.0,
             initial_margin_usd: size_usd,
-            ob_sentiment:      String::new(),
-            ob_bid_wall_near:  false,
-            ob_ask_wall_near:  false,
-            ob_adverse_cycles: 0,
+            ob_sentiment:       String::new(),
+            ob_bid_wall_near:   false,
+            ob_ask_wall_near:   false,
+            ob_adverse_cycles:  0,
+            funded_from_pool:   false,
+            pool_stake_usd:     0.0,
         }
     }
 
