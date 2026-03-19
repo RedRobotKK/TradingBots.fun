@@ -700,7 +700,7 @@ async fn run_cycle(
                         info!("🤖 Manual close: {symbol} @ {px}");
                         close_paper_position(symbol, px, "Manual-Close",
                             bot_state, weights, trade_logger, notifier, db,
-                            single_op_tenant()).await;
+                            single_op_tenant(), hl, fee_bps, config.paper_trading).await;
                     } else {
                         warn!("🤖 Manual close: {symbol} not found in price feed");
                     }
@@ -716,7 +716,7 @@ async fn run_cycle(
                         });
                     if let Some(px) = price {
                         info!("🤖 Manual take-partial: {symbol} @ {px}");
-                        take_partial(symbol.clone(), px, 0, bot_state, weights, trade_logger).await;
+                        take_partial(symbol.clone(), px, 0, bot_state, weights, trade_logger, hl, fee_bps, config.paper_trading).await;
                     } else {
                         warn!("🤖 Manual take-partial: {symbol} not found in price feed");
                     }
@@ -733,7 +733,7 @@ async fn run_cycle(
                     for (sym, px) in open {
                         close_paper_position(&sym, px, "Manual-CloseAll",
                             bot_state, weights, trade_logger, notifier, db,
-                            single_op_tenant()).await;
+                            single_op_tenant(), hl, fee_bps, config.paper_trading).await;
                     }
                 }
                 BotCommand::CloseProfitable => {
@@ -749,7 +749,7 @@ async fn run_cycle(
                     for (sym, px) in profitable {
                         close_paper_position(&sym, px, "Manual-TakeProfit",
                             bot_state, weights, trade_logger, notifier, db,
-                            single_op_tenant()).await;
+                            single_op_tenant(), hl, fee_bps, config.paper_trading).await;
                     }
                 }
                 BotCommand::OpenLong { symbol, size_usd, leverage } => {
@@ -1111,20 +1111,20 @@ async fn run_cycle(
     // Tranche 0 first (1R, 1/4 size) → then 1 (2R, 1/3) → then 2 (4R, 1/3)
     for (sym, price) in to_partial0 {
         if to_close.iter().any(|(s, _, _)| s == &sym) { continue; }
-        take_partial(sym, price, 0, bot_state, weights, trade_logger).await;
+        take_partial(sym, price, 0, bot_state, weights, trade_logger, hl, fee_bps, config.paper_trading).await;
     }
     for (sym, price) in to_partial1 {
         if to_close.iter().any(|(s, _, _)| s == &sym) { continue; }
-        take_partial(sym, price, 1, bot_state, weights, trade_logger).await;
+        take_partial(sym, price, 1, bot_state, weights, trade_logger, hl, fee_bps, config.paper_trading).await;
     }
     for (sym, price) in to_partial2 {
         if to_close.iter().any(|(s, _, _)| s == &sym) { continue; }
-        take_partial(sym, price, 2, bot_state, weights, trade_logger).await;
+        take_partial(sym, price, 2, bot_state, weights, trade_logger, hl, fee_bps, config.paper_trading).await;
     }
 
     // Execute full closes
     for (sym, price, reason) in to_close {
-        close_paper_position(&sym, price, &reason, bot_state, weights, trade_logger, notifier, db, single_op_tenant()).await;
+        close_paper_position(&sym, price, &reason, bot_state, weights, trade_logger, notifier, db, single_op_tenant(), hl, fee_bps, config.paper_trading).await;
         info!("🚨 {} closed → {} @ ${:.4}", sym, reason, price);
     }
 
@@ -1396,7 +1396,7 @@ async fn run_cycle(
                 let mut s = bot_state.write().await;
                 s.ai_status = summary;
             }
-            apply_ai_review(&review, bot_state, weights, &current_mids, trade_logger, notifier, db, single_op_tenant()).await;
+            apply_ai_review(&review, bot_state, weights, &current_mids, trade_logger, notifier, db, single_op_tenant(), hl, fee_bps, config.paper_trading).await;
         }
     }
 
@@ -1417,6 +1417,9 @@ async fn apply_ai_review(
     notifier:     &Option<SharedNotifier>,
     db:           &Option<SharedDb>,
     tenant_id:    Uuid,
+    hl:           &Arc<exchange::HyperliquidClient>,
+    fee_bps:      u32,
+    paper:        bool,
 ) {
     for rec in &review.recommendations {
         let cur_price = match current_mids.get(rec.symbol.as_str()) {
@@ -1485,7 +1488,7 @@ async fn apply_ai_review(
                             } else { 0.0 })
                             .unwrap_or(0.0)
                     };
-                    close_paper_position(&rec.symbol, cur_price, "AI-Close", bot_state, weights, trade_logger, notifier, db, tenant_id).await;
+                    close_paper_position(&rec.symbol, cur_price, "AI-Close", bot_state, weights, trade_logger, notifier, db, tenant_id, hl, fee_bps, paper).await;
                     // Fire ai_action notification
                     if let Some(n) = notifier {
                         let n = n.clone();
@@ -2036,7 +2039,7 @@ async fn execute_paper_trade(
             drop(s);
             info!("🔄 {} signal reversal: {} at {:.2}R  held={}  conf={:.0}%",
                   symbol, pos_side, r_mult_snap, cycles_snap, dec.confidence * 100.0);
-            close_paper_position(symbol, dec.entry_price, "SignalExit", bot_state, weights, trade_logger, notifier, db, tenant_id).await;
+            close_paper_position(symbol, dec.entry_price, "SignalExit", bot_state, weights, trade_logger, notifier, db, tenant_id, hl, fee_bps, config.paper_trading).await;
         }
         // No existing: fall through to new entry
     }
@@ -2542,6 +2545,9 @@ async fn take_partial(
     bot_state:    &SharedState,
     weights:      &SharedWeights,
     trade_logger: &SharedTradeLogger,
+    hl:           &Arc<exchange::HyperliquidClient>,
+    fee_bps:      u32,
+    paper:        bool,
 ) {
     let mut s = bot_state.write().await;
     let idx = s.positions.iter().position(|p| p.symbol == symbol && p.tranches_closed < tranche + 1);
@@ -2663,6 +2669,21 @@ async fn take_partial(
             r_at_close:      r_at_partial,
         });
 
+        // ── Live mode: place reduce-only partial close on HL (collects builder fee) ──
+        if !paper {
+            let hl_c    = hl.clone();
+            let sym_c   = symbol.clone();
+            let qty_c   = close_qty;
+            let price_c = exit_price;
+            let long_c  = was_long;
+            let bps_c   = fee_bps;
+            tokio::spawn(async move {
+                if let Err(e) = hl_c.close_position_qty(&sym_c, long_c, qty_c, price_c, bps_c).await {
+                    log::warn!("⚠ partial close order failed for {sym_c}: {e}");
+                }
+            });
+        }
+
         drop(s);
         let mut w = weights.write().await;
         w.update(&contrib, was_long, trade_pnl > 0.0);
@@ -2684,6 +2705,9 @@ async fn close_paper_position(
     notifier:     &Option<SharedNotifier>,
     db:           &Option<SharedDb>,
     tenant_id:    Uuid,
+    hl:           &Arc<exchange::HyperliquidClient>,
+    fee_bps:      u32,
+    paper:        bool,
 ) {
     let mut s = bot_state.write().await;
 
@@ -2844,6 +2868,21 @@ async fn close_paper_position(
             let r        = r_at_close;
             tokio::spawn(async move {
                 n.position_closed(&sym, &side, pnl, pct, &why, r).await;
+            });
+        }
+
+        // ── Live mode: place reduce-only close order on HL (collects builder fee) ──
+        if !paper {
+            let hl_c    = hl.clone();
+            let sym_c   = pos.symbol.clone();
+            let qty_c   = pos.quantity;
+            let price_c = exit_price;
+            let long_c  = was_long;
+            let bps_c   = fee_bps;
+            tokio::spawn(async move {
+                if let Err(e) = hl_c.close_position_qty(&sym_c, long_c, qty_c, price_c, bps_c).await {
+                    log::warn!("⚠ close order failed for {sym_c}: {e}");
+                }
             });
         }
 

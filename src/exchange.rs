@@ -276,12 +276,92 @@ impl HyperliquidClient {
         Ok(vec![])
     }
 
-    /// STUB — Logs close and returns a mock UUID.
-    #[allow(dead_code)]
-    pub async fn close_position(&self, position: &Position) -> Result<String> {
-        let id = uuid::Uuid::new_v4().to_string();
-        log::info!("🔒 [STUB] Close {} ({})", id, position.symbol);
-        Ok(id)
+    /// Place a reduce-only close order for an open position, collecting the
+    /// builder fee on the exit leg just as on the entry leg.
+    ///
+    /// Parameters
+    /// ----------
+    /// `symbol`    — e.g. "BTC", "SOL"
+    /// `is_long`   — true if the position being closed is LONG (so we SELL to close)
+    /// `qty`       — exact quantity to close (coins, not USD)
+    /// `price`     — current mid-price used as the limit price (GTC, reduce-only)
+    /// `fee_bps`   — builder fee in basis points (same as for entry orders)
+    ///
+    /// Paper mode: no-op (returns a mock id).
+    /// Live mode:  signed reduce-only order → HL exchange API.
+    pub async fn close_position_qty(
+        &self,
+        symbol:  &str,
+        is_long: bool,
+        qty:     f64,
+        price:   f64,
+        fee_bps: u32,
+    ) -> Result<String> {
+        // Paper mode — nothing to send to the exchange
+        if self.wallet_addr.is_none() {
+            let id = uuid::Uuid::new_v4().to_string();
+            log::info!("📍 [PAPER] CLOSE {} qty={:.6} @ {:.4}  id={}", symbol, qty, price, id);
+            return Ok(id);
+        }
+
+        let key = self.private_key.as_deref()
+            .ok_or_else(|| anyhow!("HYPERLIQUID_SECRET required for live close orders"))?;
+
+        let asset  = symbol_to_asset_index(symbol)?;
+        // To close a LONG we sell (is_buy=false); to close a SHORT we buy (is_buy=true)
+        let is_buy = !is_long;
+
+        let order = HlOrder {
+            asset,
+            is_buy,
+            limit_px:    format!("{:.6}", price),
+            sz:          format!("{:.6}", qty),
+            reduce_only: true,  // ← key difference from entry orders
+            order_type:  HlOrderType { limit: HlLimitType { tif: "Gtc".to_string() } },
+            cloid:       None,
+        };
+
+        let clamped_bps = fee_bps.min(3);
+        let action = HlAction {
+            action_type: "order".to_string(),
+            orders:      vec![order],
+            grouping:    "na".to_string(),
+            builder:     self.builder_code.clone().map(|b| HlBuilder { b, f: clamped_bps }),
+        };
+
+        let nonce = chrono::Utc::now().timestamp_millis() as u64;
+        let sig   = sign_l1_action(&action, nonce, self.testnet, key)?;
+
+        let body = serde_json::json!({
+            "action":       action,
+            "nonce":        nonce,
+            "signature":    sig,
+            "vaultAddress": null
+        });
+
+        let resp = self.client
+            .post(format!("{}/exchange", self.base_url))
+            .json(&body)
+            .send().await
+            .map_err(|e| anyhow!("close order POST failed: {}", e))?;
+
+        if !resp.status().is_success() {
+            let s = resp.status();
+            let t = resp.text().await.unwrap_or_default();
+            return Err(anyhow!("close order rejected HTTP {}: {}", s, t));
+        }
+
+        let result: serde_json::Value = resp.json().await
+            .map_err(|e| anyhow!("close order response parse: {}", e))?;
+
+        let oid = result["response"]["data"]["statuses"][0]["resting"]["oid"]
+            .as_u64()
+            .or_else(|| result["response"]["data"]["statuses"][0]["filled"]["oid"].as_u64())
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+        log::info!("✅ CLOSE {} qty={:.6} @ {:.4}  oid={}", symbol, qty, price, oid);
+        Ok(oid)
     }
 }
 
