@@ -115,6 +115,21 @@ pub struct PaperPosition {
     /// Signal confidence at entry — compared against incoming correlated signals.
     #[serde(default = "default_min_confidence")]
     pub entry_confidence: f64,
+    // ── Per-trade budget cap ──────────────────────────────────────────────
+    /// Maximum USD this trade is budgeted to spend across entry + all DCA add-ons.
+    /// Set at entry time: initial_size × (1 + dca_max_count).
+    /// DCA is blocked once `dca_spent_usd` reaches this ceiling.
+    #[serde(default)]
+    pub trade_budget_usd: f64,
+    /// Accumulated USD spent on DCA add-ons (does not include the initial entry).
+    #[serde(default)]
+    pub dca_spent_usd:    f64,
+    // ── BTC context snapshot at entry / last DCA ─────────────────────────
+    /// BTC 4h return at the time this entry (or last DCA) was made.
+    /// Used by the DCA thesis validator: if BTC has swung hard against us
+    /// since entry, the thesis may be broken and further DCA is blocked.
+    #[serde(default)]
+    pub btc_ret_at_entry: f64,
 }
 
 fn default_min_confidence() -> f64 { 0.68 }
@@ -347,10 +362,25 @@ async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
                 _ => "<span style='color:#3fb950'>⅝ banked</span> · trailing".to_string(),
             };
 
-            // DCA badge — shown when we've averaged down
-            let dca_badge = if p.dca_count > 0 {
-                format!(" <span style='background:#332a00;color:#e3b341;border:1px solid #e3b34150;\
-                          border-radius:4px;padding:1px 5px;font-size:.68em'>DCA×{}</span>", p.dca_count)
+            // DCA badge — shown when we've averaged down, with budget remaining
+            let dca_badge = if p.dca_count > 0 || p.trade_budget_usd > 0.0 {
+                let budget_remaining = (p.trade_budget_usd - p.dca_spent_usd).max(0.0);
+                let budget_pct = if p.trade_budget_usd > 0.0 {
+                    (p.dca_spent_usd / p.trade_budget_usd * 100.0).min(100.0) as u32
+                } else { 0 };
+                if p.dca_count > 0 {
+                    format!(" <span title='DCA budget: ${:.0} remaining ({:.0}% used)' \
+                              style='background:#332a00;color:#e3b341;border:1px solid #e3b34150;\
+                              border-radius:4px;padding:1px 5px;font-size:.68em'>\
+                              DCA×{} <span style='color:#888;font-size:.85em'>${:.0}↗</span></span>",
+                             budget_remaining, budget_pct, p.dca_count, budget_remaining)
+                } else {
+                    format!(" <span title='DCA budget: ${:.0} available' \
+                              style='background:#1a1a1a;color:#666;border:1px solid #333;\
+                              border-radius:4px;padding:1px 5px;font-size:.68em'>\
+                              budget ${:.0}</span>",
+                             budget_remaining, budget_remaining)
+                }
             } else { String::new() };
 
             // Convert cycles to human-readable hold time
@@ -6052,6 +6082,9 @@ mod tests {
             ai_action:        None,
             ai_reason:        None,
             entry_confidence: 0.68,
+            trade_budget_usd: size_usd,
+            dca_spent_usd:    0.0,
+            btc_ret_at_entry: 0.0,
         }
     }
 

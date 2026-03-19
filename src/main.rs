@@ -1532,7 +1532,11 @@ async fn analyse_symbol(
     }
 
     if config.paper_trading && dec.action != "SKIP" {
-        execute_paper_trade(symbol, &dec, &ind, bot_state, weights, trade_logger, notifier, db, single_op_tenant()).await;
+        // Pass current BTC 4h return so execute_paper_trade can store it on entry
+        // and use it for DCA thesis validation later.
+        // For BTC itself, use 0.0 (no self-referential filter).
+        let cycle_btc_ret = if symbol == "BTC" { 0.0 } else { btc_ret_4h };
+        execute_paper_trade(symbol, &dec, &ind, bot_state, weights, trade_logger, notifier, db, single_op_tenant(), cycle_btc_ret).await;
     } else if !config.paper_trading && dec.action != "SKIP" {
         let account = hl.get_account().await?;
         if risk::should_trade(&dec, &account)? {
@@ -1672,6 +1676,9 @@ async fn execute_paper_trade(
     notifier:     &Option<SharedNotifier>,
     db:           &Option<SharedDb>,
     tenant_id:    Uuid,
+    /// BTC 4h return this cycle (%) — used for per-trade budget + DCA thesis guard.
+    /// Pass 0.0 for BTC itself (no self-referential filter).
+    btc_ret_4h:   f64,
 ) {
     let target_side = if dec.action == "BUY" { "LONG" } else { "SHORT" };
 
@@ -1703,9 +1710,29 @@ async fn execute_paper_trade(
                 let dca_max = if dec.confidence >= 0.85 { 4 }
                               else if dec.confidence >= 0.75 { 3 }
                               else { 2 };
+
+                // ── BTC swing thesis guard ────────────────────────────────────
+                // Before DCA-ing in, verify BTC hasn't swung hard against the trade
+                // direction since we entered. A 1.5%+ BTC reversal against our trade
+                // suggests macro has turned — adding to a losing position in that
+                // environment is "buying a sinking ship" rather than improving price.
+                // Only active when BTC dominance is high enough to matter (>48%).
+                let btc_swing = btc_ret_4h - pos.btc_ret_at_entry;
+                let btc_against = if btc_ret_4h != 0.0 {
+                    (pos.side == "LONG"  && btc_swing < -1.5) ||
+                    (pos.side == "SHORT" && btc_swing >  1.5)
+                } else { false };
+                if btc_against {
+                    info!("🛑 DCA {} blocked — BTC thesis broken \
+                           (entry BTC4h={:+.1}%, now {:+.1}%, swing {:+.1}% against {})",
+                          symbol, pos.btc_ret_at_entry, btc_ret_4h,
+                          btc_swing, pos.side);
+                    return;
+                }
+
                 if r_mult < -0.15 && r_mult > -0.85 && pos.dca_count < dca_max && dec.confidence >= DCA_MIN_CONFIDENCE {
                     drop(s);
-                    dca_position(symbol, dec, ind, bot_state).await;
+                    dca_position(symbol, dec, ind, bot_state, btc_ret_4h).await;
                     return;
                 }
 
@@ -1788,13 +1815,30 @@ async fn execute_paper_trade(
     };
     let in_cb = drawdown > CB_DRAWDOWN_THRESHOLD;
 
+    // ── BTC swing timing gate ─────────────────────────────────────────────
+    // Trades "follow BTC" — when BTC is making a big move AGAINST our intended
+    // direction, entering a new altcoin trade is fighting the macro.  This gate
+    // raises the confidence floor by 0.08 when BTC 4h return is strongly opposed
+    // (>2%), blocking borderline signals that would normally squeak through.
+    // BTC signals skipping this check (btc_ret_4h == 0.0) are intentional.
+    let btc_opposed_entry = if btc_ret_4h.abs() > 2.0 && symbol != "BTC" {
+        (dec.action == "BUY"  && btc_ret_4h < -2.0) ||
+        (dec.action == "SELL" && btc_ret_4h >  2.0)
+    } else { false };
+
     // ── Minimum confidence gate ────────────────────────────────────────────
     // Only enter trades where the signal is genuinely strong.
     // Signals below MIN_CONFIDENCE generated 0W/14L in choppy markets.
     // Use dynamic floor based on performance metrics; add extra 0.10 if circuit breaker active.
+    // Add extra 0.08 when BTC is making a big opposing swing.
     let mut effective_floor = metrics.confidence_floor(MIN_CONFIDENCE);
     if in_cb {
         effective_floor = (effective_floor + 0.10).min(0.92);
+    }
+    if btc_opposed_entry {
+        effective_floor = (effective_floor + 0.08).min(0.95);
+        info!("⚡ {} BTC swing gate: BTC 4h={:+.1}% opposes {}, floor raised to {:.0}%",
+              symbol, btc_ret_4h, dec.action, effective_floor * 100.0);
     }
     if dec.confidence < effective_floor {
         info!("⚠ {} skipped — confidence {:.0}% below {:.0}% minimum",
@@ -1867,6 +1911,19 @@ async fn execute_paper_trade(
     let qty       = notional / dec.entry_price;
     let r_risk    = (dec.entry_price - dec.stop_loss).abs() * qty; // dollars risked on notional
 
+    // ── Per-trade budget cap ──────────────────────────────────────────────
+    // Plan the maximum DCA spend at entry time so we never "over-buy a sinking ship."
+    // Budget = initial margin × dca_max_multiplier.
+    // Each DCA add-on uses 50% of the current size, so the budget rises with conviction:
+    //   dca_max=2: budget cap = 1.0 × entry  (can double exposure)
+    //   dca_max=3: budget cap = 2.0 × entry  (can triple)
+    //   dca_max=4: budget cap = 3.0 × entry  (can quadruple)
+    let entry_dca_max = if dec.confidence >= 0.85 { 4 }
+                        else if dec.confidence >= 0.75 { 3 }
+                        else { 2 };
+    let budget_mult = (entry_dca_max as f64 - 1.0).max(1.0); // 1.0/2.0/3.0
+    let trade_budget_usd = size_usd * budget_mult;
+
     s.capital -= size_usd;  // only deduct margin, not notional
     s.positions.push(PaperPosition {
         symbol:           symbol.to_string(),
@@ -1891,6 +1948,9 @@ async fn execute_paper_trade(
         ai_action:        None,
         ai_reason:        None,
         entry_confidence: dec.confidence,
+        trade_budget_usd,
+        dca_spent_usd:    0.0,
+        btc_ret_at_entry: btc_ret_4h,
     });
 
     let kelly_str = if metrics.kelly_fraction() > 0.0 {
@@ -2016,10 +2076,12 @@ async fn pyramid_position(
 ///   • Updates stop-loss to 2×ATR from the new average entry (never worsens stop)
 ///   • Increments dca_count
 async fn dca_position(
-    symbol:    &str,
-    dec:       &decision::Decision,
-    ind:       &indicators::TechnicalIndicators,
-    bot_state: &SharedState,
+    symbol:     &str,
+    dec:        &decision::Decision,
+    ind:        &indicators::TechnicalIndicators,
+    bot_state:  &SharedState,
+    /// Current BTC 4h return — stored on position so thesis can be tracked.
+    btc_ret_4h: f64,
 ) {
     let atr       = ind.atr.max(dec.entry_price * 0.001);
     let mut s     = bot_state.write().await;
@@ -2029,6 +2091,21 @@ async fn dca_position(
         let add_size = s.positions[idx].size_usd * 0.50;
         if s.capital < add_size || add_size < 1.0 {
             info!("⚠ DCA {} skipped — insufficient capital (${:.2})", symbol, s.capital);
+            return;
+        }
+
+        // ── Per-trade budget enforcement ─────────────────────────────────
+        // Never spend more than the pre-planned DCA budget.
+        // Prevents doubling / tripling into a genuinely broken signal.
+        let budget_remaining = s.positions[idx].trade_budget_usd
+                             - s.positions[idx].dca_spent_usd;
+        if add_size > budget_remaining + 0.01 {
+            info!("💰 DCA {} blocked — budget exhausted \
+                   (spent=${:.2}, budget=${:.2}, would add=${:.2})",
+                  symbol,
+                  s.positions[idx].dca_spent_usd,
+                  s.positions[idx].trade_budget_usd,
+                  add_size);
             return;
         }
 
@@ -2057,20 +2134,29 @@ async fn dca_position(
         };
 
         s.capital -= add_size;
-        s.positions[idx].quantity     = new_qty;
-        s.positions[idx].size_usd    += add_size;
-        s.positions[idx].entry_price  = avg_entry;
-        s.positions[idx].stop_loss    = improved_stop;
-        s.positions[idx].dca_count   += 1;
+        s.positions[idx].quantity        = new_qty;
+        s.positions[idx].size_usd       += add_size;
+        s.positions[idx].entry_price     = avg_entry;
+        s.positions[idx].stop_loss       = improved_stop;
+        s.positions[idx].dca_count      += 1;
+        s.positions[idx].dca_spent_usd  += add_size;
+        // Update BTC context snapshot — thesis validation on next DCA will
+        // compare against this value, not the original entry value.
+        if btc_ret_4h != 0.0 {
+            s.positions[idx].btc_ret_at_entry = btc_ret_4h;
+        }
 
         // Recalculate dollars risked from new avg entry and stop
         s.positions[idx].r_dollars_risked =
             (avg_entry - improved_stop).abs() * new_qty;
 
-        info!("📉 DCA×{} {} @ ${:.4}  avg_entry=${:.4}  stop=${:.4}  +${:.2}  total=${:.2}",
+        let budget_left = s.positions[idx].trade_budget_usd
+                        - s.positions[idx].dca_spent_usd;
+        info!("📉 DCA×{} {} @ ${:.4}  avg_entry=${:.4}  stop=${:.4}  \
+               +${:.2}  total=${:.2}  budget_left=${:.2}",
             s.positions[idx].dca_count, symbol,
             dec.entry_price, avg_entry, improved_stop,
-            add_size, s.positions[idx].size_usd);
+            add_size, s.positions[idx].size_usd, budget_left);
     }
 }
 
