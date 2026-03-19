@@ -48,7 +48,7 @@ pub struct BookWall {
 }
 
 /// Enriched order-flow signal derived from the full L2 book.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct OrderFlowSignal {
     // ── Whole-book metrics ────────────────────────────────────────────────
     pub bid_volume:      f64,

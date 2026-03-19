@@ -1074,6 +1074,7 @@ mod tests {
             imbalance_ratio: 1.0,
             direction:       "NEUTRAL".to_string(),
             confidence:      0.50,
+            ..Default::default()
         }
     }
 
@@ -1272,7 +1273,8 @@ mod tests {
         ind.rsi  = 20.0;  // deeply oversold → bull boost
         ind.z_score = -2.5;
         let of = OrderFlowSignal { bid_volume: 300.0, ask_volume: 100.0,
-            imbalance_ratio: 3.0, direction: "LONG".to_string(), confidence: 0.95 };
+            imbalance_ratio: 3.0, direction: "LONG".to_string(), confidence: 0.95,
+            ..Default::default() };
         let weights = SignalWeights::default();
 
         let dec = make_decision(&candles, &ind, &of, &weights, None, None, None, None, None).unwrap();
@@ -1294,7 +1296,8 @@ mod tests {
         ind.rsi  = 80.0;  // overbought → bear boost
         ind.z_score = 2.5;
         let of = OrderFlowSignal { bid_volume: 100.0, ask_volume: 300.0,
-            imbalance_ratio: 0.33, direction: "SHORT".to_string(), confidence: 0.95 };
+            imbalance_ratio: 0.33, direction: "SHORT".to_string(), confidence: 0.95,
+            ..Default::default() };
         let weights = SignalWeights::default();
 
         let dec = make_decision(&candles, &ind, &of, &weights, None, None, None, None, None).unwrap();
