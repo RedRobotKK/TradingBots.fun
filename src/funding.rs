@@ -180,6 +180,7 @@ impl FundingData {
     }
 
     /// Raw signal strength without cycle-phase adjustment (for testing).
+    #[allow(dead_code)]
     pub fn raw_signal_strength(&self) -> f64 {
         let blended = self.funding_rate * 0.60 + self.predicted_rate * 0.40;
         self.strength_from_rate(blended)
@@ -213,6 +214,7 @@ impl FundingData {
     }
 
     /// Phase-aware emoji: shows cycle context alongside funding direction.
+    #[allow(dead_code)]
     pub fn cycle_emoji(&self) -> &'static str {
         match current_cycle_phase() {
             FundingCyclePhase::PreSettlement { .. }  => "⏰",
@@ -494,6 +496,6 @@ mod tests {
             funding_delta: 0.0001,
         };
         let s = data.raw_signal_strength();
-        assert!(s >= -1.0 && s <= 1.0, "raw signal out of range: {s}");
+        assert!((-1.0..=1.0).contains(&s), "raw signal out of range: {s}");
     }
 }

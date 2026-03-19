@@ -2250,8 +2250,8 @@ async fn pyramid_position(
         let is_pool  = s.positions[idx].funded_from_pool;
         if is_pool {
             if s.house_money_pool < add_size || add_size < 1.0 { return; }
-        } else {
-            if s.capital < add_size || add_size < 1.0 { return; }
+        } else if s.capital < add_size || add_size < 1.0 {
+            return;
         }
 
         // Apply the same leverage as the original position so the new shares
@@ -3321,9 +3321,9 @@ mod tests {
         let stop    = entry; // already at breakeven
         let atr     = 2.0;
         let qty     = 3.0;
-        let r_risk  = (entry - (entry - 5.0)) * qty; // original $15, but stop is now at entry
+        let _r_risk = (entry - (entry - 5.0)) * qty; // original $15, but stop is now at entry
         let cur     = 103.75;
-        let unr     = (cur - entry) * qty;
+        let _unr    = (cur - entry) * qty;
         // r_mult based on current stop would be undefined; use tier logic directly:
         // tier1 only fires if trail > stop && trail < entry.  trail = 102.55, entry = 100 → trail >= entry → skip
         let hwm   = cur;
@@ -3438,8 +3438,7 @@ mod tests {
 
         let false_breakout = peak_r >= 0.10
             && r_mult < -0.05
-            && cycles_held >= 30
-            && cycles_held < 120
+            && (30..120).contains(&cycles_held)
             && dca_count == 0;
         assert!(false_breakout, "REZ-type pattern should trigger false-breakout exit");
     }
@@ -3454,8 +3453,7 @@ mod tests {
 
         let false_breakout = peak_r >= 0.10
             && r_mult < -0.05
-            && cycles_held >= 30
-            && cycles_held < 120
+            && (30..120).contains(&cycles_held)
             && dca_count == 0;
         assert!(!false_breakout, "false-breakout must not fire when DCA has been deployed");
     }
@@ -3470,8 +3468,7 @@ mod tests {
 
         let false_breakout = peak_r >= 0.10
             && r_mult < -0.05
-            && cycles_held >= 30
-            && cycles_held < 120
+            && (30..120).contains(&cycles_held)
             && dca_count == 0;
         assert!(!false_breakout, "false-breakout window closes after 60 min (120 cycles)");
     }

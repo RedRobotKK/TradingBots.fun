@@ -374,8 +374,7 @@ async fn review_inner(
         let hold_min   = p.cycles_held / 2;
         let false_breakout = peak_r >= 0.10
             && r_mult < -0.05
-            && hold_min >= 15
-            && hold_min < 60
+            && (15..60).contains(&hold_min)
             && p.dca_count == 0;
         let momentum_stall = hold_min >= 60
             && r_mult.abs() < 0.10
