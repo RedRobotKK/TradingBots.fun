@@ -1481,6 +1481,20 @@ tr:hover td{{background:rgba(255,255,255,.025)}}
   </div>
 </div>
 
+<!-- ── Operator controls strip ─────────────────────────────────── -->
+<div style="display:flex;justify-content:flex-end;margin:6px 0 2px;gap:8px;">
+  <button onclick="doResetStats()" id="op-reset-btn" style="
+    background:none;border:1px solid #30363d;border-radius:6px;
+    color:#8b949e;font-size:.70rem;padding:3px 10px;
+    cursor:pointer;font-family:inherit;transition:.15s;
+  " onmouseover="this.style.borderColor='#f0883e';this.style.color='#f0883e'"
+     onmouseout="this.style.borderColor='#30363d';this.style.color='#8b949e'"
+     title="Reset P&amp;L history and metrics for a clean slate. Open positions are kept.">
+    🔄 Reset Stats
+  </button>
+</div>
+<div id="op-reset-resp" style="display:none;font-size:.75rem;text-align:right;padding:4px 0 6px;"></div>
+
 <div class="metrics">
   <div class="metric" onclick="showMetric('sharpe',{sharpe:.6})">
     <div class="mv" style="color:{sc}">{sharpe:.2}</div>
@@ -1854,6 +1868,37 @@ function toggleDetail(id){{
   setTimeout(poll,2000);
   setInterval(poll,5000);
 }})();
+
+// ── Reset Stats (operator dashboard) ─────────────────────────────────────
+window.doResetStats = function() {{
+  if (!confirm('Reset trading stats? P&L, closed trades and metrics will be cleared.\nOpen positions are kept. This cannot be undone.')) return;
+  var btn  = document.getElementById('op-reset-btn');
+  var resp = document.getElementById('op-reset-resp');
+  btn.disabled = true;
+  btn.textContent = '⏳ Resetting…';
+  fetch('/api/admin/reset-stats', {{method:'POST', credentials:'include'}})
+    .then(function(r) {{ return r.json(); }})
+    .then(function(d) {{
+      resp.style.display = 'block';
+      if (d.ok) {{
+        resp.style.color = '#3fb950';
+        resp.textContent = '✅ ' + d.message;
+        btn.textContent = '✓ Done';
+        setTimeout(function(){{ window.location.reload(); }}, 2500);
+      }} else {{
+        resp.style.color = '#e3b341';
+        resp.textContent = '⚠ ' + (d.message || 'Reset failed');
+        btn.disabled = false;
+        btn.textContent = '🔄 Reset Stats';
+      }}
+    }}).catch(function() {{
+      resp.style.display = 'block';
+      resp.style.color = '#f85149';
+      resp.textContent = '⚠ Network error — is ADMIN_PASSWORD set?';
+      btn.disabled = false;
+      btn.textContent = '🔄 Reset Stats';
+    }});
+}};
 </script>
 {tracking_js}
 </body></html>"#,
@@ -4176,10 +4221,65 @@ async fn admin_dashboard_handler(
   <div class="card"><div class="cl">Total HL Balance</div><div class="cv-sm">${total_balance:.2}</div></div>
 </div>
 
-<p style="font-size:.85rem;color:#8b949e">
+<p style="font-size:.85rem;color:#8b949e;margin-bottom:28px">
   <a href="/admin/users">View all users →</a>
 </p>
+
+<!-- ── Bot controls ─────────────────────────────────────────── -->
+<div style="background:#161b22;border:1px solid #30363d;border-radius:12px;padding:20px;margin-bottom:16px">
+  <div style="font-size:.75rem;color:#8b949e;text-transform:uppercase;letter-spacing:.07em;margin-bottom:14px">
+    Bot Controls
+  </div>
+  <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center">
+    <!-- Reset Stats -->
+    <button onclick="resetStats()" id="btn-reset" style="
+      background:#b94300;border:none;border-radius:7px;
+      color:#fff;font-size:.82rem;padding:9px 18px;
+      cursor:pointer;font-family:inherit;font-weight:600;
+    ">🔄 Reset Stats</button>
+    <span style="font-size:.75rem;color:#8b949e">
+      Clears P&amp;L history, closed trades, metrics and drawdown window.
+      Open positions and signal weights are kept.
+    </span>
+  </div>
+  <div id="reset-resp" style="display:none;margin-top:10px;font-size:.80rem;border-radius:6px;padding:8px 12px"></div>
 </div>
+
+</div>
+<script>
+function resetStats() {{
+  var btn = document.getElementById('btn-reset');
+  var resp = document.getElementById('reset-resp');
+  if (!confirm('Reset all trading stats? P&L, closed trades and metrics will be cleared. This cannot be undone.')) return;
+  btn.disabled = true;
+  btn.textContent = '⏳ Resetting…';
+  fetch('/api/admin/reset-stats', {{method:'POST'}})
+    .then(function(r) {{ return r.json(); }})
+    .then(function(d) {{
+      resp.style.display = 'block';
+      if (d.ok) {{
+        resp.style.background = '#0d2018';
+        resp.style.color = '#3fb950';
+        resp.style.border = '1px solid #3fb95044';
+        resp.textContent = '✅ ' + d.message;
+        btn.textContent = '✓ Done';
+        setTimeout(function() {{ window.location.reload(); }}, 2000);
+      }} else {{
+        resp.style.background = '#2d1a0e';
+        resp.style.color = '#e3b341';
+        resp.style.border = '1px solid #e3b34144';
+        resp.textContent = '⚠ ' + d.message;
+        btn.disabled = false;
+        btn.textContent = '🔄 Reset Stats';
+      }}
+    }}).catch(function() {{
+      resp.style.display = 'block';
+      resp.textContent = '⚠ Network error';
+      btn.disabled = false;
+      btn.textContent = '🔄 Reset Stats';
+    }});
+}}
+</script>
 </body>
 </html>"#,
         tenant_count  = tenant_count,
@@ -4189,6 +4289,69 @@ async fn admin_dashboard_handler(
     );
 
     axum::response::Html(html).into_response()
+}
+
+/// `POST /api/admin/reset-stats` — clear P&L history and metrics for a fresh start.
+///
+/// Resets: capital → initial_capital, pnl → 0, peak_equity, equity_window,
+/// cb_active, closed_trades, recent_decisions, metrics, equity_history,
+/// house_money_pool, pool_deployed_usd, recently_closed.
+///
+/// Preserved: open positions, signal_weights, cycle_count, session_prices.
+///
+/// Requires HTTP Basic Auth (same as /admin).
+async fn admin_reset_stats_handler(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let password = match &app.admin_password {
+        Some(p) => p.clone(),
+        None    => return (axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                          "Admin panel not configured.").into_response(),
+    };
+    if !check_admin_auth(&headers, &password) {
+        return www_authenticate_response();
+    }
+
+    {
+        let mut s = app.bot_state.write().await;
+        let ic = s.initial_capital;
+        // Recalculate equity including any open positions so capital is correct
+        let committed: f64 = s.positions.iter().map(|p| p.size_usd).sum();
+        let unrealised: f64 = s.positions.iter().map(|p| p.unrealised_pnl).sum();
+        let current_equity = s.capital + committed + unrealised;
+        // Reset financials — keep current equity as new starting point
+        s.capital         = current_equity - committed; // free cash only
+        s.initial_capital = ic;                         // keep original for context
+        s.pnl             = 0.0;
+        s.peak_equity     = current_equity;
+        s.equity_window   = std::collections::VecDeque::new();
+        s.equity_history  = vec![];
+        s.cb_active       = false;
+        // Clear history
+        s.closed_trades      = vec![];
+        s.recent_decisions   = vec![];
+        s.metrics            = crate::metrics::PerformanceMetrics::default();
+        // Clear house-money pool (profits are gone from the P&L slate)
+        s.house_money_pool   = 0.0;
+        s.pool_deployed_usd  = 0.0;
+        s.recently_closed    = std::collections::VecDeque::new();
+        // Mark positions as starting fresh — reset their entry context for P&L tracking
+        // (positions themselves are kept open, only pool funding tracking resets)
+        for p in s.positions.iter_mut() {
+            p.funded_from_pool = false;
+            p.pool_stake_usd   = 0.0;
+        }
+    }
+
+    log::info!("🔄 Admin: trading stats reset via /api/admin/reset-stats");
+
+    axum::response::Json(serde_json::json!({
+        "ok":      true,
+        "message": "Stats reset — P&L, metrics and trade history cleared. Open positions kept. Bot continues from current equity.",
+    })).into_response()
 }
 
 /// `GET /admin/users` — table of all tenants with key stats.
@@ -6518,6 +6681,7 @@ pub async fn serve(app_state: AppState, port: u16) -> Result<(), Box<dyn std::er
         // ── Admin panel (HTTP Basic Auth) ───────────────────────────────────
         .route("/admin",                get(admin_dashboard_handler))
         .route("/admin/users",          get(admin_users_handler))
+        .route("/api/admin/reset-stats", post(admin_reset_stats_handler))
         // ── Apple Pay domain verification ───────────────────────────────────
         .route("/.well-known/apple-developer-merchantid-domain-association",
                                         get(apple_pay_domain_handler))
