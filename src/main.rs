@@ -818,6 +818,48 @@ async fn run_cycle(
             let post_dca_exhausted = pos.cycles_held >= 240 && r_mult < -0.25 && r_mult > -0.90 && pos.dca_count >= 2;
             let stale = (truly_flat || chronic_loss || post_dca_loss || post_dca_exhausted) && r_mult <= 0.0;
 
+            // ── Order-book adverse pressure exits ─────────────────────────
+            // The book is a real-time sentiment signal; when it consistently
+            // flips against an open position, act BEFORE the price does.
+            //
+            // Rule 1 — OB Profit Protection (r_mult ≥ 0.5R, book adverse 6+ cycles)
+            //   Take the first tranche early (at 0.5R instead of 1R) to lock in
+            //   half-profit while still having a position on. Only fires when we
+            //   have not yet banked any tranche and the book has been adverse ≥6 cycles.
+            //
+            // Rule 2 — Strong reversal exit (book STRONGLY adverse 4+ cycles, r_mult > 0)
+            //   If the book is sending a strong signal (STRONGLY_BEAR on LONG) and
+            //   we are still in profit, exit the full position. Market is telling us
+            //   the move is over.
+            //
+            // Rule 3 — House-money tightened trailing stop (PnL ≥ initial_margin)
+            //   Once the trade has paid for the initial margin (unrealised_pnl covers
+            //   what was deposited), tighten the tier-3 trail to 0.6×ATR instead
+            //   of 1.2×ATR. "Let it ride on house money, but keep a tighter leash."
+            let ob_adverse = pos.ob_adverse_cycles;
+            let strongly_adverse = ob_adverse >= 4 && (
+                (pos.side == "LONG"  && pos.ob_sentiment == "STRONGLY_BEARISH") ||
+                (pos.side == "SHORT" && pos.ob_sentiment == "STRONGLY_BULLISH")
+            );
+            let mildly_adverse = ob_adverse >= 6 && (
+                (pos.side == "LONG"  && pos.ob_sentiment.contains("BEAR")) ||
+                (pos.side == "SHORT" && pos.ob_sentiment.contains("BULL"))
+            );
+            // Principal recovery flag: trade has "paid for itself"
+            let principal_recovered = pos.initial_margin_usd > 0.0
+                && pos.unrealised_pnl >= pos.initial_margin_usd;
+            if principal_recovered && r_mult >= 1.5 {
+                // House-money mode: tighten trail to 0.6×ATR (applied above 1.5R)
+                // We re-tighten here only if the standard trail is looser than our target
+                if pos.side == "LONG" {
+                    let house_trail = pos.high_water_mark - atr * 0.60;
+                    if house_trail > pos.stop_loss { pos.stop_loss = house_trail; }
+                } else {
+                    let house_trail = pos.low_water_mark + atr * 0.60;
+                    if house_trail < pos.stop_loss { pos.stop_loss = house_trail; }
+                }
+            }
+
             if hit_stop {
                 to_close.push((pos.symbol.clone(), cur, "StopLoss".to_string()));
             } else if hit_tp {
@@ -826,6 +868,11 @@ async fn run_cycle(
                 to_close.push((pos.symbol.clone(), cur, "FalseBreakout".to_string()));
                 info!("🔙 {} false-breakout exit — peaked {:.2}R, now {:.2}R after {} cycles",
                       pos.symbol, peak_r, r_mult, pos.cycles_held);
+            } else if strongly_adverse && r_mult > 0.0 && pos.tranches_closed > 0 {
+                // Book is strongly reversing, we already banked a tranche → exit remainder
+                to_close.push((pos.symbol.clone(), cur, "BookReversal".to_string()));
+                info!("📖 {} book-reversal exit — {} {} cycles, {:.2}R profit banked",
+                      pos.symbol, pos.ob_sentiment, ob_adverse, r_mult);
             } else if stale {
                 let reason_detail = if truly_flat { "flat" } else if chronic_loss { "chronic loss" }
                                    else if post_dca_exhausted { "DCA exhausted" } else { "post-DCA loss" };
@@ -833,10 +880,15 @@ async fn run_cycle(
                 info!("⏰ {} time-exit ({}) after {} cycles at {:.2}R", pos.symbol, reason_detail, pos.cycles_held, r_mult);
             } else {
                 // R-multiple partial profit tranches
-                // Tranche 0: 1/4 out at 1R — harvest early profit, reduce risk immediately
+                // Tranche 0: 1/4 out at 1R (or 0.5R if book is adverse) — harvest early profit
                 // Tranche 1: 1/3 out at 2R — take more off as the trade extends
                 // Tranche 2: 1/3 out at 4R — capture deep runner profits
-                if r_mult >= 1.0 && pos.tranches_closed == 0 {
+                let early_partial_r = if mildly_adverse { 0.5 } else { 1.0 };
+                if r_mult >= early_partial_r && pos.tranches_closed == 0 {
+                    if mildly_adverse {
+                        info!("📖 {} OB-early partial at {:.2}R ({} adverse cycles, {})",
+                              pos.symbol, r_mult, ob_adverse, pos.ob_sentiment);
+                    }
                     to_partial0.push((pos.symbol.clone(), cur));
                 } else if r_mult >= 2.0 && pos.tranches_closed == 1 {
                     to_partial1.push((pos.symbol.clone(), cur));
@@ -1531,6 +1583,27 @@ async fn analyse_symbol(
         });
     }
 
+    // ── Update order-book snapshot on any existing open position ─────────
+    // This runs EVERY cycle for every symbol, not just when we trade.
+    // Lets the position manager track sentiment drift on open positions.
+    {
+        let mut s = bot_state.write().await;
+        if let Some(pos) = s.positions.iter_mut().find(|p| p.symbol == symbol) {
+            let is_adverse = (pos.side == "LONG"  &&
+                              (of.sentiment.contains("BEAR") || of.ask_wall_near)) ||
+                             (pos.side == "SHORT" &&
+                              (of.sentiment.contains("BULL") || of.bid_wall_near));
+            pos.ob_sentiment     = of.sentiment.clone();
+            pos.ob_bid_wall_near = of.bid_wall_near;
+            pos.ob_ask_wall_near = of.ask_wall_near;
+            if is_adverse {
+                pos.ob_adverse_cycles += 1;
+            } else {
+                pos.ob_adverse_cycles  = 0; // reset when book turns back in our favour
+            }
+        }
+    }
+
     if config.paper_trading && dec.action != "SKIP" {
         // Pass current BTC 4h return so execute_paper_trade can store it on entry
         // and use it for DCA thesis validation later.
@@ -1951,6 +2024,11 @@ async fn execute_paper_trade(
         trade_budget_usd,
         dca_spent_usd:    0.0,
         btc_ret_at_entry: btc_ret_4h,
+        initial_margin_usd: size_usd,
+        ob_sentiment:       String::new(),
+        ob_bid_wall_near:   false,
+        ob_ask_wall_near:   false,
+        ob_adverse_cycles:  0,
     });
 
     let kelly_str = if metrics.kelly_fraction() > 0.0 {
@@ -2534,9 +2612,17 @@ mod tests {
             entry_time:      "00:00:00 UTC".to_string(),
             unrealised_pnl:  0.0,
             contrib:         SignalContribution::default(),
-            ai_action:        None,
-            ai_reason:        None,
-            entry_confidence: 0.68,
+            ai_action:          None,
+            ai_reason:          None,
+            entry_confidence:   0.68,
+            trade_budget_usd:   size_usd,
+            dca_spent_usd:      0.0,
+            btc_ret_at_entry:   0.0,
+            initial_margin_usd: size_usd,
+            ob_sentiment:       String::new(),
+            ob_bid_wall_near:   false,
+            ob_ask_wall_near:   false,
+            ob_adverse_cycles:  0,
         }
     }
 

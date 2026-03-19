@@ -542,12 +542,42 @@ pub fn make_decision(
     // Near the mean — no contribution
 
     // ═════════════════════════════════════════════════════════════════════════
-    //  6. Order Flow — real-time bid/ask pressure
+    //  6. Order Flow — real-time bid/ask pressure (enriched)
+    //
+    //  Three layers of book signal:
+    //    a) Whole-book imbalance (original)
+    //    b) Near-price depth (0.5% zone) — stronger signal, weighted separately
+    //    c) Wall confirmation: bid wall near price = support → bullish bonus;
+    //       ask wall near = resistance → bearish bonus.
+    //
+    //  Wall signals run at 40% of the order_flow weight (supplementary).
+    //  Near-price imbalance runs at 60% of order_flow weight (most accurate).
     // ═════════════════════════════════════════════════════════════════════════
+    // a) Whole-book direction
     match of.direction.as_str() {
-        "LONG"  => { bull += weights.order_flow * of.confidence; contrib.of_bullish = true;  }
-        "SHORT" => { bear += weights.order_flow * of.confidence; contrib.of_bullish = false; }
+        "LONG"  => { bull += weights.order_flow * of.confidence * 0.60; contrib.of_bullish = true;  }
+        "SHORT" => { bear += weights.order_flow * of.confidence * 0.60; contrib.of_bullish = false; }
         _       => { contrib.of_bullish = bull > bear; }
+    }
+
+    // b) Near-price imbalance (within 0.5% of mid) — highest signal quality
+    if of.near_bid_vol > 1e-9 || of.near_ask_vol > 1e-9 {
+        let near_w = weights.order_flow * 0.60;
+        if of.near_imbalance > 1.5 {
+            bull += near_w * of.near_imbalance.min(3.0) / 3.0;
+        } else if of.near_imbalance < 0.67 {
+            bear += near_w * (1.0 / of.near_imbalance.max(0.33)).min(3.0) / 3.0;
+        }
+    }
+
+    // c) Book walls — structural support/resistance within 2% of price
+    //    Wide spreads (>0.5%) reduce wall signal reliability (low liquidity).
+    let wall_w = weights.order_flow * 0.40 * if of.spread_pct > 0.5 { 0.5 } else { 1.0 };
+    if of.bid_wall_near {
+        bull += wall_w;  // big resting bids = price floor = bullish
+    }
+    if of.ask_wall_near {
+        bear += wall_w;  // big resting asks = price ceiling = bearish
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -889,8 +919,41 @@ pub fn make_decision(
             s.emoji(), s.mode_label(), s.hl_premium_pct, s.persistence))
         .unwrap_or_default();
 
+    // Order-book tag — shows sentiment label + near-price imbalance + wall flags.
+    // Example: "📖BULL near=2.3× 🧱bid" means bullish book with 2.3× near-price bid
+    // depth and a bid wall within 2% acting as support.
+    let ob_tag = {
+        let near_str = if of.near_bid_vol > 1e-9 || of.near_ask_vol > 1e-9 {
+            format!(" near={:.1}×", of.near_imbalance)
+        } else {
+            String::new()
+        };
+        let wall_str = match (of.bid_wall_near, of.ask_wall_near) {
+            (true,  false) => " 🧱bid".to_string(),
+            (false, true)  => " 🧱ask".to_string(),
+            (true,  true)  => " 🧱both".to_string(),
+            _              => String::new(),
+        };
+        // Only include tag if the book has something meaningful to say
+        if of.sentiment != "NEUTRAL" || of.bid_wall_near || of.ask_wall_near {
+            format!(" 📖{}{}{}",
+                match of.sentiment.as_str() {
+                    "STRONGLY_BULLISH" => "STR_BULL",
+                    "BULLISH"          => "BULL",
+                    "STRONGLY_BEARISH" => "STR_BEAR",
+                    "BEARISH"          => "BEAR",
+                    _                  => "NEUT",
+                },
+                near_str,
+                wall_str,
+            )
+        } else {
+            String::new()
+        }
+    };
+
     let rationale = format!(
-        "[{}/{}] RSI:{:.0} Z:{:.1} EMA:{:+.2}% MACD-H:{:.5} VOL:{:.1}× ADX:{:.0} VWAP:{:+.1}%{}{}{}{}{}{}{}{} ⟨B:{:.3} b:{:.3} t:{:.3}⟩",
+        "[{}/{}] RSI:{:.0} Z:{:.1} EMA:{:+.2}% MACD-H:{:.5} VOL:{:.1}× ADX:{:.0} VWAP:{:+.1}%{}{}{}{}{}{}{}{}{} ⟨B:{:.3} b:{:.3} t:{:.3}⟩",
         regime.label(),
         session_label,
         ind.rsi,
@@ -908,6 +971,7 @@ pub fn make_decision(
         atr_tag,
         mtf_tag,
         cex_tag,
+        ob_tag,
         bull,
         bear,
         threshold,

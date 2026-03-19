@@ -130,6 +130,28 @@ pub struct PaperPosition {
     /// since entry, the thesis may be broken and further DCA is blocked.
     #[serde(default)]
     pub btc_ret_at_entry: f64,
+    // ── Principal-recovery tracking ───────────────────────────────────────
+    /// Initial margin committed at entry (USD). Never changes after opening.
+    /// When unrealised_pnl ≥ initial_margin_usd the trade has "paid for itself"
+    /// and any profit above this is pure gain running on house money.
+    #[serde(default)]
+    pub initial_margin_usd: f64,
+    // ── Order-book sentiment snapshot (updated every cycle) ──────────────
+    /// Most recent order-book sentiment string from detect_order_flow().
+    /// "STRONGLY_BULLISH" | "BULLISH" | "NEUTRAL" | "BEARISH" | "STRONGLY_BEARISH"
+    #[serde(default)]
+    pub ob_sentiment:       String,
+    /// True when there is a significant bid wall within 2% of the current price.
+    #[serde(default)]
+    pub ob_bid_wall_near:   bool,
+    /// True when there is a significant ask wall within 2% of the current price.
+    #[serde(default)]
+    pub ob_ask_wall_near:   bool,
+    /// Cycles in a row where the order book has been adverse (bearish book on LONG,
+    /// or bullish book on SHORT). When this reaches a threshold, the position manager
+    /// can trigger an early partial or exit to protect profits / cut losses.
+    #[serde(default)]
+    pub ob_adverse_cycles:  u32,
 }
 
 fn default_min_confidence() -> f64 { 0.68 }
@@ -383,6 +405,57 @@ async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
                 }
             } else { String::new() };
 
+            // ── Order-book sentiment badge ─────────────────────────────────
+            // Shows live book sentiment + wall indicators. Changes colour
+            // based on whether the book is aligned with or against the position.
+            let ob_badge = if !p.ob_sentiment.is_empty() && p.ob_sentiment != "NEUTRAL" {
+                let (ob_emoji, ob_colour, ob_bg) = match p.ob_sentiment.as_str() {
+                    "STRONGLY_BULLISH" => ("📗", "#3fb950", "#0d2318"),
+                    "BULLISH"          => ("📗", "#3fb950", "#0d1f15"),
+                    "STRONGLY_BEARISH" => ("📕", "#f85149", "#2d0f0d"),
+                    "BEARISH"          => ("📕", "#f85149", "#1e0d0c"),
+                    _                  => ("📘", "#8b949e", "#161b22"),
+                };
+                // Is the book aligned with (supports) our position, or against it?
+                let aligned = (p.side == "LONG"  && p.ob_sentiment.contains("BULL")) ||
+                              (p.side == "SHORT" && p.ob_sentiment.contains("BEAR"));
+                let (border_col, opacity) = if aligned { (ob_colour, "1.0") } else { ("#f85149", "0.7") };
+                let wall_str = match (p.ob_bid_wall_near, p.ob_ask_wall_near) {
+                    (true,  false) => " 🧱↓",
+                    (false, true)  => " 🧱↑",
+                    (true,  true)  => " 🧱↕",
+                    _              => "",
+                };
+                let adv_str = if p.ob_adverse_cycles >= 4 {
+                    format!(" ⚠{}cy", p.ob_adverse_cycles)
+                } else { String::new() };
+                format!(" <span title='Order book: {} ({} adverse cycles){}' \
+                          style='background:{bg};color:{col};border:1px solid {bdr}50;\
+                          border-radius:4px;padding:1px 5px;font-size:.68em;opacity:{op}'>\
+                          {em} {snt}{wall}{adv}</span>",
+                         p.ob_sentiment, p.ob_adverse_cycles, wall_str,
+                         bg = ob_bg, col = ob_colour, bdr = border_col, op = opacity,
+                         em = ob_emoji,
+                         snt = match p.ob_sentiment.as_str() {
+                             "STRONGLY_BULLISH" => "STR BULL",
+                             "STRONGLY_BEARISH" => "STR BEAR",
+                             s => &s[..s.len().min(4)],
+                         },
+                         wall = wall_str,
+                         adv = adv_str,
+                )
+            } else { String::new() };
+
+            // ── Principal-recovered badge ──────────────────────────────────
+            // "House money" indicator: trade has earned back its original stake.
+            let principal_badge = if p.initial_margin_usd > 0.0
+                && p.unrealised_pnl >= p.initial_margin_usd {
+                format!(" <span title='Principal recovered — running on house money!' \
+                          style='background:#0d2318;color:#3fb950;border:1px solid #3fb95060;\
+                          border-radius:4px;padding:1px 5px;font-size:.68em'>\
+                          🏦 principal ✓</span>")
+            } else { String::new() };
+
             // Convert cycles to human-readable hold time
             let hold_mins = p.cycles_held / 2; // 30s cycles → minutes
             let hold_str = if hold_mins < 60 {
@@ -463,6 +536,7 @@ async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
     <span title="Max loss to stop" style="color:#e3b341">Risk ${risk:.2} <span style="color:#8b949e">({rpct:.1}%)</span></span>
   </div>
   <div class="pos-meta" style="color:#8b949e">{tranche} &nbsp;·&nbsp; {time}</div>
+  {ob_badges}
   {ai_row}
   <div class="pos-flip-hint">📊 tap to chart</div>
 </div>
@@ -503,8 +577,9 @@ async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
                 qty      = qty_str,
                 risk     = risk_usd,
                 rpct     = risk_pct,
-                time     = p.entry_time,
-                ai_row   = ai_row,
+                time      = p.entry_time,
+                ob_badges = format!("{}{}", ob_badge, principal_badge),
+                ai_row    = ai_row,
             )
         }).collect()
     };
@@ -6085,6 +6160,11 @@ mod tests {
             trade_budget_usd: size_usd,
             dca_spent_usd:    0.0,
             btc_ret_at_entry: 0.0,
+            initial_margin_usd: size_usd,
+            ob_sentiment:      String::new(),
+            ob_bid_wall_near:  false,
+            ob_ask_wall_near:  false,
+            ob_adverse_cycles: 0,
         }
     }
 
