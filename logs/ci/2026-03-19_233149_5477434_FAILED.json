@@ -1,0 +1,84 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-03-19T23:29:01Z",
+    "commit": "5477434",
+    "commit_full": "5477434381659dd0d5506f0ec42b79e0f0df676d",
+    "commit_message": "fix: allow operator Basic-Auth on /api/command and /api/thesis",
+    "branch": "master",
+    "overall_status": "FAILED",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
+    "cargo": "cargo 1.93.1 (083ac5135 2025-12-15)",
+    "os_kernel": "6.8.0-106-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "PASSED",
+      "exit_code": 0,
+      "duration_seconds": 134,
+      "total_passed": 733,
+      "total_failed": 0,
+      "total_ignored": 2,
+      "failures": []
+    },
+    "clippy": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 30,
+      "error_count": 2,
+      "errors": [
+        {
+          "code": "E",
+          "message": "this function has too many arguments (9/7)",
+          "file": "src/main.rs",
+          "line": 2665,
+          "col": 1
+        },
+        {
+          "code": "E",
+          "message": "could not compile `tradingbots-fun` (bin \"tradingbots-fun\" test) due to 1 previous error"
+        }
+      ]
+    },
+    "audit": {
+      "status": "ADVISORY",
+      "exit_code": 1,
+      "duration_seconds": 3,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2023-0071",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2023-0071",
+          "severity": "5.9 (medium)",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "tradingbots",
+    "status": "active",
+    "active_since": "Thu 2026-03-19 23:20:59 UTC",
+    "recent_logs": [
+      "Mar 19 23:20:59 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Starting tradingbots.service - TradingBots.fun...",
+      "Mar 19 23:20:59 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Started tradingbots.service - TradingBots.fun.",
+      "Mar 19 23:25:55 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[321414]: [2026-03-19T23:25:55.110Z ERROR tradingbots_fun] Cycle error: hl_api_429: Hyperliquid rate limit hit (HTTP 429). The bot is sending requests too quickly. Backing off.",
+      "Mar 19 23:26:40 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[321414]: [2026-03-19T23:26:40.474Z ERROR tradingbots_fun] Cycle error: hl_api_429: Hyperliquid rate limit hit (HTTP 429). The bot is sending requests too quickly. Backing off.",
+      "Mar 19 23:28:53 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[321414]: [2026-03-19T23:28:53.723Z ERROR tradingbots_fun] Cycle error: hl_api_429: Hyperliquid rate limit hit (HTTP 429). The bot is sending requests too quickly. Backing off."
+    ]
+  }
+}
