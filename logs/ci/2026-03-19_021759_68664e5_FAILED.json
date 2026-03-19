@@ -1,0 +1,105 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-03-19T02:06:47Z",
+    "commit": "68664e5",
+    "commit_full": "68664e5010b3ea75eeb2530d467b4b255f26791b",
+    "commit_message": "chore: bump version 0.1.45 \u2192 0.1.46",
+    "branch": "master",
+    "overall_status": "FAILED",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
+    "cargo": "cargo 1.93.1 (083ac5135 2025-12-15)",
+    "os_kernel": "6.8.0-106-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 640,
+      "total_passed": 0,
+      "total_failed": 0,
+      "total_ignored": 0,
+      "failures": []
+    },
+    "clippy": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 29,
+      "error_count": 5,
+      "errors": [
+        {
+          "code": "E",
+          "message": "useless use of `format!`",
+          "file": "src/web_dashboard.rs",
+          "line": 492,
+          "col": 17
+        },
+        {
+          "code": "E",
+          "message": "`format!` in `format!` args",
+          "file": "src/web_dashboard.rs",
+          "line": 563,
+          "col": 13
+        },
+        {
+          "code": "E",
+          "message": "explicit call to `.into_iter()` in function argument accepting `IntoIterator`",
+          "file": "src/signals.rs",
+          "line": 170,
+          "col": 16
+        },
+        {
+          "code": "E",
+          "message": "useless conversion to the same type: `u64`",
+          "file": "src/ai_reviewer.rs",
+          "line": 407,
+          "col": 34
+        },
+        {
+          "code": "E",
+          "message": "could not compile `tradingbots-fun` (lib) due to 4 previous errors"
+        }
+      ]
+    },
+    "audit": {
+      "status": "ADVISORY",
+      "exit_code": 1,
+      "duration_seconds": 2,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2023-0071",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2023-0071",
+          "severity": "5.9 (medium)",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "tradingbots",
+    "status": "active",
+    "active_since": "Wed 2026-03-18 21:33:08 UTC",
+    "recent_logs": [
+      "Mar 18 21:33:08 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: tradingbots.service: Deactivated successfully.",
+      "Mar 18 21:33:08 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Stopped tradingbots.service - TradingBots.fun.",
+      "Mar 18 21:33:08 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: tradingbots.service: Consumed 3min 28.533s CPU time, 40.9M memory peak, 13.3M memory swap peak.",
+      "Mar 18 21:33:08 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Starting tradingbots.service - TradingBots.fun...",
+      "Mar 18 21:33:08 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Started tradingbots.service - TradingBots.fun."
+    ]
+  }
+}
