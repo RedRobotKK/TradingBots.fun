@@ -507,6 +507,115 @@ async fn fetch_btc_dominance() -> Option<f64> {
 
 type SharedBtcDominance = Arc<RwLock<f64>>;
 
+/// Open a position manually (from the Bot API or AI bar).
+/// Called from the command-drain block in `run_cycle`.
+#[allow(clippy::too_many_arguments)]
+async fn manual_open_position(
+    symbol:       String,
+    is_long:      bool,
+    size_usd:     Option<f64>,
+    leverage:     Option<f64>,
+    current_mids: &HashMap<String, f64>,
+    bot_state:    &SharedState,
+    hl:           &Arc<exchange::HyperliquidClient>,
+    fee_bps:      u32,
+) {
+    use web_dashboard::PaperPosition;
+    let side = if is_long { "LONG" } else { "SHORT" };
+
+    // Resolve price (case-insensitive)
+    let price = current_mids.get(symbol.as_str()).copied().or_else(|| {
+        let lc = symbol.to_lowercase();
+        current_mids.iter()
+            .find(|(k, _)| k.to_lowercase() == lc)
+            .map(|(_, &v)| v)
+    });
+
+    let Some(px) = price else {
+        warn!("🤖 Manual open {side}: {symbol} not in price feed");
+        return;
+    };
+
+    let lev      = leverage.unwrap_or(1.0).clamp(1.0, 10.0);
+    // Default margin = 5% of free capital or $50, whichever is larger
+    let margin   = match size_usd {
+        Some(v) => v.max(1.0),
+        None    => {
+            let cap = bot_state.read().await.capital;
+            (cap * 0.05).max(50.0)
+        }
+    };
+    let stop_pct = 0.05;
+    let sl  = if is_long { px * (1.0 - stop_pct) } else { px * (1.0 + stop_pct) };
+    let tp  = if is_long { px * 1.10 }             else { px * 0.90 };
+    let qty = (margin * lev) / px.max(1e-8);
+
+    info!("🤖 Manual open {side}: {symbol} @ {px:.4}  \
+           margin=${margin:.0}  lev={lev:.1}×  qty={qty:.4}");
+
+    {
+        let mut s = bot_state.write().await;
+        if margin > s.capital {
+            warn!("🤖 Manual open {side}: insufficient capital \
+                   (need ${margin:.0}, have ${:.0})", s.capital);
+            return;
+        }
+        s.capital -= margin;
+        s.positions.push(PaperPosition {
+            symbol:             symbol.clone(),
+            side:               side.to_string(),
+            entry_price:        px,
+            quantity:           qty,
+            size_usd:           margin,
+            stop_loss:          sl,
+            take_profit:        tp,
+            atr_at_entry:       px * 0.02,
+            high_water_mark:    px,
+            low_water_mark:     px,
+            partial_closed:     false,
+            r_dollars_risked:   margin * stop_pct,
+            tranches_closed:    0,
+            dca_count:          0,
+            leverage:           lev,
+            cycles_held:        0,
+            entry_time:         now_str(),
+            unrealised_pnl:     0.0,
+            contrib:            Default::default(),
+            ai_action:          None,
+            ai_reason:          None,
+            entry_confidence:   1.0,
+            trade_budget_usd:   margin,
+            dca_spent_usd:      0.0,
+            btc_ret_at_entry:   0.0,
+            initial_margin_usd: margin,
+            ob_sentiment:       String::new(),
+            ob_bid_wall_near:   false,
+            ob_ask_wall_near:   false,
+            ob_adverse_cycles:  0,
+            funded_from_pool:   false,
+            pool_stake_usd:     0.0,
+        });
+    }
+
+    // Submit real HL order (no-op in paper mode)
+    let dec = decision::Decision {
+        action:             if is_long { "BUY".to_string() } else { "SELL".to_string() },
+        skipped_direction:  String::new(),
+        confidence:         1.0,
+        position_size:      1.0,
+        leverage:           lev,
+        entry_price:        px,
+        stop_loss:          sl,
+        take_profit:        tp,
+        strategy:           "Manual-BotAPI".to_string(),
+        rationale:          format!("[Manual] {side} {symbol} via Bot API"),
+        signal_contribution: Default::default(),
+    };
+    if let Err(e) = hl.place_order(&symbol, &dec, margin, fee_bps).await {
+        warn!("🤖 HL order failed for {symbol}: {e}");
+    }
+}
+
 /// Execute one 30-second trading cycle.
 ///
 /// Sequence of operations:
@@ -642,6 +751,14 @@ async fn run_cycle(
                             bot_state, weights, trade_logger, notifier, db,
                             single_op_tenant()).await;
                     }
+                }
+                BotCommand::OpenLong { symbol, size_usd, leverage } => {
+                    manual_open_position(symbol, true, size_usd, leverage,
+                        &current_mids, bot_state, hl, fee_bps).await;
+                }
+                BotCommand::OpenShort { symbol, size_usd, leverage } => {
+                    manual_open_position(symbol, false, size_usd, leverage,
+                        &current_mids, bot_state, hl, fee_bps).await;
                 }
             }
         }

@@ -318,19 +318,23 @@ pub struct BotSession {
     pub expires_at: String,
 }
 
-/// A manual trade-execution command queued by the operator via the AI bar.
+/// A manual trade-execution command queued by the operator or a bot-API session.
 /// Processed by `run_cycle()` with live prices before any autonomous logic runs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum BotCommand {
     /// Close the named position at current market price.
-    ClosePosition { symbol: String },
+    ClosePosition  { symbol: String },
     /// Take a partial profit (tranche 0 = first 1/3) on the named position.
     TakePartial    { symbol: String },
     /// Close every open position immediately.
     CloseAll,
     /// Close all positions that are currently in profit.
     CloseProfitable,
+    /// Open a new LONG position on `symbol` with optional size and leverage.
+    OpenLong  { symbol: String, size_usd: Option<f64>, leverage: Option<f64> },
+    /// Open a new SHORT position on `symbol` with optional size and leverage.
+    OpenShort { symbol: String, size_usd: Option<f64>, leverage: Option<f64> },
 }
 
 impl Default for BotState {
@@ -6948,6 +6952,24 @@ async fn api_v1_session_command_handler(
         }
         "close_all"         => BotCommand::CloseAll,
         "close_profitable"  => BotCommand::CloseProfitable,
+        "open_long" | "buy_long" | "long" => {
+            let sym = if !symbol.is_empty() { symbol } else {
+                return (axum::http::StatusCode::BAD_REQUEST,
+                    axum::response::Json(serde_json::json!({"error":"symbol required for open_long"}))).into_response();
+            };
+            let size_usd = body.get("size_usd").and_then(|v| v.as_f64());
+            let leverage  = body.get("leverage").and_then(|v| v.as_f64());
+            BotCommand::OpenLong { symbol: sym, size_usd, leverage }
+        }
+        "open_short" | "buy_short" | "short" => {
+            let sym = if !symbol.is_empty() { symbol } else {
+                return (axum::http::StatusCode::BAD_REQUEST,
+                    axum::response::Json(serde_json::json!({"error":"symbol required for open_short"}))).into_response();
+            };
+            let size_usd = body.get("size_usd").and_then(|v| v.as_f64());
+            let leverage  = body.get("leverage").and_then(|v| v.as_f64());
+            BotCommand::OpenShort { symbol: sym, size_usd, leverage }
+        }
         other => {
             // Fall back to the NLP parser for natural-language commands
             match parse_trade_command(other) {
@@ -6956,7 +6978,7 @@ async fn api_v1_session_command_handler(
                     axum::http::StatusCode::BAD_REQUEST,
                     axum::response::Json(serde_json::json!({
                         "error": "Unknown command",
-                        "valid": ["close_position","take_profit","close_all","close_profitable"]
+                        "valid": ["close_position","take_profit","close_all","close_profitable","open_long","open_short"]
                     })),
                 ).into_response(),
             }
@@ -6973,6 +6995,231 @@ async fn api_v1_session_command_handler(
         "queued":  true,
         "message": "Command queued — executes on next trading cycle (~30s)"
     })).into_response()
+}
+
+/// `POST /api/v1/session/{id}/query` — natural-language AI interface for bots.
+///
+/// Accepts a free-text `query` field.  The handler:
+///   1. Tries to parse a trade command → queues it and confirms.
+///   2. Otherwise answers the question from live BotState with a plain-English
+///      summary + the full relevant data object.
+///
+/// Example bodies:
+///   `{"query": "take profit from SOL"}`
+///   `{"query": "open a long on ETH with $200 and 2x leverage"}`
+///   `{"query": "what is my current P&L?"}`
+///   `{"query": "show my open positions"}`
+async fn api_v1_query_handler(
+    State(app):                      State<AppState>,
+    headers:                         axum::http::HeaderMap,
+    axum::extract::Path(session_id): axum::extract::Path<String>,
+    axum::extract::Json(body):       axum::extract::Json<serde_json::Value>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if let Err(e) = validate_bot_session(&app, &headers, &session_id).await {
+        return e;
+    }
+
+    let query = body.get("query").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    if query.is_empty() {
+        return (axum::http::StatusCode::BAD_REQUEST,
+            axum::response::Json(serde_json::json!({"error":"query field required"}))).into_response();
+    }
+
+    let ql = query.to_lowercase();
+
+    // ── 1. Detect open-position intent ───────────────────────────────────
+    let open_intent = {
+        let is_open  = ql.contains("open") || ql.contains("enter") || ql.contains("buy") || ql.contains("long") || ql.contains("short");
+        let is_close = ql.contains("close") || ql.contains("take profit") || ql.contains("sell");
+        is_open && !is_close
+    };
+
+    if open_intent {
+        // Parse: "open a long on SOL with $200 2x" / "buy ETH $100 3x leverage"
+        let is_long  = !ql.contains("short") && !ql.contains("sell");
+        let symbol   = ql.split_whitespace()
+            .find(|w| w.chars().all(|c| c.is_alphanumeric()) && w.len() >= 2 && w.len() <= 8
+                   && !["open","long","short","buy","sell","enter","a","an","the","on","with","at","x","leverage"].contains(w))
+            .map(|s| s.to_uppercase());
+        // Extract dollar amount
+        let size_usd = {
+            let mut found = None;
+            for tok in ql.split_whitespace() {
+                let t = tok.trim_start_matches('$');
+                if let Ok(n) = t.parse::<f64>() { if n >= 1.0 { found = Some(n); break; } }
+            }
+            found
+        };
+        // Extract leverage (e.g. "2x" "3x" "5x")
+        let leverage = ql.split_whitespace()
+            .find(|w| w.ends_with('x') && w[..w.len()-1].parse::<f64>().is_ok())
+            .and_then(|w| w[..w.len()-1].parse::<f64>().ok());
+
+        if let Some(sym) = symbol {
+            let cmd = if is_long {
+                BotCommand::OpenLong  { symbol: sym.clone(), size_usd, leverage }
+            } else {
+                BotCommand::OpenShort { symbol: sym.clone(), size_usd, leverage }
+            };
+            {
+                let mut s = app.bot_state.write().await;
+                s.pending_cmds.push_back(cmd);
+            }
+            let side_str = if is_long { "LONG" } else { "SHORT" };
+            let size_str = size_usd.map_or("default size".to_string(), |v| format!("${v:.0}"));
+            let lev_str  = leverage.map_or("1×".to_string(), |v| format!("{v:.1}×"));
+            return axum::response::Json(serde_json::json!({
+                "ok":      true,
+                "action":  "queued",
+                "cmd":     format!("Open{}", side_str),
+                "symbol":  sym,
+                "size_usd": size_usd,
+                "leverage": leverage,
+                "answer":  format!("Opening {side_str} {sym} · {size_str} · {lev_str} leverage — executes on next cycle (~30s)"),
+            })).into_response();
+        }
+    }
+
+    // ── 2. Detect close/take-profit intent → reuse NLP parser ────────────
+    if let Some(cmd) = parse_trade_command(&query) {
+        let label = match &cmd {
+            BotCommand::ClosePosition { symbol } => format!("Closing {symbol}"),
+            BotCommand::TakePartial   { symbol } => format!("Taking partial profit on {symbol}"),
+            BotCommand::CloseAll                 => "Closing all positions".to_string(),
+            BotCommand::CloseProfitable          => "Closing all profitable positions".to_string(),
+            _ => "Command queued".to_string(),
+        };
+        {
+            let mut s = app.bot_state.write().await;
+            s.pending_cmds.push_back(cmd);
+        }
+        return axum::response::Json(serde_json::json!({
+            "ok":     true,
+            "action": "queued",
+            "answer": format!("{label} — executes on next cycle (~30s)"),
+        })).into_response();
+    }
+
+    // ── 3. State questions — answer from live BotState ────────────────────
+    let s = app.bot_state.read().await;
+    let m = &s.metrics;
+    let committed: f64 = s.positions.iter().map(|p| p.size_usd).sum();
+    let unrealised: f64 = s.positions.iter().map(|p| p.unrealised_pnl).sum();
+    let aum = s.capital + committed + unrealised;
+
+    // Build plain-English answer based on keywords
+    let answer = if ql.contains("pnl") || ql.contains("profit") || ql.contains("gain") || ql.contains("loss") {
+        format!("Current session P&L: {}{:.2} USD ({}{:.2}%). Win rate: {:.0}% across {} trades.",
+            if s.pnl >= 0.0 {"+"} else {""}, s.pnl,
+            if s.pnl >= 0.0 {"+"} else {""}, (s.pnl / s.initial_capital.max(1.0)) * 100.0,
+            m.win_rate * 100.0, m.total_trades)
+    } else if ql.contains("position") || ql.contains("open") || ql.contains("holding") {
+        if s.positions.is_empty() {
+            "No open positions right now. The bot is scanning for signals.".to_string()
+        } else {
+            let summary: Vec<String> = s.positions.iter().map(|p|
+                format!("{} {} | entry ${:.4} | P&L {}{:.2}",
+                    p.symbol, p.side, p.entry_price,
+                    if p.unrealised_pnl >= 0.0 {"+"} else {""}, p.unrealised_pnl)
+            ).collect();
+            format!("{} open: {}", s.positions.len(), summary.join(" · "))
+        }
+    } else if ql.contains("aum") || ql.contains("capital") || ql.contains("balance") || ql.contains("equity") {
+        format!("Total AUM: ${aum:.2} | Free capital: ${:.2} | Committed: ${committed:.2} | Unrealised: ${unrealised:+.2}",
+            s.capital)
+    } else if ql.contains("win") || ql.contains("rate") || ql.contains("performance") {
+        format!("Win rate: {:.0}% | Profit factor: {:.2} | Sharpe: {:.2} | {} closed trades this session.",
+            m.win_rate * 100.0, m.profit_factor, m.sharpe, m.total_trades)
+    } else if ql.contains("circuit") || ql.contains("breaker") || ql.contains("cb") {
+        if s.cb_active {
+            "⚡ Circuit breaker ACTIVE — position sizes reduced to 35%. Drawdown limit hit.".to_string()
+        } else {
+            "Circuit breaker is normal. Full position sizing active.".to_string()
+        }
+    } else {
+        // General summary
+        format!("Bot summary: AUM ${aum:.0} | P&L {}{:.2} | {} open positions | {:.0}% win rate | {} trades closed | CB: {}",
+            if s.pnl >= 0.0 {"+"} else {""}, s.pnl,
+            s.positions.len(), m.win_rate * 100.0, m.total_trades,
+            if s.cb_active {"ACTIVE"} else {"normal"})
+    };
+
+    axum::response::Json(serde_json::json!({
+        "ok":     true,
+        "action": "answer",
+        "answer": answer,
+        "data": {
+            "aum_usd":        aum,
+            "free_capital":   s.capital,
+            "pnl_usd":        s.pnl,
+            "win_rate":       m.win_rate,
+            "total_trades":   m.total_trades,
+            "open_positions": s.positions.len(),
+            "cb_active":      s.cb_active,
+            "positions":      s.positions.iter().map(|p| serde_json::json!({
+                "symbol":         p.symbol,
+                "side":           p.side,
+                "entry_price":    p.entry_price,
+                "unrealised_pnl": p.unrealised_pnl,
+                "size_usd":       p.size_usd,
+                "leverage":       p.leverage,
+            })).collect::<Vec<_>>()
+        }
+    })).into_response()
+}
+
+/// `GET /api/v1/session/{id}/hl/account` — live Hyperliquid account state.
+///
+/// Calls the HL public info API with the configured wallet address.
+/// Returns raw clearinghouse state (balances, perp positions, margin usage).
+async fn api_v1_hl_account_handler(
+    State(app):                      State<AppState>,
+    headers:                         axum::http::HeaderMap,
+    axum::extract::Path(session_id): axum::extract::Path<String>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if let Err(e) = validate_bot_session(&app, &headers, &session_id).await {
+        return e;
+    }
+
+    let wallet = std::env::var("HYPERLIQUID_WALLET_ADDRESS").unwrap_or_default();
+    if wallet.is_empty() {
+        return (axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            axum::response::Json(serde_json::json!({
+                "error": "HYPERLIQUID_WALLET_ADDRESS not configured on this server"
+            }))).into_response();
+    }
+
+    // HL public info API — no signing required for reads
+    let hl_url = if std::env::var("HYPERLIQUID_TESTNET").as_deref() == Ok("true") {
+        "https://api.hyperliquid-testnet.xyz/info"
+    } else {
+        "https://api.hyperliquid.xyz/info"
+    };
+
+    let client  = reqwest::Client::new();
+    let payload = serde_json::json!({ "type": "clearinghouseState", "user": wallet });
+
+    match client.post(hl_url).json(&payload).send().await {
+        Err(e) => (
+            axum::http::StatusCode::BAD_GATEWAY,
+            axum::response::Json(serde_json::json!({"error": format!("HL API error: {e}")})),
+        ).into_response(),
+        Ok(resp) => {
+            match resp.json::<serde_json::Value>().await {
+                Ok(data) => axum::response::Json(serde_json::json!({
+                    "ok":     true,
+                    "wallet": wallet,
+                    "hl":     data,
+                })).into_response(),
+                Err(e) => (
+                    axum::http::StatusCode::BAD_GATEWAY,
+                    axum::response::Json(serde_json::json!({"error": format!("HL parse error: {e}")})),
+                ).into_response(),
+            }
+        }
+    }
 }
 
 pub async fn serve(app_state: AppState, port: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -7034,6 +7281,8 @@ pub async fn serve(app_state: AppState, port: u16) -> Result<(), Box<dyn std::er
         .route("/api/v1/session",                       post(api_v1_session_handler))
         .route("/api/v1/session/:id",                   get(api_v1_session_status_handler))
         .route("/api/v1/session/:id/command",           post(api_v1_session_command_handler))
+        .route("/api/v1/session/:id/query",             post(api_v1_query_handler))
+        .route("/api/v1/session/:id/hl/account",        get(api_v1_hl_account_handler))
         .with_state(app_state);
     let addr = format!("0.0.0.0:{}", port);
     log::info!("🌐 Dashboard at http://{}", addr);
