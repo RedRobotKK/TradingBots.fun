@@ -6003,6 +6003,12 @@ async fn command_handler(
                 BotCommand::CloseProfitable =>
                     ("CloseProfitable", String::new(),
                      "Taking profits on all winning positions on next cycle ⏱".to_string()),
+                BotCommand::OpenLong { symbol, .. } =>
+                    ("OpenLong", symbol.clone(),
+                     format!("Opening LONG on {symbol} on next cycle ⏱")),
+                BotCommand::OpenShort { symbol, .. } =>
+                    ("OpenShort", symbol.clone(),
+                     format!("Opening SHORT on {symbol} on next cycle ⏱")),
             };
 
             // Push to queue
