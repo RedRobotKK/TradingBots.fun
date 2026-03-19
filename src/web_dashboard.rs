@@ -7299,10 +7299,118 @@ fn x402_payment_requirements(resource: &str) -> serde_json::Value {
     })
 }
 
+/// Verify a Base-mainnet USDC transfer on-chain via JSON-RPC.
+///
+/// Calls `eth_getTransactionReceipt` on the Base RPC, then scans logs for an
+/// ERC-20 Transfer event from the USDC contract where `to` equals our wallet
+/// and `value` >= `min_usdc_units` (6-decimal, so 10 USDC = 10_000_000).
+///
+/// Returns `Ok(true)` = payment confirmed, `Ok(false)` = tx not found / wrong
+/// recipient / insufficient amount, `Err(_)` = RPC call failed.
+async fn verify_base_usdc_payment(
+    tx_hash:       &str,
+    recipient:     &str,      // our X402_WALLET, lower-cased
+    min_usdc_units: u64,      // 10_000_000 for 10 USDC
+) -> Result<bool, String> {
+    // USDC on Base mainnet
+    const USDC_CONTRACT: &str  = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
+    // keccak256("Transfer(address,address,uint256)")
+    const TRANSFER_TOPIC: &str = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+
+    let rpc_url = std::env::var("BASE_RPC_URL")
+        .unwrap_or_else(|_| "https://mainnet.base.org".to_string());
+
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method":  "eth_getTransactionReceipt",
+        "params":  [tx_hash],
+        "id":      1
+    });
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let resp: serde_json::Value = client
+        .post(&rpc_url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("RPC request failed: {e}"))?
+        .json()
+        .await
+        .map_err(|e| format!("RPC response parse failed: {e}"))?;
+
+    let receipt = match resp.get("result") {
+        Some(r) if !r.is_null() => r,
+        _ => return Ok(false),  // tx not yet mined or not found
+    };
+
+    // Must be a successful tx (status = "0x1")
+    if receipt.get("status").and_then(|v| v.as_str()) != Some("0x1") {
+        return Ok(false);
+    }
+
+    let logs = match receipt.get("logs").and_then(|l| l.as_array()) {
+        Some(l) => l,
+        None    => return Ok(false),
+    };
+
+    let recipient_lc = recipient.to_lowercase();
+    // Addresses in log topics are 32-byte padded; last 40 hex chars = address
+    let recipient_padded = recipient_lc.trim_start_matches("0x");
+
+    for log in logs {
+        // Must be from USDC contract
+        let log_addr = log.get("address")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_lowercase();
+        if log_addr.trim_start_matches("0x") != USDC_CONTRACT.trim_start_matches("0x") {
+            continue;
+        }
+
+        let topics = match log.get("topics").and_then(|t| t.as_array()) {
+            Some(t) if t.len() >= 3 => t,
+            _ => continue,
+        };
+
+        // topics[0] = event sig, topics[1] = from, topics[2] = to
+        let ev_sig = topics[0].as_str().unwrap_or("").to_lowercase();
+        if ev_sig != TRANSFER_TOPIC {
+            continue;
+        }
+
+        let to_topic = topics[2].as_str().unwrap_or("").to_lowercase();
+        if !to_topic.ends_with(recipient_padded) {
+            continue;
+        }
+
+        // data = 32-byte hex-encoded uint256 value
+        let data_hex = log.get("data")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .trim_start_matches("0x");
+
+        // Decode as big-endian u64 (safe up to ~18 USDC * 10^6; USDC max is fine)
+        let padded = format!("{:0>64}", data_hex);
+        let amount_bytes = hex::decode(&padded[48..64])  // last 8 bytes
+            .unwrap_or_default();
+        let amount: u64 = amount_bytes.iter().fold(0u64, |acc, &b| acc * 256 + b as u64);
+
+        if amount >= min_usdc_units {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
 /// `POST /api/v1/session` — x402-gated session creation.
 ///
 /// **Without** `X-Payment` header → `402 Payment Required` with USDC details.
-/// **With** `X-Payment: 0x{txHash}` → creates session, returns `{session_id, token}`.
+/// **With** `X-Payment: 0x{txHash}` → verifies on Base mainnet, then creates session.
 async fn api_v1_session_handler(
     State(app): State<AppState>,
     headers:    axum::http::HeaderMap,
@@ -7337,14 +7445,42 @@ async fn api_v1_session_handler(
     }
 
     let tx_hash = payment_header.unwrap();
-    // Basic format check — real verification would call Alchemy/Base RPC
-    if !tx_hash.starts_with("0x") || tx_hash.len() < 20 {
+    // Basic format check
+    if !tx_hash.starts_with("0x") || tx_hash.len() < 66 {
         return (
             axum::http::StatusCode::BAD_REQUEST,
             axum::response::Json(serde_json::json!({
-                "error": "Invalid X-Payment value — expected 0x{txHash}"
+                "error": "Invalid X-Payment value — expected 0x{66-char txHash}"
             })),
         ).into_response();
+    }
+
+    // ── On-chain verification: confirm 10 USDC reached our wallet ─────────
+    let our_wallet = std::env::var("X402_WALLET")
+        .unwrap_or_else(|_| "0x0000000000000000000000000000000000000000".to_string());
+
+    match verify_base_usdc_payment(&tx_hash, &our_wallet, 10_000_000).await {
+        Ok(true) => {
+            log::info!("✅ x402 payment verified on-chain: {}", &tx_hash[..12]);
+        }
+        Ok(false) => {
+            log::warn!("❌ x402 payment not verified (tx={}, wallet={})", &tx_hash[..12], &our_wallet[..8]);
+            return (
+                axum::http::StatusCode::PAYMENT_REQUIRED,
+                axum::response::Json(serde_json::json!({
+                    "error":   "Payment not confirmed",
+                    "detail":  "Transaction not found, insufficient amount, or wrong recipient",
+                    "tx_hash": tx_hash,
+                    "payTo":   our_wallet,
+                    "amount":  "10 USDC (10000000 units)",
+                    "network": "base-mainnet"
+                })),
+            ).into_response();
+        }
+        Err(rpc_err) => {
+            // RPC unreachable — allow with a warning (don't block on infra issues)
+            log::warn!("⚠ x402 RPC verification failed ({}), accepting provisionally: {}", rpc_err, &tx_hash[..12]);
+        }
     }
 
     let session_id  = new_id("ses");
