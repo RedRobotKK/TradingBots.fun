@@ -836,9 +836,24 @@ pub fn make_decision(
         Regime::Neutral  => (2.0, 3.2),   // balanced
     };
 
+    // Hard cap: stop-loss distance capped at 8% of entry price regardless of ATR.
+    // Without this, high-volatility assets (FET, DOGE at 5× leverage) produce
+    // stops so wide that a single fill can wipe 20-40% of margin.  At 8% cap
+    // the worst-case margin loss is 8% × leverage = 24% (at 3×), acceptable.
+    const MAX_STOP_DIST_PCT: f64 = 0.08;
     let (stop_loss, take_profit) = match action.as_str() {
-        "BUY"  => (close - atr * stop_mult, close + atr * tp_mult),
-        "SELL" => (close + atr * stop_mult, close - atr * tp_mult),
+        "BUY"  => {
+            let raw_sl = close - atr * stop_mult;
+            let sl = raw_sl.max(close * (1.0 - MAX_STOP_DIST_PCT));
+            let tp = close + atr * tp_mult;
+            (sl, tp)
+        }
+        "SELL" => {
+            let raw_sl = close + atr * stop_mult;
+            let sl = raw_sl.min(close * (1.0 + MAX_STOP_DIST_PCT));
+            let tp = close - atr * tp_mult;
+            (sl, tp)
+        }
         _      => (close * 0.97, close * 1.03),
     };
 

@@ -604,7 +604,7 @@ async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
                 _ => String::new(),
             };
 
-            format!(r#"<div class="pos-flip-wrap" id="pf-{sym_id}"><div class="pos-flip-inner">
+            format!(r#"<div class="pos-flip-wrap" id="pf-{sym_id}" data-pnl="{raw_pnl:.4}"><div class="pos-flip-inner">
 <div class="pos-card" style="border-left:3px solid {border}" id="pos-{sym_id}" onclick="flipPos('{sym_id}')">
   <div class="pos-header">
     <span class="pos-sym">{logo}{sym}</span>{name}{dca}
@@ -646,6 +646,7 @@ async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
 </div></div>"#,
                 border   = border_colour,
                 sym_id   = p.symbol.to_lowercase(),
+                raw_pnl  = p.unrealised_pnl,
                 logo     = logo_img,
                 sym      = p.symbol,
                 name     = name_span,
@@ -1570,9 +1571,16 @@ tr:hover td{{background:rgba(255,255,255,.025)}}
 <div class="section section-positions">
   <div class="section-title">
     <span class="section-title-left"><span class="live-ring"></span> Active Positions</span>
-    <span class="badge">{open_n} / 8 slots · max 4 per direction</span>
+    <span style="display:flex;align-items:center;gap:8px">
+      <button id="sort-pos-btn" onclick="sortPositions()" title="Toggle sort order"
+        style="background:#1c2026;border:1px solid #444c56;color:#cdd9e5;border-radius:6px;
+               padding:2px 10px;font-size:.75em;cursor:pointer;line-height:1.6">
+        ↕ Sort P&amp;L
+      </button>
+      <span class="badge">{open_n} open · cap {pos_cap}</span>
+    </span>
   </div>
-  <div class="pos-grid">{pos_cards}</div>
+  <div class="pos-grid" id="pos-grid">{pos_cards}</div>
 </div>
 
 <!-- Signal feed immediately under positions -->
@@ -1643,6 +1651,26 @@ function flipPos(id){{
     }});
   }}
   wrap.classList.toggle('flipped');
+}}
+
+/* ── Position P&L sort toggle ───────────────────────────────────────────
+   Alternates between worst-first (losers on top so you notice them) and
+   best-first (winners on top to celebrate).  State persists across auto-
+   refreshes by writing to window._posSortAsc.                           */
+var _posSortAsc = true; // true = worst first (ascending P&L)
+function sortPositions(){{
+  var grid = document.getElementById('pos-grid');
+  if(!grid) return;
+  var cards = Array.from(grid.querySelectorAll('.pos-flip-wrap'));
+  _posSortAsc = !_posSortAsc;
+  cards.sort(function(a,b){{
+    var pa = parseFloat(a.getAttribute('data-pnl')||'0');
+    var pb = parseFloat(b.getAttribute('data-pnl')||'0');
+    return _posSortAsc ? pa - pb : pb - pa;
+  }});
+  cards.forEach(function(c){{ grid.appendChild(c); }});
+  var btn = document.getElementById('sort-pos-btn');
+  if(btn) btn.textContent = _posSortAsc ? '↑ Worst first' : '↓ Best first';
 }}
 
 /* ── Closed trade click-to-expand ─────────────────────────────────────── */
@@ -1952,6 +1980,7 @@ window.doResetStats = function() {{
         cb_label     = cb_label,
         cb_desc      = cb_desc,
         open_n       = s.positions.len(),
+        pos_cap      = 40,
         total_closed = s.closed_trades.len(),
         cycles       = s.cycle_count,
         cand_n       = s.candidates.len(),
@@ -4232,6 +4261,7 @@ async fn admin_dashboard_handler(
   <div class="nav-admin">
     <a href="/admin">Dashboard</a>
     <a href="/admin/users">Users</a>
+    <a href="/admin/wallets">Wallets</a>
     <a href="/">Operator view</a>
   </div>
 </div>
@@ -4466,6 +4496,7 @@ async fn admin_users_handler(
   <div class="nav-admin">
     <a href="/admin">Dashboard</a>
     <a href="/admin/users">Users</a>
+    <a href="/admin/wallets">Wallets</a>
     <a href="/">Operator view</a>
   </div>
 </div>
@@ -4493,6 +4524,233 @@ async fn admin_users_handler(
         rows = if rows.is_empty() {
             "<tr><td colspan='7' style='color:#8b949e;text-align:center;padding:20px'>No users registered yet.</td></tr>".to_string()
         } else { rows },
+    );
+
+    axum::response::Html(html).into_response()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+/// `GET /admin/wallets` — per-wallet P&L and LTV performance table.
+///
+/// Shows all 9 demo wallets (Bot Alpha → Iota) side-by-side with:
+///   • Starting capital and current equity
+///   • Unrealised and realised P&L
+///   • Return % since inception
+///   • Open positions count
+///   • Estimated builder fees earned (LTV proxy)
+///   • Retention signal: equity trend (gaining / flat / bleeding)
+// ─────────────────────────────────────────────────────────────────────────────
+async fn admin_wallets_handler(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let password = match &app.admin_password {
+        Some(p) => p.clone(),
+        None    => return (axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                          "Admin panel not configured").into_response(),
+    };
+    if !check_admin_auth(&headers, &password) {
+        return www_authenticate_response();
+    }
+
+    struct WalletRow {
+        name:          String,
+        capital:       f64,
+        equity:        f64,
+        realised_pnl:  f64,
+        unrealised:    f64,
+        return_pct:    f64,
+        open_pos:      usize,
+        closed_trades: usize,
+        est_ltv_usd:   f64,
+        trend:         &'static str,
+    }
+
+    let rows_data: Vec<WalletRow> = {
+        let tm = app.tenants.read().await;
+        let mut out = Vec::new();
+        for h in tm.all() {
+            let s = h.state.read().await;
+            let unrealised: f64 = s.positions.iter().map(|p| p.unrealised_pnl).sum();
+            let committed:  f64 = s.positions.iter().map(|p| p.size_usd).sum();
+            let equity      = s.capital + committed + unrealised;
+            let return_pct  = if s.initial_capital > 0.0 {
+                (equity - s.initial_capital) / s.initial_capital * 100.0
+            } else { 0.0 };
+            // Estimate LTV: 3 bps entry + 3 bps exit = 6 bps per round-trip
+            let avg_size: f64 = if !s.closed_trades.is_empty() {
+                s.closed_trades.iter().map(|t| t.size_usd).sum::<f64>()
+                    / s.closed_trades.len() as f64
+            } else { s.initial_capital * 0.08 };
+            let est_ltv = s.closed_trades.len() as f64 * avg_size * 0.0006;
+            let trend = if return_pct > 2.0 { "🟢" }
+                        else if return_pct > -1.0 { "🟡" }
+                        else { "🔴" };
+            out.push(WalletRow {
+                name:          h.config.display_name.clone(),
+                capital:       s.initial_capital,
+                equity,
+                realised_pnl:  s.pnl,
+                unrealised,
+                return_pct,
+                open_pos:      s.positions.len(),
+                closed_trades: s.closed_trades.len(),
+                est_ltv_usd:   est_ltv,
+                trend,
+            });
+        }
+        out.sort_by(|a, b| a.capital.partial_cmp(&b.capital)
+            .unwrap_or(std::cmp::Ordering::Equal));
+        out
+    };
+
+    let total_est_ltv: f64 = rows_data.iter().map(|r| r.est_ltv_usd).sum();
+    let total_equity:  f64 = rows_data.iter().map(|r| r.equity).sum();
+    let total_capital: f64 = rows_data.iter().map(|r| r.capital).sum();
+    let total_ret_pct  = if total_capital > 0.0 {
+        (total_equity - total_capital) / total_capital * 100.0
+    } else { 0.0 };
+
+    let table_rows: String = rows_data.iter().map(|r| {
+        let ret_col  = if r.return_pct >= 0.0 { "#3fb950" } else { "#f85149" };
+        let upnl_col = if r.unrealised >= 0.0 { "#3fb950" } else { "#f85149" };
+        let pnl_sign = if r.realised_pnl >= 0.0 { "+" } else { "" };
+        let cap_tier = if r.capital <= 25.0 { "Nano" }
+            else if r.capital <= 100.0 { "Micro" }
+            else if r.capital <= 500.0 { "Small" }
+            else if r.capital <= 2000.0 { "Mid" }
+            else { "Large" };
+        format!(
+            "<tr>\
+               <td>{trend} <b>{name}</b></td>\
+               <td style='color:#8b949e;font-size:.75em'>{tier}</td>\
+               <td>${cap:.0}</td>\
+               <td>${eq:.2}</td>\
+               <td style='color:{rc}'>{ret:+.2}%</td>\
+               <td>{ps}${rpnl:.2} / <span style='color:{uc}'>{us:+.2}</span></td>\
+               <td>{ops} open · {cl} closed</td>\
+               <td style='color:#e3b341'>${ltv:.4}</td>\
+             </tr>",
+            trend = r.trend,  name = r.name,  tier = cap_tier,
+            cap   = r.capital,  eq = r.equity,
+            rc    = ret_col,  ret = r.return_pct,
+            ps    = pnl_sign,  rpnl = r.realised_pnl,
+            uc    = upnl_col,  us   = r.unrealised,
+            ops   = r.open_pos,  cl = r.closed_trades,
+            ltv   = r.est_ltv_usd,
+        )
+    }).collect();
+
+    let html = format!(r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TradingBots.fun · Wallet Performance</title>
+<style>
+  *{{box-sizing:border-box;margin:0;padding:0}}
+  body{{background:#0d1117;color:#c9d1d9;
+        font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+        padding:32px 16px}}
+  .wrap{{max-width:1100px;margin:0 auto}}
+  .top{{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}}
+  .logo{{font-weight:700;font-size:.95rem;color:#e6edf3;letter-spacing:.04em}}
+  .logo .r{{color:#e6343a}}
+  .logo .b{{color:#3fb950}}
+  .badge-admin{{font-size:.72rem;color:#e3b341;border:1px solid #e3b34150;
+                background:#e3b34112;border-radius:12px;padding:2px 10px;margin-left:8px}}
+  .nav-admin a{{color:#58a6ff;font-size:.85rem;text-decoration:none;margin-left:16px}}
+  .card{{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:24px;margin-bottom:20px}}
+  .metrics{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px}}
+  .m{{background:#0d1117;border:1px solid #30363d;border-radius:8px;padding:14px}}
+  .ml{{font-size:.7rem;color:#8b949e;text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px}}
+  .mv{{font-size:1.4rem;font-weight:700;color:#e6edf3}}
+  .mv-sm{{font-size:.95rem;font-weight:600;color:#e6edf3}}
+  table{{width:100%;border-collapse:collapse;font-size:.82rem}}
+  th{{color:#8b949e;font-weight:500;padding:10px 8px;border-bottom:1px solid #30363d;
+      text-align:left;white-space:nowrap}}
+  td{{padding:10px 8px;border-bottom:1px solid #21262d;color:#c9d1d9;vertical-align:middle}}
+  tr:last-child td{{border-bottom:none}}
+  tr:hover td{{background:#0d1117}}
+  a{{color:#58a6ff;text-decoration:none}}
+  .note{{font-size:.75rem;color:#8b949e;margin-top:14px;line-height:1.6}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="top">
+  <span class="logo">
+    <span class="r">Red</span><span class="b">Robot</span>
+    <span class="badge-admin">Admin · Wallets</span>
+  </span>
+  <div class="nav-admin">
+    <a href="/admin">Dashboard</a>
+    <a href="/admin/users">Users</a>
+    <a href="/admin/wallets">Wallets</a>
+    <a href="/">Operator view</a>
+  </div>
+</div>
+
+<div class="metrics">
+  <div class="m"><div class="ml">Wallets</div><div class="mv">{wc}</div></div>
+  <div class="m"><div class="ml">Total Capital</div><div class="mv-sm">${tc:.0}</div></div>
+  <div class="m">
+    <div class="ml">Total Equity</div>
+    <div class="mv-sm" style="color:{teq_col}">${te:.2}</div>
+  </div>
+  <div class="m">
+    <div class="ml">Portfolio Return</div>
+    <div class="mv-sm" style="color:{tret_col}">{tr:+.2}%</div>
+  </div>
+  <div class="m">
+    <div class="ml">Est. Builder Fees (all-time)</div>
+    <div class="mv-sm" style="color:#e3b341">${ltv_total:.4}</div>
+  </div>
+</div>
+
+<div class="card">
+  <table>
+    <thead>
+      <tr>
+        <th>Wallet</th><th>Tier</th><th>Capital</th><th>Equity</th>
+        <th>Return</th><th>P&amp;L (realised / unrealised)</th>
+        <th>Positions</th><th>Builder Fees (est.)</th>
+      </tr>
+    </thead>
+    <tbody>{trows}</tbody>
+  </table>
+  <div class="note">
+    ⚡ <b>Builder fee estimate:</b> 3 bps entry + 3 bps exit = 6 bps per round-trip × avg position size × closed trades.
+    <br><br>
+    🎯 <b>LTV maximisation playbook:</b><br>
+    &nbsp;&nbsp;• <b>Nano/Micro ($10–$100):</b> Highest churn risk. Prioritise win-rate over trade frequency.
+    Even a +5% monthly return on $25 = $1.25 — users will stay if they see growth.
+    Max 3–6 positions, conservative leverage (2–3×), take profits at +10%.<br>
+    &nbsp;&nbsp;• <b>Small ($100–$500):</b> Bread and butter. Target 4–8 round-trips/day.
+    Builder fee per user ≈ $0.02–$0.10/day at this size. Monthly LTV ≈ $1–$3.<br>
+    &nbsp;&nbsp;• <b>Mid/Large ($1k–$10k):</b> High-value. Builder fee ≈ $0.30–$2/day.
+    Monthly LTV ≈ $9–$60. These users stay as long as drawdown stays &lt; 10%.<br>
+    &nbsp;&nbsp;• <b>Retention formula:</b> equity growing → user stays → more fills → more LTV.
+    Close losing positions early (stop the bleed), let winners ride.
+  </div>
+</div>
+</div>
+</body>
+</html>"#,
+        wc        = rows_data.len(),
+        tc        = total_capital,
+        te        = total_equity,
+        teq_col   = if total_equity >= total_capital { "#3fb950" } else { "#f85149" },
+        tr        = total_ret_pct,
+        tret_col  = if total_ret_pct >= 0.0 { "#3fb950" } else { "#f85149" },
+        ltv_total = total_est_ltv,
+        trows     = if table_rows.is_empty() {
+            "<tr><td colspan='8' style='color:#8b949e;text-align:center;padding:20px'>\
+             No wallets active — restart the bot to seed demo wallets.\
+             </td></tr>".to_string()
+        } else { table_rows },
     );
 
     axum::response::Html(html).into_response()
@@ -7254,6 +7512,7 @@ pub async fn serve(app_state: AppState, port: u16) -> Result<(), Box<dyn std::er
         // ── Admin panel (HTTP Basic Auth) ───────────────────────────────────
         .route("/admin",                get(admin_dashboard_handler))
         .route("/admin/users",          get(admin_users_handler))
+        .route("/admin/wallets",        get(admin_wallets_handler))
         .route("/api/admin/reset-stats", post(admin_reset_stats_handler))
         // ── Apple Pay domain verification ───────────────────────────────────
         .route("/.well-known/apple-developer-merchantid-domain-association",

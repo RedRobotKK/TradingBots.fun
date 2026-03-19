@@ -372,6 +372,22 @@ impl TenantManager {
         id
     }
 
+    /// Register a tenant with a predetermined ID (idempotent — no-op if ID exists).
+    /// Used for demo/seed tenants that must survive hot-reloads with stable IDs.
+    pub fn register_with_id(&mut self, id: TenantId, config: TenantConfig) {
+        if self.tenants.contains_key(&id) {
+            return; // already seeded
+        }
+        let handle = TenantHandle::new(id.clone(), config);
+        log::info!("🤖 Registered fixed-id tenant {} ({})", handle.config.display_name, id);
+        self.tenants.insert(id, handle);
+    }
+
+    /// Check if a tenant ID is already registered.
+    pub fn contains(&self, id: &TenantId) -> bool {
+        self.tenants.contains_key(id)
+    }
+
     /// Look up a tenant by ID.
     pub fn get(&self, id: &TenantId) -> Option<&TenantHandle> {
         self.tenants.get(id)
@@ -687,6 +703,53 @@ pub type SharedTenantManager = Arc<RwLock<TenantManager>>;
 /// Convenience constructor.
 pub fn new_tenant_manager() -> SharedTenantManager {
     Arc::new(RwLock::new(TenantManager::new()))
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Demo / showcase tenants
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Capital tiers for the 9 demo wallets shown in the admin portfolio view.
+///
+/// These represent the realistic range of real users — from a $10 trial account
+/// all the way up to a $10k institutional slot.  All are paper-trading (no live
+/// HL keys), so they exercise the same algo logic without hitting the exchange.
+///
+/// Fixed display names and deterministic UUIDs so the dashboard remains stable
+/// across restarts and log lines are easy to grep.
+pub const DEMO_WALLETS: &[(&str, f64, &str)] = &[
+    // (display_name, initial_capital_usd, fixed_uuid_suffix)
+    ("Bot Alpha",    10.0,     "demo-0001-0000-0000-000000000001"),
+    ("Bot Beta",     25.0,     "demo-0002-0000-0000-000000000002"),
+    ("Bot Gamma",    50.0,     "demo-0003-0000-0000-000000000003"),
+    ("Bot Delta",    100.0,    "demo-0004-0000-0000-000000000004"),
+    ("Bot Epsilon",  250.0,    "demo-0005-0000-0000-000000000005"),
+    ("Bot Zeta",     500.0,    "demo-0006-0000-0000-000000000006"),
+    ("Bot Eta",      1_000.0,  "demo-0007-0000-0000-000000000007"),
+    ("Bot Theta",    5_000.0,  "demo-0008-0000-0000-000000000008"),
+    ("Bot Iota",    10_000.0,  "demo-0009-0000-0000-000000000009"),
+];
+
+/// Register the 9 demo wallets into `mgr` if they are not already present.
+///
+/// Uses deterministic IDs derived from `DEMO_WALLETS` so restarts don't
+/// create duplicates — `register_with_id()` is idempotent by design.
+/// Call once at startup, before spawning tenant trading loops.
+pub async fn seed_demo_tenants(mgr: &SharedTenantManager) {
+    let mut m = mgr.write().await;
+    for &(name, capital, id_str) in DEMO_WALLETS {
+        let id = TenantId::from_str(id_str);
+        if m.contains(&id) {
+            continue; // already seeded (e.g. hot-reload)
+        }
+        let mut cfg = TenantConfig::paper(name, capital);
+        // Demo tenants are Pro-tier (no position cap, access to all features)
+        // so they demonstrate what a paying user's bot looks like.
+        cfg.tier         = TenantTier::Pro;
+        cfg.live_trading = false; // paper only — no real HL keys
+        log::info!("🤖 Demo tenant seeded: {} (${:.0}) [{}]", name, capital, id_str);
+        m.register_with_id(id, cfg);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

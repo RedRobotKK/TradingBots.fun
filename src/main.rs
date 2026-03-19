@@ -13,15 +13,19 @@
 
 // ─────────────────────────── Risk constants ───────────────────────────────────
 /// Minimum signal confidence for new entries. Below this the trade is skipped.
-const MIN_CONFIDENCE: f64 = 0.60;
+/// Raised from 0.60 → 0.68 after live data showed 20% win rate with 115 open
+/// positions — too many borderline signals were entering.
+const MIN_CONFIDENCE: f64 = 0.68;
 /// Maximum fraction of equity at risk per individual trade (stop-distance based).
 const MAX_TRADE_HEAT: f64 = 0.05;   // 5 %
 /// Maximum total fraction of equity at risk across all open positions.
 /// This is the primary position budget — the AI sizes each new position so that
-/// total portfolio heat never exceeds this ceiling.  No hard cap on position
-/// count; the heat limit and per-trade Kelly sizing naturally bound how many
-/// positions can coexist at meaningful size.
+/// total portfolio heat never exceeds this ceiling.
 const MAX_PORTFOLIO_HEAT: f64 = 0.15;  // 15 %
+/// Hard cap on simultaneous open positions.  Prevents the bot from holding
+/// 100+ small losers that individually pass the heat check but collectively
+/// dilute attention and inflate losing streaks.
+const MAX_OPEN_POSITIONS: usize = 40;
 /// DCA minimum confidence (slightly higher than new-entry minimum).
 const DCA_MIN_CONFIDENCE: f64 = 0.65;
 /// Circuit-breaker drawdown threshold.  Once peak→current drawdown exceeds
@@ -302,6 +306,8 @@ async fn main() -> Result<()> {
     // leaderboard snapshot task — keep one instance so registrations are
     // visible in both places.
     let tenant_manager = tenant::new_tenant_manager();
+    // Seed the 9 demo wallets ($10 → $10k) so every restart shows all wallets.
+    tenant::seed_demo_tenants(&tenant_manager).await;
     // Global investment thesis constraints — written by the web API, read by run_cycle.
     let global_thesis: Arc<RwLock<thesis::ThesisConstraints>> =
         Arc::new(RwLock::new(thesis::ThesisConstraints::default()));
@@ -334,6 +340,72 @@ async fn main() -> Result<()> {
                 error!("Dashboard: {}", e);
             }
         });
+    }
+
+    // ── Per-tenant demo trading loops ─────────────────────────────────────────
+    // Each of the 9 demo wallets (Bot Alpha → Iota) gets its own Tokio task
+    // running the full run_cycle() with its isolated SharedState.  Tasks are
+    // staggered 3 s apart so they don't all hit the HL API simultaneously.
+    // The market client, HL client, and signal caches are shared (Arc clones).
+    {
+        let tenant_handles: Vec<(tenant::TenantId, web_dashboard::SharedState)> = {
+            let tm = tenant_manager.read().await;
+            tm.all()
+                .map(|h| (h.id.clone(), h.state.clone()))
+                .collect()
+        };
+
+        for (idx, (tid, tenant_state)) in tenant_handles.into_iter().enumerate() {
+            // Collect the capital size from state so the loop can log it
+            let tenant_capital = tenant_state.read().await.initial_capital;
+            // Demo wallets are Free/Pro paper — charge max builder fee (3 bps)
+            let tenant_fee_bps: u32 = 3;
+
+            let t_config   = config.clone();
+            let t_market   = market.clone();
+            let t_hl       = hl.clone();
+            let t_db       = shared_db.clone();
+            let t_weights  = weights.clone();
+            let t_sent     = sentiment_cache.clone();
+            let t_fund     = funding_cache.clone();
+            let t_logger   = trade_logger.clone();
+            let t_notifier = notifier.clone();
+            let t_onchain  = onchain_cache.clone();
+            let t_watch    = signal_watchlist.clone();
+            let t_cex      = cex_monitor.clone();
+            let t_thesis   = global_thesis.clone();
+            let t_btcdom   = btc_dominance.clone();
+            let stagger    = idx as u64 * 3; // 3 s between each tenant start
+
+            tokio::spawn(async move {
+                // Stagger start to spread API load
+                tokio::time::sleep(std::time::Duration::from_secs(stagger)).await;
+                info!("🤖 Tenant loop: {} ${:.0} capital ({}s stagger)", tid, tenant_capital, stagger);
+
+                let mut prev_mids: HashMap<String, f64> = HashMap::new();
+                loop {
+                    match run_cycle(
+                        &t_config, &t_market, &t_hl, &t_db,
+                        &tenant_state, &t_weights,
+                        &t_sent, &t_fund, &mut prev_mids, &t_btcdom,
+                        &t_logger, tenant_fee_bps,
+                        &t_notifier, &t_onchain, &t_watch, &t_cex, &t_thesis,
+                    ).await {
+                        Ok(_)  => {
+                            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                        }
+                        Err(e) => {
+                            let err_str = e.to_string();
+                            let (sleep_secs, _) = classify_cycle_error(&err_str);
+                            log::warn!("Tenant {} cycle error: {}", tid, err_str);
+                            tokio::time::sleep(
+                                std::time::Duration::from_secs(sleep_secs)
+                            ).await;
+                        }
+                    }
+                }
+            });
+        }
     }
 
     // ── Trial-expiry promo email task (hourly) ────────────────────────────────
@@ -995,23 +1067,51 @@ async fn run_cycle(
             } else { 0.0 };
             //
             // Conditions (all must hold):
-            //   • Was genuinely profitable at some point (peak_r ≥ 0.10R)
+            //   • Was genuinely profitable at some point (peak_r ≥ 0.30R — raised from
+            //     0.10R to avoid premature exits on micro-bounces that reverse)
             //   • Has since reversed into a loss (r_mult < −0.05R)
             //   • Still within the first 60 min — rapid reversal = failed signal
             //   • No DCA taken yet — DCA means we chose to double down; let that play
-            let false_breakout = peak_r >= 0.10
+            let false_breakout = peak_r >= 0.30   // was 0.10 — higher bar prevents cheap exits
                 && r_mult < -0.05
                 && pos.cycles_held >= 30   // at least 15 min before declaring failure
                 && pos.cycles_held < 120   // still within the 60-min "fresh" window
                 && pos.dca_count == 0;
 
-            let truly_flat         = pos.cycles_held >= 240 && r_mult.abs() < 0.20;
-            let chronic_loss       = pos.cycles_held >= 360 && r_mult < -0.45 && r_mult > -0.90 && pos.dca_count == 0;
-            // Post-DCA: sooner exit when more DCA slots have been used up
-            let post_dca_loss      = pos.cycles_held >= 360 && r_mult < -0.50 && r_mult > -0.90 && pos.dca_count == 1;
-            // DCA exhausted bleeder: 2+ add-ons and still losing after 2hrs — stop the bleeding
-            let post_dca_exhausted = pos.cycles_held >= 240 && r_mult < -0.25 && r_mult > -0.90 && pos.dca_count >= 2;
+            // TimeExit windows scale with DCA count — each add-on earns the position
+            // more breathing room because we've explicitly decided to stay in.
+            // Base: 240 cycles (2h) flat / 360 cycles (3h) chronic loss.
+            // With 1 DCA: 1.5× → 360 flat / 540 chronic.
+            // With 2+ DCA: 2× → 480 flat / 720 chronic.
+            let time_mult = match pos.dca_count {
+                0 => 1,
+                1 => 2,   // 1 DCA → double the patience window
+                _ => 3,   // 2+ DCA → triple it
+            };
+            let truly_flat    = pos.cycles_held >= 240 * time_mult && r_mult.abs() < 0.20;
+            let chronic_loss  = pos.cycles_held >= 360 * time_mult && r_mult < -0.45 && r_mult > -0.90 && pos.dca_count == 0;
+            let post_dca_loss = pos.cycles_held >= 360 * time_mult && r_mult < -0.50 && r_mult > -0.90 && pos.dca_count == 1;
+            // DCA exhausted: if 2+ add-ons and still deep in loss after extended window
+            let post_dca_exhausted = pos.cycles_held >= 240 * time_mult && r_mult < -0.25 && r_mult > -0.90 && pos.dca_count >= 2;
             let stale = (truly_flat || chronic_loss || post_dca_loss || post_dca_exhausted) && r_mult <= 0.0;
+
+            // ── Profit-lock: force partial exit when sitting on big gains ─────────
+            // The bot must take WINS when available.  Two thresholds:
+            //   +15% unrealised on margin → force first tranche (¼ off)
+            //   +25% unrealised on margin → force full exit before profit evaporates
+            // These override the R-multiple tranche logic so gains are locked regardless
+            // of whether formal R targets have been reached.
+            let profit_pct = if pos.size_usd > 0.0 { pos.unrealised_pnl / pos.size_usd } else { 0.0 };
+            if profit_pct >= 0.25 && !to_close.iter().any(|(s,_,_)| s == &pos.symbol) {
+                to_close.push((pos.symbol.clone(), cur, "ProfitLock25".to_string()));
+                info!("💰 {} profit-lock full exit @ +{:.1}% unrealised", pos.symbol, profit_pct * 100.0);
+            } else if profit_pct >= 0.15 && pos.tranches_closed == 0
+                && !to_partial0.iter().any(|(s,_)| s == &pos.symbol)
+                && !to_close.iter().any(|(s,_,_)| s == &pos.symbol)
+            {
+                to_partial0.push((pos.symbol.clone(), cur));
+                info!("💰 {} profit-lock partial @ +{:.1}% unrealised", pos.symbol, profit_pct * 100.0);
+            }
 
             // ── Order-book adverse pressure exits ─────────────────────────
             // The book is a real-time sentiment signal; when it consistently
@@ -2146,9 +2246,13 @@ async fn execute_paper_trade(
     let pct          = position_size_pct(dec.confidence, &metrics, in_cb);
     let mut size_usd = s.capital * pct;
 
-    // Guard: min position size
-    if size_usd < 2.0 || s.capital < size_usd {
-        info!("⚠ {} skipped — insufficient capital (${:.2})", symbol, s.capital);
+    // Guard: min position size — scales with wallet to support micro-accounts.
+    // Hyperliquid's hard minimum order notional is ~$1 USD (at any leverage).
+    // We set the floor as 2% of initial_capital (clamped $0.50 … $2.00) so a
+    // $10 wallet can trade $0.50+ positions while large wallets still use $2.
+    let min_pos_usd = (s.initial_capital * 0.02).clamp(0.50, 2.0);
+    if size_usd < min_pos_usd || s.capital < size_usd {
+        info!("⚠ {} skipped — insufficient capital (${:.2}, min=${:.2})", symbol, s.capital, min_pos_usd);
         return;
     }
     // Guard: per-trade heat ≤ MAX_TRADE_HEAT (2%) of equity.
@@ -2164,13 +2268,30 @@ async fn execute_paper_trade(
         //   MAX_TRADE_HEAT = stop_dist_pct × margin × leverage / equity
         //   → margin = MAX_TRADE_HEAT × equity / (stop_dist_pct × leverage)
         let allowed = MAX_TRADE_HEAT * equity / (stop_dist_pct * dec.leverage);
-        if allowed < 2.0 {
-            info!("⚠ {} skipped — stop too tight, min heat size ${:.2} < $2", symbol, allowed);
+        if allowed < min_pos_usd {
+            info!("⚠ {} skipped — stop too tight, min heat size ${:.2} < ${:.2}", symbol, allowed, min_pos_usd);
             return;
         }
         info!("🌡 {} heat-scaled: ${:.2} → ${:.2} (stop_dist={:.2}% × {:.1}×lev)",
               symbol, size_usd, allowed, stop_dist_pct * 100.0, dec.leverage);
         size_usd = allowed;  // apply the reduction — enforce the heat limit
+    }
+    // Guard: hard cap on simultaneous open positions — scales with wallet size.
+    // Very small wallets ($10-$100) cap at fewer positions so each one gets a
+    // meaningful allocation; large wallets use the global MAX_OPEN_POSITIONS.
+    let effective_pos_cap = if s.initial_capital <= 25.0 {
+        3_usize   // $10–$25: max 3 positions
+    } else if s.initial_capital <= 100.0 {
+        6_usize   // $26–$100: max 6 positions
+    } else if s.initial_capital <= 500.0 {
+        15_usize  // $101–$500: max 15 positions
+    } else {
+        MAX_OPEN_POSITIONS  // $500+: full cap
+    };
+    if s.positions.len() >= effective_pos_cap {
+        info!("🚫 {} skipped — position cap reached ({}/{} for ${:.0} wallet)",
+              symbol, s.positions.len(), effective_pos_cap, s.initial_capital);
+        return;
     }
     // Guard: total portfolio heat ≤ MAX_PORTFOLIO_HEAT
     // Pool-funded positions count at 50% heat weight (see portfolio_heat), so
