@@ -6234,8 +6234,12 @@ async fn command_handler(
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
 
-    // Operator-only — must be authenticated
-    if get_session_tenant_id(&headers, &app.session_secret).is_none() {
+    // Accept either a valid consumer session OR the operator Basic-Auth header.
+    let has_consumer_session = get_session_tenant_id(&headers, &app.session_secret).is_some();
+    let has_admin_auth = app.admin_password.as_deref()
+        .map(|pw| check_admin_auth(&headers, pw))
+        .unwrap_or(false);
+    if !has_consumer_session && !has_admin_auth {
         return axum::http::StatusCode::UNAUTHORIZED.into_response();
     }
 
@@ -6319,8 +6323,10 @@ async fn thesis_get_handler(
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
 
-    // Must be logged in
-    if get_session_tenant_id(&headers, &app.session_secret).is_none() {
+    // Accept consumer session OR operator Basic-Auth
+    let has_consumer = get_session_tenant_id(&headers, &app.session_secret).is_some();
+    let has_admin    = app.admin_password.as_deref().map(|pw| check_admin_auth(&headers, pw)).unwrap_or(false);
+    if !has_consumer && !has_admin {
         return axum::http::StatusCode::UNAUTHORIZED.into_response();
     }
 
@@ -6351,9 +6357,18 @@ async fn thesis_update_handler(
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
 
+    // Accept consumer session OR operator Basic-Auth (admin acts as single-op tenant)
     let tid = match get_session_tenant_id(&headers, &app.session_secret) {
         Some(t) => t,
-        None    => return axum::http::StatusCode::UNAUTHORIZED.into_response(),
+        None => {
+            let is_admin = app.admin_password.as_deref()
+                .map(|pw| check_admin_auth(&headers, pw))
+                .unwrap_or(false);
+            if !is_admin {
+                return axum::http::StatusCode::UNAUTHORIZED.into_response();
+            }
+            crate::tenant::TenantId::from_str("00000000-0000-0000-0000-000000000001")
+        }
     };
 
     // ── Input validation ──────────────────────────────────────────────────────
