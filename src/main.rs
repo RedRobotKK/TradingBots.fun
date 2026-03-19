@@ -607,7 +607,7 @@ async fn run_cycle(
                         });
                     if let Some(px) = price {
                         info!("🤖 Manual take-partial: {symbol} @ {px}");
-                        take_partial(symbol, px, 0, bot_state, weights, trade_logger).await;
+                        take_partial(symbol.clone(), px, 0, bot_state, weights, trade_logger).await;
                     } else {
                         warn!("🤖 Manual take-partial: {symbol} not found in price feed");
                     }
