@@ -5580,8 +5580,8 @@ async fn command_handler(
             axum::response::Json(serde_json::json!({
                 "ok":  false,
                 "msg": format!(
-                    "Couldn't parse "{}" as a trade command. \
-                     Try: "close SOL", "take profit ETH", "close all", "take profits".",
+                    "Couldn't parse '{}' as a trade command. \
+                     Try: 'close SOL', 'take profit ETH', 'close all', 'take profits'.",
                     cmd_clean
                 )
             })).into_response()
