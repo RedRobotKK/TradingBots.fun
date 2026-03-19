@@ -489,10 +489,10 @@ async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
             // "House money" indicator: trade has earned back its original stake.
             let principal_badge = if p.initial_margin_usd > 0.0
                 && p.unrealised_pnl >= p.initial_margin_usd {
-                format!(" <span title='Principal recovered — running on house money!' \
+                " <span title='Principal recovered — running on house money!' \
                           style='background:#0d2318;color:#3fb950;border:1px solid #3fb95060;\
                           border-radius:4px;padding:1px 5px;font-size:.68em'>\
-                          🏦 principal ✓</span>")
+                          🏦 principal ✓</span>".to_string()
             } else { String::new() };
 
             // ── Pool-funded badge ──────────────────────────────────────────
@@ -628,7 +628,7 @@ async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
                 risk     = risk_usd,
                 rpct     = risk_pct,
                 time      = p.entry_time,
-                ob_badges = format!("{}{}{}", ob_badge, principal_badge, pool_badge),
+                ob_badges = ob_badge + &principal_badge + &pool_badge,
                 ai_row    = ai_row,
             )
         }).collect()

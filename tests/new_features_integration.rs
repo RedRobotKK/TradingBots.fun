@@ -40,6 +40,16 @@ mod correlation_tests {
             ai_action:        None,
             ai_reason:        None,
             entry_confidence: conf,
+            trade_budget_usd:   100.0,
+            dca_spent_usd:      0.0,
+            btc_ret_at_entry:   0.0,
+            initial_margin_usd: 100.0,
+            ob_sentiment:       String::new(),
+            ob_bid_wall_near:   false,
+            ob_ask_wall_near:   false,
+            ob_adverse_cycles:  0,
+            funded_from_pool:   false,
+            pool_stake_usd:     0.0,
         }
     }
 

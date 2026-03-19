@@ -167,7 +167,7 @@ pub fn detect_order_flow(orderbook: &OrderBook) -> Result<OrderFlowSignal> {
     });
 
     let mut walls: Vec<BookWall> = bid_walls.into_iter()
-        .chain(ask_walls.into_iter())
+        .chain(ask_walls)
         .collect();
     walls.sort_by(|a, b| b.depth_frac.partial_cmp(&a.depth_frac).unwrap());
     walls.truncate(4);
