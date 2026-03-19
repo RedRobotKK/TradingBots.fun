@@ -1,0 +1,87 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-03-19T00:17:29Z",
+    "commit": "b570f14",
+    "commit_full": "b570f149ad9f2f9282e3c2e69cd685c3aaa1e426",
+    "commit_message": "chore: bump version 0.1.44 \u2192 0.1.45",
+    "branch": "master",
+    "overall_status": "FAILED",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
+    "cargo": "cargo 1.93.1 (083ac5135 2025-12-15)",
+    "os_kernel": "6.8.0-106-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 703,
+      "total_passed": 643,
+      "total_failed": 2,
+      "total_ignored": 0,
+      "failures": [
+        "tests::tier0_trail_at_0_30r_for_long",
+        "tests::trailing_stop_tier1_tight_trail_at_0_75r_for_long"
+      ]
+    },
+    "clippy": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 24,
+      "error_count": 2,
+      "errors": [
+        {
+          "code": "E",
+          "message": "casting to the same type is unnecessary (`u64` -> `u64`)",
+          "file": "src/ai_reviewer.rs",
+          "line": 407,
+          "col": 34
+        },
+        {
+          "code": "E",
+          "message": "could not compile `tradingbots-fun` (lib) due to 1 previous error"
+        }
+      ]
+    },
+    "audit": {
+      "status": "ADVISORY",
+      "exit_code": 1,
+      "duration_seconds": 2,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2023-0071",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2023-0071",
+          "severity": "5.9 (medium)",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "tradingbots",
+    "status": "active",
+    "active_since": "Wed 2026-03-18 21:33:08 UTC",
+    "recent_logs": [
+      "Mar 18 21:33:08 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: tradingbots.service: Deactivated successfully.",
+      "Mar 18 21:33:08 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Stopped tradingbots.service - TradingBots.fun.",
+      "Mar 18 21:33:08 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: tradingbots.service: Consumed 3min 28.533s CPU time, 40.9M memory peak, 13.3M memory swap peak.",
+      "Mar 18 21:33:08 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Starting tradingbots.service - TradingBots.fun...",
+      "Mar 18 21:33:08 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Started tradingbots.service - TradingBots.fun."
+    ]
+  }
+}
