@@ -58,10 +58,10 @@ const STALE_THRESHOLD: Duration = Duration::from_secs(600);
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct FundingData {
-    pub symbol:        String,
+    pub symbol: String,
     /// Current 8-hour funding rate (e.g. 0.0001 = 0.01 %).
     /// Positive = longs pay shorts.  Negative = shorts pay longs.
-    pub funding_rate:  f64,
+    pub funding_rate: f64,
     /// Predicted funding for the next 8-hour period (mark − index / 8h).
     /// Positive = market expects rates to stay elevated.
     /// Use as a leading indicator: if current is neutral but predicted is high,
@@ -97,8 +97,8 @@ impl FundingCyclePhase {
         // 8-hour cycle: settlements at 0h, 8h, 16h UTC → every 28800 seconds
         const PERIOD: i64 = 8 * 3600; // 28800 seconds
         let seconds_into_cycle = utc_secs.rem_euclid(PERIOD);
-        let seconds_to_next    = PERIOD - seconds_into_cycle;
-        let hours_to_next      = seconds_to_next as f64 / 3600.0;
+        let seconds_to_next = PERIOD - seconds_into_cycle;
+        let hours_to_next = seconds_to_next as f64 / 3600.0;
 
         if seconds_into_cycle < 1800 {
             // Within 30 min AFTER a settlement → post-settlement repositioning
@@ -107,7 +107,9 @@ impl FundingCyclePhase {
             }
         } else if seconds_to_next < 5400 {
             // Within 90 min BEFORE next settlement → pre-settlement closing pressure
-            FundingCyclePhase::PreSettlement { hours_remaining: hours_to_next }
+            FundingCyclePhase::PreSettlement {
+                hours_remaining: hours_to_next,
+            }
         } else {
             FundingCyclePhase::MidCycle { hours_to_next }
         }
@@ -125,9 +127,13 @@ impl FundingCyclePhase {
                 // Closer to settlement = stronger closing pressure
                 // 0–30 min → 1.8×, 30–60 min → 1.5×, 60–90 min → 1.2×
                 if funding_rate.abs() > 0.0002 {
-                    if *hours_remaining < 0.5 { 1.80 }
-                    else if *hours_remaining < 1.0 { 1.50 }
-                    else { 1.20 }
+                    if *hours_remaining < 0.5 {
+                        1.80
+                    } else if *hours_remaining < 1.0 {
+                        1.50
+                    } else {
+                        1.20
+                    }
                 } else {
                     1.0 // neutral funding — cycle phase doesn't matter
                 }
@@ -151,6 +157,23 @@ pub fn current_cycle_phase() -> FundingCyclePhase {
     FundingCyclePhase::from_utc_secs(utc_secs)
 }
 
+/// Returns a human-readable label and settlement hours for a funding cycle.
+pub fn describe_cycle_phase(phase: &FundingCyclePhase) -> (String, f64) {
+    match phase {
+        FundingCyclePhase::PreSettlement { hours_remaining } => (
+            format!("pre_settlement_{:.0}m", hours_remaining * 60.0),
+            *hours_remaining,
+        ),
+        FundingCyclePhase::PostSettlement { minutes_elapsed } => {
+            (format!("post_settlement_{:.0}m_ago", minutes_elapsed), 0.0)
+        }
+        FundingCyclePhase::MidCycle { hours_to_next } => (
+            format!("mid_cycle_{:.1}h_remaining", hours_to_next),
+            *hours_to_next,
+        ),
+    }
+}
+
 impl FundingData {
     /// Annualised rate as a percentage (rate × 3 payments/day × 365 days × 100).
     #[allow(dead_code)]
@@ -172,10 +195,10 @@ impl FundingData {
     /// * Negative → bearish lean (longs overcrowded → liquidation risk).
     /// * Zero     → neutral / below noise threshold.
     pub fn signal_strength(&self) -> f64 {
-        let blended  = self.funding_rate * 0.60 + self.predicted_rate * 0.40;
-        let raw      = self.strength_from_rate(blended);
-        let phase    = current_cycle_phase();
-        let mult     = phase.signal_multiplier(self.funding_rate);
+        let blended = self.funding_rate * 0.60 + self.predicted_rate * 0.40;
+        let raw = self.strength_from_rate(blended);
+        let phase = current_cycle_phase();
+        let mult = phase.signal_multiplier(self.funding_rate);
         (raw * mult).clamp(-1.0, 1.0)
     }
 
@@ -191,13 +214,33 @@ impl FundingData {
         //   0.0010 = 0.10 %  (extreme)
         //   0.0005 = 0.05 %  (elevated)
         //   0.0002 = 0.02 %  (mild — outer edge of neutral band)
-        if      r >  0.0010 { -1.00 }  // extreme long crowding  → strong bear lean
-        else if r >  0.0005 { -0.65 }  // elevated long crowding → moderate bear lean
-        else if r >  0.0002 { -0.30 }  // mild long bias         → slight bear lean
-        else if r < -0.0010 {  1.00 }  // extreme short crowding → strong bull lean
-        else if r < -0.0005 {  0.65 }  // elevated short crowd   → moderate bull lean
-        else if r < -0.0002 {  0.30 }  // mild short bias         → slight bull lean
-        else                {  0.00 }  // neutral band            → no signal
+        if r > 0.0010 {
+            -1.00
+        }
+        // extreme long crowding  → strong bear lean
+        else if r > 0.0005 {
+            -0.65
+        }
+        // elevated long crowding → moderate bear lean
+        else if r > 0.0002 {
+            -0.30
+        }
+        // mild long bias         → slight bear lean
+        else if r < -0.0010 {
+            1.00
+        }
+        // extreme short crowding → strong bull lean
+        else if r < -0.0005 {
+            0.65
+        }
+        // elevated short crowd   → moderate bull lean
+        else if r < -0.0002 {
+            0.30
+        }
+        // mild short bias         → slight bull lean
+        else {
+            0.00
+        } // neutral band            → no signal
     }
 
     /// True when the rate is outside the neutral ±0.02 % band.
@@ -208,18 +251,26 @@ impl FundingData {
     /// Emoji indicator for dashboard display.
     pub fn emoji(&self) -> &'static str {
         let r = self.funding_rate;
-        if      r >  0.0005 { "🔴" }  // elevated longs → bearish
-        else if r < -0.0005 { "🟢" }  // elevated shorts → bullish
-        else                { "🟡" }  // neutral
+        if r > 0.0005 {
+            "🔴"
+        }
+        // elevated longs → bearish
+        else if r < -0.0005 {
+            "🟢"
+        }
+        // elevated shorts → bullish
+        else {
+            "🟡"
+        } // neutral
     }
 
     /// Phase-aware emoji: shows cycle context alongside funding direction.
     #[allow(dead_code)]
     pub fn cycle_emoji(&self) -> &'static str {
         match current_cycle_phase() {
-            FundingCyclePhase::PreSettlement { .. }  => "⏰",
+            FundingCyclePhase::PreSettlement { .. } => "⏰",
             FundingCyclePhase::PostSettlement { .. } => "🔄",
-            FundingCyclePhase::MidCycle { .. }       => "·",
+            FundingCyclePhase::MidCycle { .. } => "·",
         }
     }
 }
@@ -250,7 +301,7 @@ struct HlAssetCtx {
 // ─────────────────────────── Cache ───────────────────────────────────────────
 
 struct CacheInner {
-    data:       HashMap<String, FundingData>,
+    data: HashMap<String, FundingData>,
     prev_rates: HashMap<String, f64>,
     last_fetch: Option<Instant>,
 }
@@ -259,7 +310,7 @@ struct CacheInner {
 /// Clone the `Arc` freely — one instance per bot.
 pub struct FundingCache {
     client: Client,
-    inner:  RwLock<CacheInner>,
+    inner: RwLock<CacheInner>,
 }
 
 pub type SharedFunding = Arc<FundingCache>;
@@ -272,7 +323,7 @@ impl FundingCache {
                 .build()
                 .unwrap_or_default(),
             inner: RwLock::new(CacheInner {
-                data:       HashMap::new(),
+                data: HashMap::new(),
                 prev_rates: HashMap::new(),
                 last_fetch: None,
             }),
@@ -286,7 +337,10 @@ impl FundingCache {
         // Fast path: cache is warm.
         {
             let r = self.inner.read().await;
-            if r.last_fetch.map(|t| t.elapsed() < CACHE_TTL).unwrap_or(false) {
+            if r.last_fetch
+                .map(|t| t.elapsed() < CACHE_TTL)
+                .unwrap_or(false)
+            {
                 return r.data.get(symbol).cloned();
             }
         }
@@ -294,15 +348,18 @@ impl FundingCache {
         // Snapshot current rates as prev before refreshing.
         let prev_rates: HashMap<String, f64> = {
             let r = self.inner.read().await;
-            r.data.iter().map(|(k, v)| (k.clone(), v.funding_rate)).collect()
+            r.data
+                .iter()
+                .map(|(k, v)| (k.clone(), v.funding_rate))
+                .collect()
         };
 
         match self.fetch_all(&prev_rates).await {
             Ok(map) => {
                 let result = map.get(symbol).cloned();
-                let mut w  = self.inner.write().await;
+                let mut w = self.inner.write().await;
                 w.prev_rates = prev_rates;
-                w.data       = map;
+                w.data = map;
                 w.last_fetch = Some(Instant::now());
                 result
             }
@@ -327,7 +384,9 @@ impl FundingCache {
 
     /// Age of the cache in seconds, or `None` if it has never been populated.
     pub async fn age_secs(&self) -> Option<u64> {
-        self.inner.read().await
+        self.inner
+            .read()
+            .await
             .last_fetch
             .map(|t| t.elapsed().as_secs())
     }
@@ -342,13 +401,21 @@ impl FundingCache {
                     "💰 Funding rates (HL): pre-warmed {} perps  \
                      (BTC={:+.4}%→pred{:+.4}%  ETH={:+.4}%  SOL={:+.4}%)",
                     map.len(),
-                    map.get("BTC").map(|d| d.funding_rate   * 100.0).unwrap_or(0.0),
-                    map.get("BTC").map(|d| d.predicted_rate * 100.0).unwrap_or(0.0),
-                    map.get("ETH").map(|d| d.funding_rate   * 100.0).unwrap_or(0.0),
-                    map.get("SOL").map(|d| d.funding_rate   * 100.0).unwrap_or(0.0),
+                    map.get("BTC")
+                        .map(|d| d.funding_rate * 100.0)
+                        .unwrap_or(0.0),
+                    map.get("BTC")
+                        .map(|d| d.predicted_rate * 100.0)
+                        .unwrap_or(0.0),
+                    map.get("ETH")
+                        .map(|d| d.funding_rate * 100.0)
+                        .unwrap_or(0.0),
+                    map.get("SOL")
+                        .map(|d| d.funding_rate * 100.0)
+                        .unwrap_or(0.0),
                 );
-                let mut w  = self.inner.write().await;
-                w.data       = map;
+                let mut w = self.inner.write().await;
+                w.data = map;
                 w.last_fetch = Some(Instant::now());
             }
             Err(e) => log::warn!("💰 Funding warm-up failed: {}", e),
@@ -362,7 +429,8 @@ impl FundingCache {
     /// Response: `[{universe: [{name: "BTC"}, ...]}, [{funding: "...", premium: "..."}, ...]]`
     /// Universe index i corresponds to asset context index i.
     async fn fetch_all(&self, prev: &HashMap<String, f64>) -> Result<HashMap<String, FundingData>> {
-        let resp = self.client
+        let resp = self
+            .client
             .post("https://api.hyperliquid.xyz/info")
             .json(&serde_json::json!({ "type": "metaAndAssetCtxs" }))
             .send()
@@ -387,29 +455,40 @@ impl FundingCache {
         let mut map = HashMap::with_capacity(meta.universe.len());
 
         for (item, ctx) in meta.universe.iter().zip(ctxs.iter()) {
-            let sym  = item.name.clone();
+            let sym = item.name.clone();
             let rate: f64 = ctx.funding.parse().unwrap_or(0.0);
             let pred: f64 = ctx.premium.parse().unwrap_or(0.0);
 
             // Delta vs previous refresh (0 on first observation).
             let delta = prev.get(&sym).map(|&p| rate - p).unwrap_or(0.0);
 
-            map.insert(sym.clone(), FundingData {
-                symbol:        sym,
-                funding_rate:  rate,
-                predicted_rate: pred,
-                funding_delta: delta,
-            });
+            map.insert(
+                sym.clone(),
+                FundingData {
+                    symbol: sym,
+                    funding_rate: rate,
+                    predicted_rate: pred,
+                    funding_delta: delta,
+                },
+            );
         }
 
         log::info!(
             "💰 Funding (HL): {} perps  \
              BTC={:+.4}%→{:+.4}%  ETH={:+.4}%  SOL={:+.4}%",
             map.len(),
-            map.get("BTC").map(|d| d.funding_rate   * 100.0).unwrap_or(0.0),
-            map.get("BTC").map(|d| d.predicted_rate * 100.0).unwrap_or(0.0),
-            map.get("ETH").map(|d| d.funding_rate   * 100.0).unwrap_or(0.0),
-            map.get("SOL").map(|d| d.funding_rate   * 100.0).unwrap_or(0.0),
+            map.get("BTC")
+                .map(|d| d.funding_rate * 100.0)
+                .unwrap_or(0.0),
+            map.get("BTC")
+                .map(|d| d.predicted_rate * 100.0)
+                .unwrap_or(0.0),
+            map.get("ETH")
+                .map(|d| d.funding_rate * 100.0)
+                .unwrap_or(0.0),
+            map.get("SOL")
+                .map(|d| d.funding_rate * 100.0)
+                .unwrap_or(0.0),
         );
         Ok(map)
     }
@@ -430,8 +509,10 @@ mod tests {
         let phase = FundingCyclePhase::from_utc_secs(14400);
         match phase {
             FundingCyclePhase::MidCycle { hours_to_next } => {
-                assert!((hours_to_next - 4.0).abs() < 0.01,
-                    "4h into cycle should have 4h remaining, got {hours_to_next}");
+                assert!(
+                    (hours_to_next - 4.0).abs() < 0.01,
+                    "4h into cycle should have 4h remaining, got {hours_to_next}"
+                );
             }
             other => panic!("expected MidCycle, got {other:?}"),
         }
@@ -443,8 +524,10 @@ mod tests {
         let phase = FundingCyclePhase::from_utc_secs(27000);
         match phase {
             FundingCyclePhase::PreSettlement { hours_remaining } => {
-                assert!((hours_remaining - 0.5).abs() < 0.01,
-                    "45 min before settlement should give 0.5h remaining, got {hours_remaining}");
+                assert!(
+                    (hours_remaining - 0.5).abs() < 0.01,
+                    "45 min before settlement should give 0.5h remaining, got {hours_remaining}"
+                );
             }
             other => panic!("expected PreSettlement, got {other:?}"),
         }
@@ -456,8 +539,10 @@ mod tests {
         let phase = FundingCyclePhase::from_utc_secs(600);
         match phase {
             FundingCyclePhase::PostSettlement { minutes_elapsed } => {
-                assert!((minutes_elapsed - 10.0).abs() < 0.1,
-                    "10 min after settlement, got {minutes_elapsed}");
+                assert!(
+                    (minutes_elapsed - 10.0).abs() < 0.1,
+                    "10 min after settlement, got {minutes_elapsed}"
+                );
             }
             other => panic!("expected PostSettlement, got {other:?}"),
         }
@@ -466,32 +551,47 @@ mod tests {
     #[test]
     fn pre_settlement_amplifies_significant_funding() {
         // Positive funding 0.06% (elevated longs) + 30 min to settlement → 1.8× amplifier
-        let phase = FundingCyclePhase::PreSettlement { hours_remaining: 0.4 };
+        let phase = FundingCyclePhase::PreSettlement {
+            hours_remaining: 0.4,
+        };
         let mult = phase.signal_multiplier(0.0006); // 0.06% > 0.02% threshold
-        assert_eq!(mult, 1.80, "< 30 min to settlement with significant funding → 1.8×");
+        assert_eq!(
+            mult, 1.80,
+            "< 30 min to settlement with significant funding → 1.8×"
+        );
     }
 
     #[test]
     fn pre_settlement_no_amp_for_neutral_funding() {
         // Neutral funding (0.01%) + near settlement → no amplification
-        let phase = FundingCyclePhase::PreSettlement { hours_remaining: 0.2 };
+        let phase = FundingCyclePhase::PreSettlement {
+            hours_remaining: 0.2,
+        };
         let mult = phase.signal_multiplier(0.0001); // below 0.02% threshold
-        assert_eq!(mult, 1.0, "neutral funding rate should not be amplified by cycle phase");
+        assert_eq!(
+            mult, 1.0,
+            "neutral funding rate should not be amplified by cycle phase"
+        );
     }
 
     #[test]
     fn post_settlement_reduces_signal() {
-        let phase = FundingCyclePhase::PostSettlement { minutes_elapsed: 15.0 };
+        let phase = FundingCyclePhase::PostSettlement {
+            minutes_elapsed: 15.0,
+        };
         let mult = phase.signal_multiplier(0.0008);
-        assert_eq!(mult, 0.60, "post-settlement should dampen the signal to 0.6×");
+        assert_eq!(
+            mult, 0.60,
+            "post-settlement should dampen the signal to 0.6×"
+        );
     }
 
     #[test]
     fn signal_strength_clamped_to_unit_range() {
         // Even with large amplifier the output should stay in [-1, 1]
         let data = FundingData {
-            symbol:        "SOL".to_string(),
-            funding_rate:  0.0020, // very high positive → raw = -1.0
+            symbol: "SOL".to_string(),
+            funding_rate: 0.0020, // very high positive → raw = -1.0
             predicted_rate: 0.0010,
             funding_delta: 0.0001,
         };

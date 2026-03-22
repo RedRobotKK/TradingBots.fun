@@ -24,12 +24,12 @@
 //! Tenants are registered at startup from environment variables or a config
 //! file.  Persistence to SQLite / Postgres is planned for Phase 2.
 
+use anyhow::{anyhow, Result};
+use chrono::{DateTime, Duration, Utc};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
-use anyhow::{anyhow, Result};
-use chrono::{DateTime, Duration, Utc};
 
 use crate::web_dashboard::{BotState, SharedState};
 
@@ -40,9 +40,15 @@ use crate::web_dashboard::{BotState, SharedState};
 pub struct TenantId(pub String);
 
 impl TenantId {
-    pub fn new() -> Self { TenantId(Uuid::new_v4().to_string()) }
-    pub fn from_str(s: &str) -> Self { TenantId(s.to_string()) }
-    pub fn as_str(&self) -> &str { &self.0 }
+    pub fn new() -> Self {
+        TenantId(Uuid::new_v4().to_string())
+    }
+    pub fn from_str(s: &str) -> Self {
+        TenantId(s.to_string())
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 impl std::fmt::Display for TenantId {
@@ -71,162 +77,157 @@ pub enum TenantTier {
 #[derive(Debug, Clone)]
 pub struct TenantConfig {
     /// Display name shown in the consumer webapp.
-    pub display_name:    String,
+    pub display_name: String,
     /// Contact email — used for P&L digests and Stripe customer lookup.
-    pub email:           Option<String>,
+    pub email: Option<String>,
     /// Privy Decentralised Identifier — set on first Privy login.
     /// Format: `"did:privy:clxxxxxxxxxxxxxxxxx"`.
     /// Used to look up an existing tenant across browser sessions.
-    pub privy_did:       Option<String>,
+    pub privy_did: Option<String>,
     /// Stripe customer ID — set when the tenant completes checkout.
     pub stripe_customer: Option<String>,
     /// Stripe subscription ID — used to cancel on churn.
-    pub stripe_sub_id:   Option<String>,
+    pub stripe_sub_id: Option<String>,
     /// Initial capital allocation in USD.
     pub initial_capital: f64,
     /// Hyperliquid wallet address (0x…) — required for live trading.
-    pub wallet_address:  Option<String>,
+    pub wallet_address: Option<String>,
     /// Private key hex — required for live order signing.  **Never logged.**
     #[allow(dead_code)]
-    pub secret_key:      Option<String>,
+    pub secret_key: Option<String>,
     /// Service tier.
-    pub tier:            TenantTier,
+    pub tier: TenantTier,
     /// Whether live trading is active for this tenant.
-    pub live_trading:    bool,
+    pub live_trading: bool,
     /// Pro trial expiry — `Some(t)` while trial is active, `None` otherwise.
     /// When `Some` AND `tier == Free`, live trading is still allowed until `t`.
-    pub trial_ends_at:   Option<DateTime<Utc>>,
+    pub trial_ends_at: Option<DateTime<Utc>>,
 
     // ── Legal & onboarding ────────────────────────────────────────────────
-
     /// Timestamp when the tenant accepted the platform Terms & Risk Disclosure.
     /// `None` means the terms wall has not yet been cleared — the `/app`
     /// consumer routes will redirect to `/app/onboarding` until this is set.
-    pub terms_accepted_at:  Option<DateTime<Utc>>,
+    pub terms_accepted_at: Option<DateTime<Utc>>,
 
     // ── Wallet & balance tracking ─────────────────────────────────────────
-
     /// UTC timestamp when the tenant's HL wallet was first confirmed by the
     /// operator or self-linked in `/app/settings`.  Used for audit purposes.
-    pub wallet_linked_at:   Option<DateTime<Utc>>,
+    pub wallet_linked_at: Option<DateTime<Utc>>,
 
     /// Last known cleared (settled) HL balance in USD.
     /// Updated by the trading loop on each cycle and used by `fund_tracker`
     /// to detect deposits / withdrawals between cycles.
     /// This is the *cleared* balance — NOT the mark-to-market equity.
-    pub hl_balance_usd:     f64,
+    pub hl_balance_usd: f64,
 
     // ── Auto-generated HL trading wallet ─────────────────────────────────
     //
     // A dedicated secp256k1 keypair is generated at onboarding and stored here.
     // It is SEPARATE from the Privy authentication identity (`wallet_address`).
     // The bot signs all HL orders with this key.
-
     /// EIP-55 checksum address of the tenant's auto-generated HL trading wallet.
     /// `None` until the onboarding wallet-setup step has been completed.
-    pub hl_wallet_address:  Option<String>,
+    pub hl_wallet_address: Option<String>,
 
     /// AES-256-GCM encrypted private key (`nonce_hex:ciphertext_hex`).
     /// Keyed from `SESSION_SECRET || "hl-wallet:" || tenant_id`.
     /// `None` until the wallet is generated.  **Never logged.**
-    pub hl_wallet_key_enc:  Option<String>,
+    pub hl_wallet_key_enc: Option<String>,
 
     /// True once the user has acknowledged their private key and seen the
     /// funding instructions.  Gates the /app/setup redirect on returning visits.
-    pub hl_setup_complete:  bool,
+    pub hl_setup_complete: bool,
 
     // ── Acquisition attribution ───────────────────────────────────────────
-
     /// First-touch acquisition source captured at TRIAL_START.
     /// Set from the `utm_source` query param or cookie on the landing page.
     /// Stored as-is (e.g. `"twitter"`, `"google"`, `"hl_referral"`, `"direct"`).
     /// Never overwritten after signup — first-touch attribution model.
-    pub referral_source:    Option<String>,
+    pub referral_source: Option<String>,
 
     /// True when the user arrived via our Hyperliquid referral link.
     /// When true, the platform earns 10% of their HL taker fee indefinitely
     /// in addition to the standard builder fee.
-    pub hl_referred:        bool,
+    pub hl_referred: bool,
 
     /// UTM campaign tag from the signup landing page (for campaign drill-down).
-    pub utm_campaign:       Option<String>,
+    pub utm_campaign: Option<String>,
 
     // ── Investment thesis constraints ─────────────────────────────────────
     //
     // User-entered trading constraints from the floating AI bar.
     // All are `None` by default (AI decides everything).
-
     /// Free-form text of the last accepted command, e.g. "only meme coins max 3x leverage".
-    pub investment_thesis:      Option<String>,
+    pub investment_thesis: Option<String>,
 
     /// Comma-separated symbol whitelist, e.g. "BTC,ETH,SOL".
     /// Stored as a String for easy DB round-trip; parsed on read.
-    pub symbol_whitelist:       Option<String>,
+    pub symbol_whitelist: Option<String>,
 
     /// Named sector filter, e.g. "meme", "l1", "defi".
-    pub sector_filter:          Option<String>,
+    pub sector_filter: Option<String>,
 
     /// Maximum leverage the bot may apply for this tenant.
-    pub max_leverage_override:  Option<f64>,
+    pub max_leverage_override: Option<f64>,
 }
 
 impl TenantConfig {
     pub fn paper(name: &str, capital: f64) -> Self {
         TenantConfig {
-            display_name:           name.to_string(),
-            email:                  None,
-            privy_did:              None,
-            stripe_customer:        None,
-            stripe_sub_id:          None,
-            initial_capital:        capital,
-            wallet_address:         None,
-            secret_key:             None,
-            tier:                   TenantTier::Free,
-            live_trading:           false,
-            trial_ends_at:          None,
-            terms_accepted_at:      None,
-            wallet_linked_at:       None,
-            hl_balance_usd:         0.0,
-            hl_wallet_address:      None,
-            hl_wallet_key_enc:      None,
-            hl_setup_complete:      false,
-            referral_source:        None,
-            hl_referred:            false,
-            utm_campaign:           None,
-            investment_thesis:      None,
-            symbol_whitelist:       None,
-            sector_filter:          None,
-            max_leverage_override:  None,
+            display_name: name.to_string(),
+            email: None,
+            privy_did: None,
+            stripe_customer: None,
+            stripe_sub_id: None,
+            initial_capital: capital,
+            wallet_address: None,
+            secret_key: None,
+            tier: TenantTier::Free,
+            live_trading: false,
+            trial_ends_at: None,
+            terms_accepted_at: None,
+            wallet_linked_at: None,
+            hl_balance_usd: 0.0,
+            hl_wallet_address: None,
+            hl_wallet_key_enc: None,
+            hl_setup_complete: false,
+            referral_source: None,
+            hl_referred: false,
+            utm_campaign: None,
+            investment_thesis: None,
+            symbol_whitelist: None,
+            sector_filter: None,
+            max_leverage_override: None,
         }
     }
 
     #[allow(dead_code)]
     pub fn live(name: &str, capital: f64, wallet: &str, secret: &str) -> Self {
         TenantConfig {
-            display_name:           name.to_string(),
-            email:                  None,
-            privy_did:              None,
-            stripe_customer:        None,
-            stripe_sub_id:          None,
-            initial_capital:        capital,
-            wallet_address:         Some(wallet.to_string()),
-            secret_key:             Some(secret.to_string()),
-            tier:                   TenantTier::Pro,
-            live_trading:           true,
-            trial_ends_at:          None,
-            terms_accepted_at:      None,
-            wallet_linked_at:       None,
-            hl_balance_usd:         0.0,
-            hl_wallet_address:      None,
-            hl_wallet_key_enc:      None,
-            hl_setup_complete:      false,
-            referral_source:        None,
-            hl_referred:            false,
-            utm_campaign:           None,
-            investment_thesis:      None,
-            symbol_whitelist:       None,
-            sector_filter:          None,
-            max_leverage_override:  None,
+            display_name: name.to_string(),
+            email: None,
+            privy_did: None,
+            stripe_customer: None,
+            stripe_sub_id: None,
+            initial_capital: capital,
+            wallet_address: Some(wallet.to_string()),
+            secret_key: Some(secret.to_string()),
+            tier: TenantTier::Pro,
+            live_trading: true,
+            trial_ends_at: None,
+            terms_accepted_at: None,
+            wallet_linked_at: None,
+            hl_balance_usd: 0.0,
+            hl_wallet_address: None,
+            hl_wallet_key_enc: None,
+            hl_setup_complete: false,
+            referral_source: None,
+            hl_referred: false,
+            utm_campaign: None,
+            investment_thesis: None,
+            symbol_whitelist: None,
+            sector_filter: None,
+            max_leverage_override: None,
         }
     }
 
@@ -239,17 +240,18 @@ impl TenantConfig {
     pub fn is_live_enabled(&self) -> bool {
         match self.tier {
             TenantTier::Pro | TenantTier::Internal => self.live_trading,
-            TenantTier::Free => {
-                self.trial_ends_at
-                    .map(|exp| Utc::now() < exp)
-                    .unwrap_or(false)
-            }
+            TenantTier::Free => self
+                .trial_ends_at
+                .map(|exp| Utc::now() < exp)
+                .unwrap_or(false),
         }
     }
 
     /// Days remaining in trial, or 0 if no active trial.
     pub fn trial_days_remaining(&self) -> i64 {
-        if self.tier != TenantTier::Free { return 0; }
+        if self.tier != TenantTier::Free {
+            return 0;
+        }
         self.trial_ends_at
             .map(|exp| (exp - Utc::now()).num_days().max(0))
             .unwrap_or(0)
@@ -269,10 +271,15 @@ impl TenantConfig {
         match self.tier {
             TenantTier::Pro | TenantTier::Internal => usize::MAX,
             TenantTier::Free => {
-                let trial_active = self.trial_ends_at
+                let trial_active = self
+                    .trial_ends_at
                     .map(|exp| Utc::now() < exp)
                     .unwrap_or(false);
-                if trial_active { 6 } else { 2 }
+                if trial_active {
+                    6
+                } else {
+                    2
+                }
             }
         }
     }
@@ -301,7 +308,8 @@ impl TenantConfig {
     /// Used by the UI to show upgrade prompts and position-cap warnings.
     pub fn is_trial_expired_free(&self) -> bool {
         self.tier == TenantTier::Free
-            && self.trial_ends_at
+            && self
+                .trial_ends_at
                 .map(|exp| Utc::now() >= exp)
                 .unwrap_or(true) // no trial at all → treat as expired
     }
@@ -324,19 +332,19 @@ impl TenantConfig {
 
 /// A single registered tenant with its isolated runtime state.
 pub struct TenantHandle {
-    pub id:     TenantId,
+    pub id: TenantId,
     pub config: TenantConfig,
     /// Isolated trading state — never shared with other tenants.
-    pub state:  SharedState,
+    pub state: SharedState,
 }
 
 impl TenantHandle {
     pub fn new(id: TenantId, config: TenantConfig) -> Self {
         let initial = BotState {
-            capital:         config.initial_capital,
+            capital: config.initial_capital,
             initial_capital: config.initial_capital,
-            peak_equity:     config.initial_capital,
-            status:          format!("Tenant {} initialised", id),
+            peak_equity: config.initial_capital,
+            status: format!("Tenant {} initialised", id),
             ..BotState::default()
         };
 
@@ -360,14 +368,20 @@ pub struct TenantManager {
 
 impl TenantManager {
     pub fn new() -> Self {
-        TenantManager { tenants: HashMap::new() }
+        TenantManager {
+            tenants: HashMap::new(),
+        }
     }
 
     /// Register a new tenant.  Returns the assigned `TenantId`.
     pub fn register(&mut self, config: TenantConfig) -> TenantId {
         let id = TenantId::new();
         let handle = TenantHandle::new(id.clone(), config);
-        log::info!("🏢 Registered tenant {} ({})", handle.config.display_name, id);
+        log::info!(
+            "🏢 Registered tenant {} ({})",
+            handle.config.display_name,
+            id
+        );
         self.tenants.insert(id.clone(), handle);
         id
     }
@@ -379,7 +393,11 @@ impl TenantManager {
             return; // already seeded
         }
         let handle = TenantHandle::new(id.clone(), config);
-        log::info!("🤖 Registered fixed-id tenant {} ({})", handle.config.display_name, id);
+        log::info!(
+            "🤖 Registered fixed-id tenant {} ({})",
+            handle.config.display_name,
+            id
+        );
         self.tenants.insert(id, handle);
     }
 
@@ -399,12 +417,15 @@ impl TenantManager {
     }
 
     /// Count of registered tenants.
-    pub fn count(&self) -> usize { self.tenants.len() }
+    pub fn count(&self) -> usize {
+        self.tenants.len()
+    }
 
     /// Remove a tenant (e.g., on churn).
     #[allow(dead_code)]
     pub fn deregister(&mut self, id: &TenantId) -> Result<()> {
-        self.tenants.remove(id)
+        self.tenants
+            .remove(id)
             .ok_or_else(|| anyhow!("Tenant {} not found", id))?;
         log::info!("🏢 Deregistered tenant {}", id);
         Ok(())
@@ -418,17 +439,19 @@ impl TenantManager {
     /// Clears any active trial (no longer needed).
     pub fn upgrade_to_pro(
         &mut self,
-        id:            &TenantId,
-        customer_id:   &str,
+        id: &TenantId,
+        customer_id: &str,
         subscription_id: &str,
     ) -> Result<()> {
-        let handle = self.tenants.get_mut(id)
+        let handle = self
+            .tenants
+            .get_mut(id)
             .ok_or_else(|| anyhow!("Tenant {} not found", id))?;
-        handle.config.tier            = TenantTier::Pro;
-        handle.config.live_trading    = true;
-        handle.config.trial_ends_at   = None;
+        handle.config.tier = TenantTier::Pro;
+        handle.config.live_trading = true;
+        handle.config.trial_ends_at = None;
         handle.config.stripe_customer = Some(customer_id.to_string());
-        handle.config.stripe_sub_id   = Some(subscription_id.to_string());
+        handle.config.stripe_sub_id = Some(subscription_id.to_string());
         log::info!("💳 Tenant {} → Pro (sub {})", id, subscription_id);
         Ok(())
     }
@@ -437,10 +460,12 @@ impl TenantManager {
     ///
     /// Live trading is disabled immediately; paper trading continues.
     pub fn downgrade_to_free(&mut self, id: &TenantId) -> Result<()> {
-        let handle = self.tenants.get_mut(id)
+        let handle = self
+            .tenants
+            .get_mut(id)
             .ok_or_else(|| anyhow!("Tenant {} not found", id))?;
-        handle.config.tier          = TenantTier::Free;
-        handle.config.live_trading  = false;
+        handle.config.tier = TenantTier::Free;
+        handle.config.live_trading = false;
         handle.config.stripe_sub_id = None;
         log::info!("⬇ Tenant {} → Free (sub ended)", id);
         Ok(())
@@ -450,15 +475,22 @@ impl TenantManager {
     ///
     /// Does nothing if the tenant is already Pro or has an active trial.
     pub fn start_trial(&mut self, id: &TenantId, days: u64) -> Result<()> {
-        let handle = self.tenants.get_mut(id)
+        let handle = self
+            .tenants
+            .get_mut(id)
             .ok_or_else(|| anyhow!("Tenant {} not found", id))?;
         if handle.config.tier == TenantTier::Pro {
             return Ok(()); // already paid
         }
-        if handle.config.trial_ends_at.map(|e| Utc::now() < e).unwrap_or(false) {
+        if handle
+            .config
+            .trial_ends_at
+            .map(|e| Utc::now() < e)
+            .unwrap_or(false)
+        {
             return Ok(()); // trial already active
         }
-        handle.config.live_trading  = true;
+        handle.config.live_trading = true;
         handle.config.trial_ends_at = Some(Utc::now() + Duration::days(days as i64));
         log::info!("🎁 Tenant {} trial started ({} days)", id, days);
         Ok(())
@@ -467,7 +499,8 @@ impl TenantManager {
     /// Look up a tenant by Stripe customer ID (needed for webhook events that
     /// don't carry tenant_id metadata).
     pub fn find_by_stripe_customer(&self, customer_id: &str) -> Option<&TenantHandle> {
-        self.tenants.values()
+        self.tenants
+            .values()
             .find(|h| h.config.stripe_customer.as_deref() == Some(customer_id))
     }
 
@@ -477,7 +510,8 @@ impl TenantManager {
     ///
     /// Returns `None` if no tenant with the given DID is registered.
     pub fn find_by_privy_did(&self, did: &str) -> Option<&TenantHandle> {
-        self.tenants.values()
+        self.tenants
+            .values()
             .find(|h| h.config.privy_did.as_deref() == Some(did))
     }
 
@@ -492,11 +526,11 @@ impl TenantManager {
     /// captured at first signup and never overwritten (first-touch model).
     pub fn register_or_get_by_privy_did(
         &mut self,
-        did:              &str,
-        email:            Option<String>,
-        referral_source:  Option<String>,   // utm_source or "hl_referral" / "direct"
-        hl_referred:      bool,             // true if arrived via our HL referral link
-        utm_campaign:     Option<String>,   // utm_campaign tag for campaign drill-down
+        did: &str,
+        email: Option<String>,
+        referral_source: Option<String>, // utm_source or "hl_referral" / "direct"
+        hl_referred: bool,               // true if arrived via our HL referral link
+        utm_campaign: Option<String>,    // utm_campaign tag for campaign drill-down
     ) -> TenantId {
         // Return existing tenant if we already know this Privy DID
         if let Some(handle) = self.find_by_privy_did(did) {
@@ -506,17 +540,17 @@ impl TenantManager {
         // New user — register as Free with a 14-day full-access trial.
         // After the trial expires they can still trade but are capped at
         // max_positions() = 2 until they upgrade to Pro.
-        let mut cfg             = TenantConfig::paper(did, 0.0);
-        cfg.privy_did           = Some(did.to_string());
-        cfg.email               = email;
-        cfg.display_name        = did.to_string(); // DID shown until name is set
-        cfg.trial_ends_at       = Some(Utc::now() + Duration::days(14));
-        cfg.live_trading        = true; // live allowed during trial
+        let mut cfg = TenantConfig::paper(did, 0.0);
+        cfg.privy_did = Some(did.to_string());
+        cfg.email = email;
+        cfg.display_name = did.to_string(); // DID shown until name is set
+        cfg.trial_ends_at = Some(Utc::now() + Duration::days(14));
+        cfg.live_trading = true; // live allowed during trial
 
         // First-touch attribution — set once, never overwritten
-        cfg.referral_source     = referral_source.clone();
-        cfg.hl_referred         = hl_referred;
-        cfg.utm_campaign        = utm_campaign;
+        cfg.referral_source = referral_source.clone();
+        cfg.hl_referred = hl_referred;
+        cfg.utm_campaign = utm_campaign;
 
         let id = self.register(cfg);
         log::info!(
@@ -532,7 +566,9 @@ impl TenantManager {
     ///
     /// Idempotent — calling twice does not overwrite the original timestamp.
     pub fn accept_terms(&mut self, id: &TenantId) -> Result<()> {
-        let handle = self.tenants.get_mut(id)
+        let handle = self
+            .tenants
+            .get_mut(id)
             .ok_or_else(|| anyhow!("Tenant {} not found", id))?;
         if handle.config.terms_accepted_at.is_none() {
             handle.config.terms_accepted_at = Some(Utc::now());
@@ -544,7 +580,8 @@ impl TenantManager {
     /// Returns `true` when the tenant has accepted the Terms & Risk Disclosure.
     #[allow(dead_code)]
     pub fn has_accepted_terms(&self, id: &TenantId) -> bool {
-        self.tenants.get(id)
+        self.tenants
+            .get(id)
             .and_then(|h| h.config.terms_accepted_at)
             .is_some()
     }
@@ -564,7 +601,9 @@ impl TenantManager {
                 address
             ));
         }
-        let handle = self.tenants.get_mut(id)
+        let handle = self
+            .tenants
+            .get_mut(id)
             .ok_or_else(|| anyhow!("Tenant {} not found", id))?;
         handle.config.wallet_address = Some(address.to_string());
         if handle.config.wallet_linked_at.is_none() {
@@ -582,7 +621,9 @@ impl TenantManager {
     /// to compute the delta for deposit/withdrawal detection).
     #[allow(dead_code)]
     pub fn update_hl_balance(&mut self, id: &TenantId, new_balance: f64) -> Result<f64> {
-        let handle = self.tenants.get_mut(id)
+        let handle = self
+            .tenants
+            .get_mut(id)
             .ok_or_else(|| anyhow!("Tenant {} not found", id))?;
         let prev = handle.config.hl_balance_usd;
         handle.config.hl_balance_usd = new_balance;
@@ -599,11 +640,13 @@ impl TenantManager {
     /// Idempotent: calling again with the same address is a no-op.
     pub fn setup_hl_wallet(
         &mut self,
-        id:      &TenantId,
+        id: &TenantId,
         address: String,
         key_enc: String,
     ) -> Result<()> {
-        let handle = self.tenants.get_mut(id)
+        let handle = self
+            .tenants
+            .get_mut(id)
             .ok_or_else(|| anyhow!("Tenant {} not found", id))?;
         if handle.config.hl_wallet_address.is_none() {
             handle.config.hl_wallet_address = Some(address);
@@ -614,7 +657,9 @@ impl TenantManager {
 
     /// Mark the HL wallet setup as complete (user has acknowledged their key).
     pub fn complete_hl_setup(&mut self, id: &TenantId) -> Result<()> {
-        let handle = self.tenants.get_mut(id)
+        let handle = self
+            .tenants
+            .get_mut(id)
             .ok_or_else(|| anyhow!("Tenant {} not found", id))?;
         handle.config.hl_setup_complete = true;
         Ok(())
@@ -628,19 +673,25 @@ impl TenantManager {
     /// A full reset (all `None`) clears all constraints.
     pub fn update_thesis(
         &mut self,
-        id:                     &TenantId,
-        investment_thesis:      Option<String>,
-        symbol_whitelist:       Option<String>,    // comma-separated, e.g. "BTC,ETH"
-        sector_filter:          Option<String>,
-        max_leverage_override:  Option<f64>,
+        id: &TenantId,
+        investment_thesis: Option<String>,
+        symbol_whitelist: Option<String>, // comma-separated, e.g. "BTC,ETH"
+        sector_filter: Option<String>,
+        max_leverage_override: Option<f64>,
     ) -> Result<()> {
-        let handle = self.tenants.get_mut(id)
+        let handle = self
+            .tenants
+            .get_mut(id)
             .ok_or_else(|| anyhow!("Tenant {} not found", id))?;
-        handle.config.investment_thesis     = investment_thesis;
-        handle.config.symbol_whitelist      = symbol_whitelist;
-        handle.config.sector_filter         = sector_filter;
+        handle.config.investment_thesis = investment_thesis;
+        handle.config.symbol_whitelist = symbol_whitelist;
+        handle.config.sector_filter = sector_filter;
         handle.config.max_leverage_override = max_leverage_override;
-        log::info!("🎯 Tenant {} thesis updated: {:?}", id, handle.config.investment_thesis);
+        log::info!(
+            "🎯 Tenant {} thesis updated: {:?}",
+            id,
+            handle.config.investment_thesis
+        );
         Ok(())
     }
 
@@ -668,12 +719,12 @@ impl TenantManager {
             } else if let Some(ref sector) = cfg.sector_filter {
                 let label = match sector.as_str() {
                     "meme" => "Meme coins",
-                    "l1"   => "Layer-1",
-                    "l2"   => "Layer-2",
+                    "l1" => "Layer-1",
+                    "l2" => "Layer-2",
                     "defi" => "DeFi",
-                    "rwa"  => "RWA",
-                    "ai"   => "AI coins",
-                    other  => other,
+                    "rwa" => "RWA",
+                    "ai" => "AI coins",
+                    other => other,
                 };
                 parts.push(label.to_string());
             }
@@ -684,15 +735,19 @@ impl TenantManager {
                     parts.push(format!("max {:.1}×", lev));
                 }
             }
-            if parts.is_empty() { None } else { Some(parts.join(" · ")) }
+            if parts.is_empty() {
+                None
+            } else {
+                Some(parts.join(" · "))
+            }
         };
 
         crate::thesis::ThesisConstraints {
             summary,
             symbol_whitelist,
-            sector_filter:          cfg.sector_filter.clone(),
-            max_leverage_override:  cfg.max_leverage_override,
-            thesis_text:            cfg.investment_thesis.clone(),
+            sector_filter: cfg.sector_filter.clone(),
+            max_leverage_override: cfg.max_leverage_override,
+            thesis_text: cfg.investment_thesis.clone(),
         }
     }
 }
@@ -719,15 +774,15 @@ pub fn new_tenant_manager() -> SharedTenantManager {
 /// across restarts and log lines are easy to grep.
 pub const DEMO_WALLETS: &[(&str, f64, &str)] = &[
     // (display_name, initial_capital_usd, fixed_uuid_suffix)
-    ("Bot Alpha",    10.0,     "demo-0001-0000-0000-000000000001"),
-    ("Bot Beta",     25.0,     "demo-0002-0000-0000-000000000002"),
-    ("Bot Gamma",    50.0,     "demo-0003-0000-0000-000000000003"),
-    ("Bot Delta",    100.0,    "demo-0004-0000-0000-000000000004"),
-    ("Bot Epsilon",  250.0,    "demo-0005-0000-0000-000000000005"),
-    ("Bot Zeta",     500.0,    "demo-0006-0000-0000-000000000006"),
-    ("Bot Eta",      1_000.0,  "demo-0007-0000-0000-000000000007"),
-    ("Bot Theta",    5_000.0,  "demo-0008-0000-0000-000000000008"),
-    ("Bot Iota",    10_000.0,  "demo-0009-0000-0000-000000000009"),
+    ("Bot Alpha", 10.0, "demo-0001-0000-0000-000000000001"),
+    ("Bot Beta", 25.0, "demo-0002-0000-0000-000000000002"),
+    ("Bot Gamma", 50.0, "demo-0003-0000-0000-000000000003"),
+    ("Bot Delta", 100.0, "demo-0004-0000-0000-000000000004"),
+    ("Bot Epsilon", 250.0, "demo-0005-0000-0000-000000000005"),
+    ("Bot Zeta", 500.0, "demo-0006-0000-0000-000000000006"),
+    ("Bot Eta", 1_000.0, "demo-0007-0000-0000-000000000007"),
+    ("Bot Theta", 5_000.0, "demo-0008-0000-0000-000000000008"),
+    ("Bot Iota", 10_000.0, "demo-0009-0000-0000-000000000009"),
 ];
 
 /// Register the 9 demo wallets into `mgr` if they are not already present.
@@ -745,9 +800,14 @@ pub async fn seed_demo_tenants(mgr: &SharedTenantManager) {
         let mut cfg = TenantConfig::paper(name, capital);
         // Demo tenants are Pro-tier (no position cap, access to all features)
         // so they demonstrate what a paying user's bot looks like.
-        cfg.tier         = TenantTier::Pro;
+        cfg.tier = TenantTier::Pro;
         cfg.live_trading = false; // paper only — no real HL keys
-        log::info!("🤖 Demo tenant seeded: {} (${:.0}) [{}]", name, capital, id_str);
+        log::info!(
+            "🤖 Demo tenant seeded: {} (${:.0}) [{}]",
+            name,
+            capital,
+            id_str
+        );
         m.register_with_id(id, cfg);
     }
 }
@@ -790,7 +850,7 @@ mod tests {
     fn multiple_tenants_isolated() {
         let mut mgr = TenantManager::new();
         let a = mgr.register(TenantConfig::paper("Alice", 1000.0));
-        let b = mgr.register(TenantConfig::paper("Bob",   2000.0));
+        let b = mgr.register(TenantConfig::paper("Bob", 2000.0));
         assert_ne!(a, b);
         // States are different Arc instances
         let sa = Arc::as_ptr(&mgr.get(&a).unwrap().state);
@@ -821,22 +881,26 @@ mod tests {
     #[test]
     fn register_or_get_creates_new_tenant_for_unknown_did() {
         let mut mgr = TenantManager::new();
-        let did     = "did:privy:cltest0000000001";
-        let id      = mgr.register_or_get_by_privy_did(did, Some("alice@test.com".into()), None, false, None);
+        let did = "did:privy:cltest0000000001";
+        let id =
+            mgr.register_or_get_by_privy_did(did, Some("alice@test.com".into()), None, false, None);
         assert!(mgr.get(&id).is_some());
         assert_eq!(mgr.get(&id).unwrap().config.privy_did.as_deref(), Some(did));
-        assert_eq!(mgr.get(&id).unwrap().config.email.as_deref(), Some("alice@test.com"));
+        assert_eq!(
+            mgr.get(&id).unwrap().config.email.as_deref(),
+            Some("alice@test.com")
+        );
         assert_eq!(mgr.count(), 1);
     }
 
     #[test]
     fn register_or_get_returns_same_id_for_known_did() {
         let mut mgr = TenantManager::new();
-        let did     = "did:privy:cltest0000000002";
-        let id1     = mgr.register_or_get_by_privy_did(did, None, None, false, None);
-        let id2     = mgr.register_or_get_by_privy_did(did, None, None, false, None);
+        let did = "did:privy:cltest0000000002";
+        let id1 = mgr.register_or_get_by_privy_did(did, None, None, false, None);
+        let id2 = mgr.register_or_get_by_privy_did(did, None, None, false, None);
         // Second call must return the SAME tenant, not create a duplicate
-        assert_eq!(id1, id2,    "same DID must map to same tenant_id");
+        assert_eq!(id1, id2, "same DID must map to same tenant_id");
         assert_eq!(mgr.count(), 1, "must not create a second tenant");
     }
 
@@ -876,7 +940,10 @@ mod tests {
         // Small sleep is not safe in tests — just call again and verify it's the same value
         mgr.accept_terms(&id).unwrap();
         let second_ts = mgr.get(&id).unwrap().config.terms_accepted_at;
-        assert_eq!(first_ts, second_ts, "accept_terms must not overwrite the original timestamp");
+        assert_eq!(
+            first_ts, second_ts,
+            "accept_terms must not overwrite the original timestamp"
+        );
     }
 
     // ── Wallet linking ────────────────────────────────────────────────────────
@@ -899,7 +966,10 @@ mod tests {
         let first_ts = mgr.get(&id).unwrap().config.wallet_linked_at;
         mgr.link_wallet(&id, "0xSecondWallet12345678").unwrap();
         let second_ts = mgr.get(&id).unwrap().config.wallet_linked_at;
-        assert_eq!(first_ts, second_ts, "wallet_linked_at must not change on re-link");
+        assert_eq!(
+            first_ts, second_ts,
+            "wallet_linked_at must not change on re-link"
+        );
     }
 
     #[test]
@@ -933,7 +1003,10 @@ mod tests {
         let id = mgr.register(TenantConfig::paper("Mike", 0.0));
         mgr.update_hl_balance(&id, 1000.0).unwrap();
         let prev2 = mgr.update_hl_balance(&id, 1500.0).unwrap();
-        assert!((prev2 - 1000.0).abs() < 0.001, "second update should return the first set value");
+        assert!(
+            (prev2 - 1000.0).abs() < 0.001,
+            "second update should return the first set value"
+        );
     }
 
     // ── Position cap / trial tests ────────────────────────────────────────────
@@ -973,11 +1046,25 @@ mod tests {
         let mut mgr = TenantManager::new();
         let id = mgr.register_or_get_by_privy_did("did:privy:newtrial001", None, None, false, None);
         let cfg = &mgr.get(&id).unwrap().config;
-        assert!(cfg.trial_ends_at.is_some(), "trial_ends_at must be set on signup");
+        assert!(
+            cfg.trial_ends_at.is_some(),
+            "trial_ends_at must be set on signup"
+        );
         let days = cfg.trial_days_remaining();
-        assert!((13..=14).contains(&days), "trial must be ~14 days, got {}", days);
-        assert_eq!(cfg.max_positions(), 6, "in-trial user must have 6-position cap");
-        assert!(cfg.live_trading, "live trading must be enabled during trial");
+        assert!(
+            (13..=14).contains(&days),
+            "trial must be ~14 days, got {}",
+            days
+        );
+        assert_eq!(
+            cfg.max_positions(),
+            6,
+            "in-trial user must have 6-position cap"
+        );
+        assert!(
+            cfg.live_trading,
+            "live trading must be enabled during trial"
+        );
     }
 
     // ── Builder fee / tiered revenue tests ───────────────────────────────────
@@ -986,23 +1073,32 @@ mod tests {
     fn free_tier_pays_3_bps_builder_fee() {
         // Free with no trial
         let cfg = TenantConfig::paper("Free User", 0.0);
-        assert_eq!(cfg.builder_fee_bps(), 3,
-            "free tier must carry 3 bps builder fee for maximum LTV extraction");
+        assert_eq!(
+            cfg.builder_fee_bps(),
+            3,
+            "free tier must carry 3 bps builder fee for maximum LTV extraction"
+        );
     }
 
     #[test]
     fn free_tier_with_active_trial_still_pays_3_bps() {
         let mut cfg = TenantConfig::paper("Trial User", 0.0);
         cfg.trial_ends_at = Some(Utc::now() + Duration::days(10));
-        assert_eq!(cfg.builder_fee_bps(), 3,
-            "trial is still Free tier — builder fee must be 3 bps");
+        assert_eq!(
+            cfg.builder_fee_bps(),
+            3,
+            "trial is still Free tier — builder fee must be 3 bps"
+        );
     }
 
     #[test]
     fn pro_tier_pays_1_bps_builder_fee() {
         let cfg = TenantConfig::live("Pro User", 1000.0, "0xABCdef1234567890", "secret");
-        assert_eq!(cfg.builder_fee_bps(), 1,
-            "Pro tier reward: 1 bps builder fee as incentive to upgrade");
+        assert_eq!(
+            cfg.builder_fee_bps(),
+            1,
+            "Pro tier reward: 1 bps builder fee as incentive to upgrade"
+        );
     }
 
     #[test]

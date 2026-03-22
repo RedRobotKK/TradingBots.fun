@@ -50,7 +50,7 @@ pub enum EventType {
 impl std::fmt::Display for EventType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            EventType::Deposit    => write!(f, "deposit"),
+            EventType::Deposit => write!(f, "deposit"),
             EventType::Withdrawal => write!(f, "withdrawal"),
         }
     }
@@ -60,13 +60,13 @@ impl std::fmt::Display for EventType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FundEvent {
     /// `"deposit"` or `"withdrawal"`.
-    pub event_type:    EventType,
+    pub event_type: EventType,
     /// Absolute USD amount moved (always positive).
-    pub amount_usd:    f64,
+    pub amount_usd: f64,
     /// Tenant's HL account balance immediately after this event.
     pub balance_after: f64,
     /// UTC timestamp (ISO-8601).
-    pub timestamp:     String,
+    pub timestamp: String,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -91,13 +91,10 @@ pub fn csv_path(tenant_id: &TenantId) -> Result<PathBuf> {
 /// Creates the file (with header row) if it does not yet exist.
 #[allow(dead_code)]
 pub fn append(tenant_id: &TenantId, event: &FundEvent) -> Result<()> {
-    let path     = csv_path(tenant_id)?;
-    let is_new   = !path.exists();
+    let path = csv_path(tenant_id)?;
+    let is_new = !path.exists();
 
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)?;
+    let mut file = OpenOptions::new().create(true).append(true).open(&path)?;
 
     if is_new {
         writeln!(file, "event_type,amount_usd,balance_after,timestamp")?;
@@ -106,10 +103,7 @@ pub fn append(tenant_id: &TenantId, event: &FundEvent) -> Result<()> {
     writeln!(
         file,
         "{},{:.6},{:.6},{}",
-        event.event_type,
-        event.amount_usd,
-        event.balance_after,
-        event.timestamp,
+        event.event_type, event.amount_usd, event.balance_after, event.timestamp,
     )?;
 
     Ok(())
@@ -132,21 +126,30 @@ pub fn read_tenant_history(tenant_id: &TenantId) -> Result<Vec<FundEvent>> {
     let mut events = Vec::new();
 
     for (i, line) in content.lines().enumerate() {
-        if i == 0 { continue; } // skip header
+        if i == 0 {
+            continue;
+        } // skip header
         let parts: Vec<&str> = line.splitn(4, ',').collect();
-        if parts.len() != 4 { continue; }
+        if parts.len() != 4 {
+            continue;
+        }
 
         let event_type = match parts[0] {
-            "deposit"    => EventType::Deposit,
+            "deposit" => EventType::Deposit,
             "withdrawal" => EventType::Withdrawal,
-            _            => continue, // skip unknown rows
+            _ => continue, // skip unknown rows
         };
 
-        let amount_usd: f64    = parts[1].parse().unwrap_or(0.0);
+        let amount_usd: f64 = parts[1].parse().unwrap_or(0.0);
         let balance_after: f64 = parts[2].parse().unwrap_or(0.0);
-        let timestamp          = parts[3].to_string();
+        let timestamp = parts[3].to_string();
 
-        events.push(FundEvent { event_type, amount_usd, balance_after, timestamp });
+        events.push(FundEvent {
+            event_type,
+            amount_usd,
+            balance_after,
+            timestamp,
+        });
     }
 
     Ok(events)
@@ -162,11 +165,9 @@ pub fn net_deposits(tenant_id: &TenantId) -> f64 {
     read_tenant_history(tenant_id)
         .unwrap_or_default()
         .iter()
-        .fold(0.0_f64, |acc, e| {
-            match e.event_type {
-                EventType::Deposit    => acc + e.amount_usd,
-                EventType::Withdrawal => acc - e.amount_usd,
-            }
+        .fold(0.0_f64, |acc, e| match e.event_type {
+            EventType::Deposit => acc + e.amount_usd,
+            EventType::Withdrawal => acc - e.amount_usd,
         })
 }
 
@@ -216,7 +217,7 @@ const MIN_DELTA: f64 = 1.0;
 /// unrealised PnL.  This avoids recording phantom events every cycle.
 #[allow(dead_code)]
 pub fn detect_and_record(
-    tenant_id:   &TenantId,
+    tenant_id: &TenantId,
     old_balance: f64,
     new_balance: f64,
 ) -> Option<FundEvent> {
@@ -227,18 +228,29 @@ pub fn detect_and_record(
     }
 
     let event = FundEvent {
-        event_type:    if delta > 0.0 { EventType::Deposit } else { EventType::Withdrawal },
-        amount_usd:    delta.abs(),
+        event_type: if delta > 0.0 {
+            EventType::Deposit
+        } else {
+            EventType::Withdrawal
+        },
+        amount_usd: delta.abs(),
         balance_after: new_balance,
-        timestamp:     Utc::now().to_rfc3339(),
+        timestamp: Utc::now().to_rfc3339(),
     };
 
     if let Err(e) = append(tenant_id, &event) {
-        log::warn!("fund_tracker: failed to record event for tenant {}: {}", tenant_id, e);
+        log::warn!(
+            "fund_tracker: failed to record event for tenant {}: {}",
+            tenant_id,
+            e
+        );
     } else {
         log::info!(
             "💰 Fund event: tenant={} type={} amount=${:.2} balance_after=${:.2}",
-            tenant_id, event.event_type, event.amount_usd, event.balance_after
+            tenant_id,
+            event.event_type,
+            event.amount_usd,
+            event.balance_after
         );
     }
 
@@ -251,37 +263,39 @@ pub fn detect_and_record(
 
 /// Aggregated fund statistics for display in the admin/settings UI.
 pub struct FundSummary {
-    pub net_deposits:    f64,
+    pub net_deposits: f64,
     pub total_deposited: f64,
     pub total_withdrawn: f64,
     #[allow(dead_code)]
-    pub event_count:     usize,
+    pub event_count: usize,
     #[allow(dead_code)]
-    pub last_event:      Option<FundEvent>,
+    pub last_event: Option<FundEvent>,
 }
 
 /// Build a `FundSummary` for a tenant from their CSV history.
 pub fn summary(tenant_id: &TenantId) -> FundSummary {
     let events = read_tenant_history(tenant_id).unwrap_or_default();
-    let net     = events.iter().fold(0.0_f64, |acc, e| match e.event_type {
-        EventType::Deposit    => acc + e.amount_usd,
+    let net = events.iter().fold(0.0_f64, |acc, e| match e.event_type {
+        EventType::Deposit => acc + e.amount_usd,
         EventType::Withdrawal => acc - e.amount_usd,
     });
-    let deposited: f64 = events.iter()
+    let deposited: f64 = events
+        .iter()
         .filter(|e| e.event_type == EventType::Deposit)
         .map(|e| e.amount_usd)
         .sum();
-    let withdrawn: f64 = events.iter()
+    let withdrawn: f64 = events
+        .iter()
         .filter(|e| e.event_type == EventType::Withdrawal)
         .map(|e| e.amount_usd)
         .sum();
     let last = events.last().cloned();
     FundSummary {
-        net_deposits:    net,
+        net_deposits: net,
         total_deposited: deposited,
         total_withdrawn: withdrawn,
-        event_count:     events.len(),
-        last_event:      last,
+        event_count: events.len(),
+        last_event: last,
     }
 }
 
@@ -299,10 +313,10 @@ mod tests {
 
     fn make_event(kind: EventType, amount: f64, balance: f64) -> FundEvent {
         FundEvent {
-            event_type:    kind,
-            amount_usd:    amount,
+            event_type: kind,
+            amount_usd: amount,
             balance_after: balance,
-            timestamp:     "2025-01-01T00:00:00Z".to_string(),
+            timestamp: "2025-01-01T00:00:00Z".to_string(),
         }
     }
 
@@ -319,10 +333,10 @@ mod tests {
     #[test]
     fn positive_delta_is_deposit() {
         let event = FundEvent {
-            event_type:    EventType::Deposit,
-            amount_usd:    500.0,
+            event_type: EventType::Deposit,
+            amount_usd: 500.0,
             balance_after: 1500.0,
-            timestamp:     Utc::now().to_rfc3339(),
+            timestamp: Utc::now().to_rfc3339(),
         };
         assert_eq!(event.event_type, EventType::Deposit);
         assert!((event.amount_usd - 500.0).abs() < 0.001);
@@ -331,10 +345,10 @@ mod tests {
     #[test]
     fn negative_delta_is_withdrawal() {
         let event = FundEvent {
-            event_type:    EventType::Withdrawal,
-            amount_usd:    200.0,
+            event_type: EventType::Withdrawal,
+            amount_usd: 200.0,
             balance_after: 800.0,
-            timestamp:     Utc::now().to_rfc3339(),
+            timestamp: Utc::now().to_rfc3339(),
         };
         assert_eq!(event.event_type, EventType::Withdrawal);
         assert!((event.amount_usd - 200.0).abs() < 0.001);
@@ -345,25 +359,29 @@ mod tests {
     #[test]
     fn net_deposits_deposits_minus_withdrawals() {
         let events: Vec<FundEvent> = vec![
-            make_event(EventType::Deposit,    1000.0, 1000.0),
-            make_event(EventType::Deposit,     500.0, 1500.0),
-            make_event(EventType::Withdrawal,  300.0, 1200.0),
+            make_event(EventType::Deposit, 1000.0, 1000.0),
+            make_event(EventType::Deposit, 500.0, 1500.0),
+            make_event(EventType::Withdrawal, 300.0, 1200.0),
         ];
         let net = events.iter().fold(0.0_f64, |acc, e| match e.event_type {
-            EventType::Deposit    => acc + e.amount_usd,
+            EventType::Deposit => acc + e.amount_usd,
             EventType::Withdrawal => acc - e.amount_usd,
         });
-        assert!((net - 1200.0).abs() < 0.001, "net should be 1000+500-300=1200");
+        assert!(
+            (net - 1200.0).abs() < 0.001,
+            "net should be 1000+500-300=1200"
+        );
     }
 
     #[test]
     fn total_deposited_sums_only_deposits() {
         let events: Vec<FundEvent> = vec![
-            make_event(EventType::Deposit,    100.0, 100.0),
-            make_event(EventType::Withdrawal,  50.0,  50.0),
-            make_event(EventType::Deposit,    200.0, 250.0),
+            make_event(EventType::Deposit, 100.0, 100.0),
+            make_event(EventType::Withdrawal, 50.0, 50.0),
+            make_event(EventType::Deposit, 200.0, 250.0),
         ];
-        let total: f64 = events.iter()
+        let total: f64 = events
+            .iter()
             .filter(|e| e.event_type == EventType::Deposit)
             .map(|e| e.amount_usd)
             .sum();
@@ -373,11 +391,12 @@ mod tests {
     #[test]
     fn total_withdrawn_sums_only_withdrawals() {
         let events: Vec<FundEvent> = vec![
-            make_event(EventType::Deposit,    500.0, 500.0),
-            make_event(EventType::Withdrawal,  75.0, 425.0),
+            make_event(EventType::Deposit, 500.0, 500.0),
+            make_event(EventType::Withdrawal, 75.0, 425.0),
             make_event(EventType::Withdrawal, 100.0, 325.0),
         ];
-        let total: f64 = events.iter()
+        let total: f64 = events
+            .iter()
             .filter(|e| e.event_type == EventType::Withdrawal)
             .map(|e| e.amount_usd)
             .sum();
@@ -388,7 +407,7 @@ mod tests {
 
     #[test]
     fn event_type_display() {
-        assert_eq!(EventType::Deposit.to_string(),    "deposit");
+        assert_eq!(EventType::Deposit.to_string(), "deposit");
         assert_eq!(EventType::Withdrawal.to_string(), "withdrawal");
     }
 
@@ -397,7 +416,7 @@ mod tests {
         // Craft an empty event list and verify FundSummary is zeroed
         let events: Vec<FundEvent> = vec![];
         let net: f64 = events.iter().fold(0.0, |acc, e| match e.event_type {
-            EventType::Deposit    => acc + e.amount_usd,
+            EventType::Deposit => acc + e.amount_usd,
             EventType::Withdrawal => acc - e.amount_usd,
         });
         assert_eq!(net, 0.0);

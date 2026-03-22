@@ -30,7 +30,11 @@ pub struct PatternSignal {
 pub fn detect(candles: &[PriceData]) -> PatternSignal {
     let n = candles.len();
     if n < 2 {
-        return PatternSignal { bull_boost: 0.0, bear_boost: 0.0, name: None };
+        return PatternSignal {
+            bull_boost: 0.0,
+            bear_boost: 0.0,
+            name: None,
+        };
     }
 
     let mut bull: f64 = 0.0;
@@ -38,21 +42,25 @@ pub fn detect(candles: &[PriceData]) -> PatternSignal {
     let mut names: Vec<&'static str> = Vec::new();
 
     // ── Current bar (c0) ────────────────────────────────────────────────────
-    let c0     = &candles[n - 1];
+    let c0 = &candles[n - 1];
     let range0 = c0.high - c0.low;
     if range0 < 1e-10 {
-        return PatternSignal { bull_boost: 0.0, bear_boost: 0.0, name: None };
+        return PatternSignal {
+            bull_boost: 0.0,
+            bear_boost: 0.0,
+            name: None,
+        };
     }
-    let body0  = (c0.close - c0.open).abs();
-    let uw0    = c0.high - c0.close.max(c0.open);   // upper wick
-    let lw0    = c0.close.min(c0.open) - c0.low;    // lower wick
-    let bull0  = c0.close > c0.open;
+    let body0 = (c0.close - c0.open).abs();
+    let uw0 = c0.high - c0.close.max(c0.open); // upper wick
+    let lw0 = c0.close.min(c0.open) - c0.low; // lower wick
+    let bull0 = c0.close > c0.open;
 
     // ── Previous bar (c1) ───────────────────────────────────────────────────
-    let c1     = &candles[n - 2];
+    let c1 = &candles[n - 2];
     let range1 = (c1.high - c1.low).max(1e-10);
-    let body1  = (c1.close - c1.open).abs();
-    let bull1  = c1.close > c1.open;
+    let body1 = (c1.close - c1.open).abs();
+    let bull1 = c1.close > c1.open;
 
     // ════════════════════════════════════════════════════════════════════════
     //  SINGLE-BAR PATTERNS
@@ -128,26 +136,22 @@ pub fn detect(candles: &[PriceData]) -> PatternSignal {
 
     // ── Bullish Engulfing ───────────────────────────────────────────────────
     // Current bullish body fully engulfs previous bearish body
-    if bull0 && !bull1
-        && c0.open <= c1.close
-        && c0.close >= c1.open
-    {
+    if bull0 && !bull1 && c0.open <= c1.close && c0.close >= c1.open {
         bull += 0.11;
         names.push("Bull Engulfing");
     }
 
     // ── Bearish Engulfing ───────────────────────────────────────────────────
-    if !bull0 && bull1
-        && c0.open >= c1.close
-        && c0.close <= c1.open
-    {
+    if !bull0 && bull1 && c0.open >= c1.close && c0.close <= c1.open {
         bear += 0.11;
         names.push("Bear Engulfing");
     }
 
     // ── Bullish Harami ──────────────────────────────────────────────────────
     // Small bullish bar sitting inside prior large bearish bar
-    if bull0 && !bull1 && body1 > 0.0
+    if bull0
+        && !bull1
+        && body1 > 0.0
         && c0.open > c1.close
         && c0.close < c1.open
         && body0 < body1 * 0.50
@@ -157,7 +161,9 @@ pub fn detect(candles: &[PriceData]) -> PatternSignal {
     }
 
     // ── Bearish Harami ──────────────────────────────────────────────────────
-    if !bull0 && bull1 && body1 > 0.0
+    if !bull0
+        && bull1
+        && body1 > 0.0
         && c0.open < c1.close
         && c0.close > c1.open
         && body0 < body1 * 0.50
@@ -193,10 +199,10 @@ pub fn detect(candles: &[PriceData]) -> PatternSignal {
     //  THREE-BAR PATTERNS
     // ════════════════════════════════════════════════════════════════════════
     if n >= 3 {
-        let c2     = &candles[n - 3];
+        let c2 = &candles[n - 3];
         let range2 = (c2.high - c2.low).max(1e-10);
-        let body2  = (c2.close - c2.open).abs();
-        let bull2  = c2.close > c2.open;
+        let body2 = (c2.close - c2.open).abs();
+        let bull2 = c2.close > c2.open;
 
         // ── Morning Star ──────────────────────────────────────────────────
         // Bearish bar → small body/doji → bullish bar closing into first bar's body
@@ -219,9 +225,14 @@ pub fn detect(candles: &[PriceData]) -> PatternSignal {
 
         // ── Three White Soldiers ──────────────────────────────────────────
         // 3 consecutive bullish bars with higher closes, each body ≥ 60% of range
-        if bull0 && bull1 && bull2
-            && c0.close > c1.close && c1.close > c2.close
-            && range0 > 0.0 && range1 > 0.0 && range2 > 0.0
+        if bull0
+            && bull1
+            && bull2
+            && c0.close > c1.close
+            && c1.close > c2.close
+            && range0 > 0.0
+            && range1 > 0.0
+            && range2 > 0.0
             && body0 >= range0 * 0.60
             && body1 >= range1 * 0.60
             && body2 >= range2 * 0.60
@@ -231,9 +242,14 @@ pub fn detect(candles: &[PriceData]) -> PatternSignal {
         }
 
         // ── Three Black Crows ─────────────────────────────────────────────
-        if !bull0 && !bull1 && !bull2
-            && c0.close < c1.close && c1.close < c2.close
-            && range0 > 0.0 && range1 > 0.0 && range2 > 0.0
+        if !bull0
+            && !bull1
+            && !bull2
+            && c0.close < c1.close
+            && c1.close < c2.close
+            && range0 > 0.0
+            && range1 > 0.0
+            && range2 > 0.0
             && body0 >= range0 * 0.60
             && body1 >= range1 * 0.60
             && body2 >= range2 * 0.60

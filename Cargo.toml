@@ -20,11 +20,13 @@ hex        = "0.4"
 base64     = "0.21"          # HTTP Basic Auth decoding for admin panel
 hmac       = "0.12"
 sha2       = "0.10"
+walkdir    = "2"
 sha3       = "0.10"          # keccak256 — required for EIP-712 order signing
 k256       = { version = "0.13", features = ["ecdsa", "arithmetic"] }  # secp256k1 — HL order signing
 aes-gcm    = "0.10"             # AES-256-GCM — per-user HL wallet key encryption
 rmp-serde  = "1.1"           # msgpack encoding — required for HL action hash
 tracing    = "0.1"
+once_cell  = "1.21"
 
 # Web dashboard
 axum         = { version = "0.7", features = ["form"] }

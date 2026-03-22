@@ -109,6 +109,17 @@ cargo build --release
 ./target/release/drift-bot
 ```
 
+## Analytics Scripts & AI Cache
+
+- `cargo run --bin reporter` now behaves as the intelligent analytics script: it regenerates the daily trade journal, persists the JSON `reports/latest_report.json`, and writes the new pattern summary files (`reports/pattern_insights_<date>.json` and `reports/pattern_insights_<date>.md`) that capture guardrail scores, signal breakdowns, context snapshots, and winner/loser tables.
+- Each run also refreshes `reports/pattern_cache.json`. The pattern cache stores the latest insights together with the SHA256 hashes of `logs/ai_guardrail_feedback.jsonl` and `logs/trading_<date>.jsonl`. The dashboard/API consider the cache stale whenever those hashes change or when the cache is older than five minutes, so running the reporter after new exits guarantees fresh data while avoiding redundant recomputation.
+- The existing `/api/report/query` cache is tied to the `report_hash` derived from the summary payload, so AI answers expire automatically as soon as guardrail/trade summaries move. To surface the richer pattern payloads to dashboards or assistants, request `GET /api/report/patterns`—the endpoint returns the latest `PatternInsights` bundle mirroring the markdown/JSON output.
+- A new `/app/agents` page gives OpenClaw/x402 agents a lightweight control room: portfolio snapshot + position list, guardrail combo highlights from `/api/report/patterns`, automation alerts from `/api/report/patterns/alerts`, and an agent-friendly command form that posts directly to `/api/command`. Keep that tab open to monitor wins/losses and push manual instructions while Claude reasons about the refreshed pattern history.
+- The consumer nav now links directly to `/app/agents`, and the admin panel exposes the same Agent Console link plus a dedicated pattern cache summary card so operators can see the latest winner/loser and signal combos alongside CLI/webhook alerts. The shared `reports/pattern_cache_alert.json` payload is still served at `/api/report/patterns/alerts`, letting dashboards or assistant prompts stay in sync with the freshest combos.
+- `scripts/pattern_cache_alert.py` now appends every refresh to `reports/pattern_cache_alert.log` and, when `PATTERN_CACHE_WEBHOOK_URL` is set, posts the same payload to that webhook (customize `PATTERN_CACHE_WEBHOOK_METHOD`, add `PATTERN_CACHE_WEBHOOK_TOKEN`, or pass `PATTERN_CACHE_WEBHOOK_HEADERS` JSON for extra headers). This turns the cache watcher into a Slack/webhook/CLI alerting source, so agents get notified of new pattern signatures even when they’re not looking at the dashboard.
+- Guardrail records now embed `prompt_tokens`/`completion_tokens`/`total_tokens`; run `python scripts/claude_usage_summary.py` (optionally with `--log logs/ai_guardrail_feedback.jsonl`) to get per-review averages and totals for Claude’s token usage.
+- Bridging is now prototyped: see `BRIDGE_GUIDE.md` for the manual steps plus the `/api/bridge/withdraw` and `/api/bridge/status/:id` endpoints that orchestrate Hyperliquid → Arbitrum payouts. Configure `BRIDGE_MIN_WITHDRAW_USD` and `BRIDGE_TRUSTED_DESTINATIONS` to keep withdrawals safe.
+
 ## Key Modules
 
 ### 1. Account Manager (`src/modules/account_manager.rs`)

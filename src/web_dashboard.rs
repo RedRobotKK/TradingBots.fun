@@ -1,8 +1,17 @@
-use axum::{extract::State, http::HeaderMap, response::Html, routing::{get, post}, Json, Router};
+use axum::{
+    extract::State,
+    http::HeaderMap,
+    response::Html,
+    routing::{get, post},
+    Json, Router,
+};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::collections::HashMap;
+use std::fs;
+use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 // Pre-built Privy login SDK bundle (ESM). Served at /static/privy-login.js so
 // the browser never needs to reach an external CDN.
@@ -10,9 +19,12 @@ use tokio::sync::RwLock;
 //   cd js && npm install && npm run build
 //   git add static/privy-login.js && git commit
 static PRIVY_BUNDLE_JS: &str = include_str!("../static/privy-login.js");
+use crate::bridge::BridgeManager;
+use crate::coins;
 use crate::learner::{SignalContribution, SignalWeights};
 use crate::metrics::PerformanceMetrics;
-use crate::coins;
+use crate::pattern_insights;
+use crate::reporting;
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Shared application state — passed to every Axum handler via State<AppState>
@@ -25,28 +37,28 @@ use crate::coins;
 #[derive(Clone)]
 pub struct AppState {
     /// Live trading / dashboard state (positions, P&L, signals…).
-    pub bot_state:             SharedState,
+    pub bot_state: SharedState,
     /// Registry of all consumer tenants — mutated by Stripe webhooks.
-    pub tenants:               crate::tenant::SharedTenantManager,
+    pub tenants: crate::tenant::SharedTenantManager,
     /// PostgreSQL connection pool — `None` when DATABASE_URL is not set.
     /// Shared across all Axum handlers and the trading loop.
-    pub db:                    Option<crate::db::SharedDb>,
+    pub db: Option<crate::db::SharedDb>,
     /// Stripe secret API key (sk_live_… / sk_test_…).
-    pub stripe_api_key:        Option<String>,
+    pub stripe_api_key: Option<String>,
     /// Stripe webhook signing secret (whsec_…).
     pub stripe_webhook_secret: Option<String>,
     /// Stripe Price ID for the $19.99/month Pro plan.
-    pub stripe_price_id:       Option<String>,
+    pub stripe_price_id: Option<String>,
     /// Privy App ID — when set, consumer routes require a valid Privy session.
     /// Set via `PRIVY_APP_ID` env var.  `None` = single-operator fallback mode.
-    pub privy_app_id:             Option<String>,
+    pub privy_app_id: Option<String>,
     /// WalletConnect Cloud project ID — enables mobile-wallet login via Privy.
     /// Set via `WALLETCONNECT_PROJECT_ID` env var.  `None` = desktop wallets only.
     pub walletconnect_project_id: Option<String>,
     /// HMAC-SHA256 signing key for session cookies.  Set via `SESSION_SECRET`.
-    pub session_secret:        String,
+    pub session_secret: String,
     /// In-memory cache of Privy's JWKS — refreshed every hour on first use.
-    pub jwks_cache:            crate::privy::SharedJwksCache,
+    pub jwks_cache: crate::privy::SharedJwksCache,
     /// Apple Pay domain-association file content.
     /// Obtained from Stripe Dashboard → Settings → Payment methods → Apple Pay
     /// → Add new domain → Download file.
@@ -75,42 +87,49 @@ pub struct AppState {
     /// Global investment thesis constraints — updated by the floating AI bar,
     /// consumed by `run_cycle` to filter candidates and clamp leverage.
     pub global_thesis: std::sync::Arc<tokio::sync::RwLock<crate::thesis::ThesisConstraints>>,
+    /// Shared cache storing question/answer pairs keyed by the last report hash.
+    pub report_cache: Arc<Mutex<reporting::QueryCache>>,
+    /// Cache storing the latest pattern-summary bundle (JSON + markdown).
+    pub pattern_cache: Arc<Mutex<pattern_insights::PatternCache>>,
+    pub bridge_manager: Arc<BridgeManager>,
 }
 
 // ─────────────────────────────── Serde defaults ──────────────────────────────
-fn default_leverage() -> f64 { 1.0 }
+fn default_leverage() -> f64 {
+    1.0
+}
 
 // ─────────────────────────────── State structs ───────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaperPosition {
-    pub symbol:           String,
-    pub side:             String,    // "LONG" | "SHORT"
-    pub entry_price:      f64,
-    pub quantity:         f64,       // coins held (reduced by partial closes)
-    pub size_usd:         f64,       // USD committed (reduced by partial closes)
-    pub stop_loss:        f64,       // current (trailing) stop
-    pub take_profit:      f64,
-    pub atr_at_entry:     f64,       // ATR at entry (for trailing)
-    pub high_water_mark:  f64,       // highest price seen (LONG trailing)
-    pub low_water_mark:   f64,       // lowest  price seen (SHORT trailing)
-    pub partial_closed:   bool,      // true once first tranche taken
+    pub symbol: String,
+    pub side: String, // "LONG" | "SHORT"
+    pub entry_price: f64,
+    pub quantity: f64,  // coins held (reduced by partial closes)
+    pub size_usd: f64,  // USD committed (reduced by partial closes)
+    pub stop_loss: f64, // current (trailing) stop
+    pub take_profit: f64,
+    pub atr_at_entry: f64,    // ATR at entry (for trailing)
+    pub high_water_mark: f64, // highest price seen (LONG trailing)
+    pub low_water_mark: f64,  // lowest  price seen (SHORT trailing)
+    pub partial_closed: bool, // true once first tranche taken
     // ── Professional quant fields ─────────────────────────────────────────
-    pub r_dollars_risked: f64,       // dollars at risk on entry = |entry−stop| × qty_at_entry
-    pub tranches_closed:  u8,        // 0=none, 1=¼ at 1R banked, 2=⅓ at 2R banked, 3=⅓ at 4R banked
+    pub r_dollars_risked: f64, // dollars at risk on entry = |entry−stop| × qty_at_entry
+    pub tranches_closed: u8,   // 0=none, 1=¼ at 1R banked, 2=⅓ at 2R banked, 3=⅓ at 4R banked
     #[serde(default)]
-    pub dca_count:        u8,        // number of DCA add-ons executed (averaging down)
+    pub dca_count: u8, // number of DCA add-ons executed (averaging down)
     #[serde(default = "default_leverage")]
-    pub leverage:         f64,       // leverage applied at entry (1.5× – 5×)
-    pub cycles_held:      u64,       // incremented each 30s cycle (time-decay exit)
-    pub entry_time:       String,
-    pub unrealised_pnl:   f64,
-    pub contrib:          SignalContribution,
+    pub leverage: f64, // leverage applied at entry (1.5× – 5×)
+    pub cycles_held: u64,      // incremented each 30s cycle (time-decay exit)
+    pub entry_time: String,
+    pub unrealised_pnl: f64,
+    pub contrib: SignalContribution,
     // ── AI reviewer fields (updated every 10 cycles) ──────────────────────
     #[serde(default)]
-    pub ai_action: Option<String>,   // "scale_up" | "hold" | "scale_down" | "close_now"
+    pub ai_action: Option<String>, // "scale_up" | "hold" | "scale_down" | "close_now"
     #[serde(default)]
-    pub ai_reason: Option<String>,   // Claude's one-line rationale
+    pub ai_reason: Option<String>, // Claude's one-line rationale
     // ── Correlation filter ────────────────────────────────────────────────
     /// Signal confidence at entry — compared against incoming correlated signals.
     #[serde(default = "default_min_confidence")]
@@ -123,7 +142,7 @@ pub struct PaperPosition {
     pub trade_budget_usd: f64,
     /// Accumulated USD spent on DCA add-ons (does not include the initial entry).
     #[serde(default)]
-    pub dca_spent_usd:    f64,
+    pub dca_spent_usd: f64,
     // ── BTC context snapshot at entry / last DCA ─────────────────────────
     /// BTC 4h return at the time this entry (or last DCA) was made.
     /// Used by the DCA thesis validator: if BTC has swung hard against us
@@ -140,18 +159,32 @@ pub struct PaperPosition {
     /// Most recent order-book sentiment string from detect_order_flow().
     /// "STRONGLY_BULLISH" | "BULLISH" | "NEUTRAL" | "BEARISH" | "STRONGLY_BEARISH"
     #[serde(default)]
-    pub ob_sentiment:       String,
+    pub ob_sentiment: String,
     /// True when there is a significant bid wall within 2% of the current price.
     #[serde(default)]
-    pub ob_bid_wall_near:   bool,
+    pub ob_bid_wall_near: bool,
     /// True when there is a significant ask wall within 2% of the current price.
     #[serde(default)]
-    pub ob_ask_wall_near:   bool,
+    pub ob_ask_wall_near: bool,
     /// Cycles in a row where the order book has been adverse (bearish book on LONG,
     /// or bullish book on SHORT). When this reaches a threshold, the position manager
     /// can trigger an early partial or exit to protect profits / cut losses.
     #[serde(default)]
-    pub ob_adverse_cycles:  u32,
+    pub ob_adverse_cycles: u32,
+    #[serde(default)]
+    pub order_flow_confidence: f64,
+    #[serde(default)]
+    pub order_flow_direction: String,
+    #[serde(default)]
+    pub funding_rate: f64,
+    #[serde(default)]
+    pub funding_delta: f64,
+    #[serde(default)]
+    pub onchain_strength: f64,
+    #[serde(default)]
+    pub cex_premium_pct: f64,
+    #[serde(default)]
+    pub cex_mode: String,
     // ── Profit-pool funding ───────────────────────────────────────────────
     /// True when this position was opened using profits from house_money_pool
     /// rather than the original base capital.  Pool-funded positions:
@@ -159,116 +192,120 @@ pub struct PaperPosition {
     ///   • Can be sized up to 2× the standard Kelly-sized amount
     ///   • When closed, net profit goes back to the pool (not general capital)
     #[serde(default)]
-    pub funded_from_pool:   bool,
+    pub funded_from_pool: bool,
     /// USD drawn from house_money_pool to open this position.
     /// Returned to pool (not capital) when the position is closed.
     #[serde(default)]
-    pub pool_stake_usd:     f64,
+    pub pool_stake_usd: f64,
 }
 
-fn default_min_confidence() -> f64 { 0.68 }
+fn default_min_confidence() -> f64 {
+    0.68
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClosedTrade {
-    pub symbol:     String,
-    pub side:       String,
-    pub entry:      f64,
-    pub exit:       f64,
-    pub pnl:        f64,
-    pub pnl_pct:    f64,
-    pub reason:     String,   // "Signal" | "StopLoss" | "TakeProfit" | "Partial"
-    pub closed_at:  String,
+    pub symbol: String,
+    pub side: String,
+    pub entry: f64,
+    pub exit: f64,
+    pub pnl: f64,
+    pub pnl_pct: f64,
+    pub reason: String, // "Signal" | "StopLoss" | "TakeProfit" | "Partial"
+    pub closed_at: String,
     // ── Tax / record-keeping fields (all default-zero for old snapshots) ──
     /// Timestamp when the position was originally opened.
     #[serde(default)]
     pub entry_time: String,
     /// Number of base-asset units traded.
     #[serde(default)]
-    pub quantity:   f64,
+    pub quantity: f64,
     /// USD margin committed (not notional — notional = size_usd × leverage).
     #[serde(default)]
-    pub size_usd:   f64,
+    pub size_usd: f64,
     /// Leverage multiplier used at entry.
     #[serde(default = "default_one")]
-    pub leverage:   f64,
+    pub leverage: f64,
     /// Estimated fees paid (maker+taker+builder, ~0.075 % of notional).
     #[serde(default)]
-    pub fees_est:   f64,
+    pub fees_est: f64,
     /// HTML snippet shown when user clicks the row — technicals + AI reasoning.
     #[serde(default)]
-    pub breakdown:  Option<String>,
+    pub breakdown: Option<String>,
     // ── Trade journal ─────────────────────────────────────────────────────
     /// Operator note added after close: "false MACD signal in chop",
     /// "re-entered too early", etc.  Written via POST /api/trade-note.
     #[serde(default)]
-    pub note:       Option<String>,
+    pub note: Option<String>,
 }
 
-fn default_one() -> f64 { 1.0 }
+fn default_one() -> f64 {
+    1.0
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CandidateInfo {
-    pub symbol:          String,
-    pub price:           f64,
+    pub symbol: String,
+    pub price: f64,
     /// None on cycle 1 (no previous reference price yet); Some(%) on cycle 2+.
-    pub change_pct:      Option<f64>,
+    pub change_pct: Option<f64>,
     /// RSI(14) value computed during signal analysis, None until first scan.
     #[serde(default)]
-    pub rsi:             Option<f64>,
+    pub rsi: Option<f64>,
     /// Market regime: "Trending" | "Neutral" | "Ranging", None until first scan.
     #[serde(default)]
-    pub regime:          Option<String>,
+    pub regime: Option<String>,
     /// ATR(14) as % of price — a volatility proxy, None until first scan.
     #[serde(default)]
-    pub atr_pct:         Option<f64>,
+    pub atr_pct: Option<f64>,
     /// Decision confidence 0‒1 from the last analyse_symbol run, None until first scan.
     #[serde(default)]
-    pub confidence:      Option<f64>,
+    pub confidence: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DecisionInfo {
-    pub symbol:      String,
-    pub action:      String,
-    pub confidence:  f64,
+    pub symbol: String,
+    pub action: String,
+    pub confidence: f64,
     pub entry_price: f64,
-    pub rationale:   String,
-    pub timestamp:   String,
+    pub rationale: String,
+    pub timestamp: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BotState {
-    pub capital:          f64,
-    pub initial_capital:  f64,
-    pub peak_equity:      f64,       // all-time equity high (display only)
-    pub equity_window:    std::collections::VecDeque<(i64, f64)>, // (unix_ts, equity) rolling 7-day
-    pub cb_active:        bool,      // true when rolling-equity CB is firing (set by main loop)
-    pub pnl:              f64,
-    pub cycle_count:      u64,
-    pub candidates:       Vec<CandidateInfo>,
-    pub positions:        Vec<PaperPosition>,
-    pub closed_trades:    Vec<ClosedTrade>,
+    pub capital: f64,
+    pub initial_capital: f64,
+    pub peak_equity: f64, // all-time equity high (display only)
+    pub equity_window: std::collections::VecDeque<(i64, f64)>, // (unix_ts, equity) rolling 7-day
+    pub cb_active: bool,  // true when rolling-equity CB is firing (set by main loop)
+    pub pnl: f64,
+    pub cycle_count: u64,
+    pub candidates: Vec<CandidateInfo>,
+    pub positions: Vec<PaperPosition>,
+    pub closed_trades: Vec<ClosedTrade>,
     pub recent_decisions: Vec<DecisionInfo>,
-    pub signal_weights:   SignalWeights,
-    pub metrics:          PerformanceMetrics,
-    pub session_prices:   HashMap<String, f64>,  // first price seen per symbol this session
-    pub status:           String,
-    pub last_update:      String,
+    pub signal_weights: SignalWeights,
+    pub metrics: PerformanceMetrics,
+    pub session_prices: HashMap<String, f64>, // first price seen per symbol this session
+    pub status: String,
+    pub last_update: String,
     /// Unix-ms timestamp when the next 30 s cycle will fire.  0 = unknown.
-    pub next_cycle_at:    i64,
+    pub next_cycle_at: i64,
     /// Rolling equity snapshots (max 288 ≈ 2.4 h at 30 s/cycle) for the sparkline.
     /// Populated by the main trading loop every cycle — NOT by page loads.
     #[serde(default)]
-    pub equity_history:   Vec<f64>,
+    pub equity_history: Vec<f64>,
     /// Platform Hyperliquid referral code — set from config at startup, not persisted.
     /// Displayed in the consumer /app page so new signups use the referral link.
     #[serde(default)]
-    pub referral_code:    Option<String>,
+    pub referral_code: Option<String>,
     /// Last AI review summary string — set by run_cycle() when Claude reviews positions.
     /// Empty = no review run yet (API key absent or no open positions).
     /// Example: "🤖 3 reviewed · SOL hold · ETH scale_down"
     #[serde(default)]
-    pub ai_status:        String,
+    pub ai_status: String,
 
     // ── Profit recycling ─────────────────────────────────────────────────
     /// Accumulated realized profits (from partial + full closes with positive P&L)
@@ -287,7 +324,7 @@ pub struct BotState {
     /// When a symbol signals again within 60 cycles (30 min) of a profitable close,
     /// the new entry is a "re-entry" and is sized from the pool preferentially.
     #[serde(default)]
-    pub recently_closed:  std::collections::VecDeque<(String, f64, u64)>,
+    pub recently_closed: std::collections::VecDeque<(String, f64, u64)>,
     /// Total USD currently deployed from house_money_pool (in open positions).
     /// = sum(size_usd for pos where funded_from_pool).
     /// Used to show "own capital at risk" vs "house money at risk" split on dashboard.
@@ -310,10 +347,10 @@ pub struct BotState {
 /// Bots authenticate subsequent requests with `Authorization: Bearer {token}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BotSession {
-    pub id:         String,
-    pub token:      String,
-    pub tx_hash:    String,
-    pub plan:       String,
+    pub id: String,
+    pub token: String,
+    pub tx_hash: String,
+    pub plan: String,
     pub created_at: String,
     pub expires_at: String,
 }
@@ -324,40 +361,55 @@ pub struct BotSession {
 #[serde(tag = "type")]
 pub enum BotCommand {
     /// Close the named position at current market price.
-    ClosePosition  { symbol: String },
+    ClosePosition { symbol: String },
     /// Take a partial profit (tranche 0 = first 1/3) on the named position.
-    TakePartial    { symbol: String },
+    TakePartial { symbol: String },
     /// Close every open position immediately.
     CloseAll,
     /// Close all positions that are currently in profit.
     CloseProfitable,
     /// Open a new LONG position on `symbol` with optional size and leverage.
-    OpenLong  { symbol: String, size_usd: Option<f64>, leverage: Option<f64> },
+    OpenLong {
+        symbol: String,
+        size_usd: Option<f64>,
+        leverage: Option<f64>,
+    },
     /// Open a new SHORT position on `symbol` with optional size and leverage.
-    OpenShort { symbol: String, size_usd: Option<f64>, leverage: Option<f64> },
+    OpenShort {
+        symbol: String,
+        size_usd: Option<f64>,
+        leverage: Option<f64>,
+    },
 }
 
 impl Default for BotState {
     fn default() -> Self {
         BotState {
-            capital: 1000.0, initial_capital: 1000.0, peak_equity: 1000.0,
+            capital: 1000.0,
+            initial_capital: 1000.0,
+            peak_equity: 1000.0,
             equity_window: std::collections::VecDeque::new(),
             cb_active: false,
-            pnl: 0.0, cycle_count: 0,
-            candidates: vec![], positions: vec![], closed_trades: vec![],
+            pnl: 0.0,
+            cycle_count: 0,
+            candidates: vec![],
+            positions: vec![],
+            closed_trades: vec![],
             recent_decisions: vec![],
             signal_weights: SignalWeights::default(),
             metrics: PerformanceMetrics::default(),
             session_prices: HashMap::new(),
-            status: String::new(), last_update: String::new(), next_cycle_at: 0,
+            status: String::new(),
+            last_update: String::new(),
+            next_cycle_at: 0,
             equity_history: vec![],
-            referral_code:   None,
-            ai_status:       String::new(),
+            referral_code: None,
+            ai_status: String::new(),
             house_money_pool: 0.0,
-            recently_closed:  std::collections::VecDeque::new(),
+            recently_closed: std::collections::VecDeque::new(),
             pool_deployed_usd: 0.0,
-            pending_cmds:      std::collections::VecDeque::new(),
-            bot_sessions:      std::collections::HashMap::new(),
+            pending_cmds: std::collections::VecDeque::new(),
+            bot_sessions: std::collections::HashMap::new(),
         }
     }
 }
@@ -372,42 +424,70 @@ async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
 
     // ── Core financials ───────────────────────────────────────────────────
     let unrealised: f64 = s.positions.iter().map(|p| p.unrealised_pnl).sum();
-    let committed:  f64 = s.positions.iter().map(|p| p.size_usd).sum();
-    let equity      = s.capital + committed + unrealised;
-    let total_pnl   = s.pnl + unrealised;
-    let total_pnl_pct = if s.initial_capital > 0.0 { total_pnl / s.initial_capital * 100.0 } else { 0.0 };
+    let committed: f64 = s.positions.iter().map(|p| p.size_usd).sum();
+    let equity = s.capital + committed + unrealised;
+    let total_pnl = s.pnl + unrealised;
+    let total_pnl_pct = if s.initial_capital > 0.0 {
+        total_pnl / s.initial_capital * 100.0
+    } else {
+        0.0
+    };
 
-    let pnl_colour  = if total_pnl >= 0.0 { "#3fb950" } else { "#f85149" };
+    let pnl_colour = if total_pnl >= 0.0 {
+        "#3fb950"
+    } else {
+        "#f85149"
+    };
     // BUG FIX: sign was "" for negatives (not "-"), causing minus to be silently dropped
     // when combined with the .abs() calls in the format args.
-    let pnl_sign    = if total_pnl >= 0.0 { "+" } else { "-" };
+    let pnl_sign = if total_pnl >= 0.0 { "+" } else { "-" };
     // All-time peak drawdown (display only).
-    let dd_pct      = if s.peak_equity > 0.0 { (s.peak_equity - equity) / s.peak_equity * 100.0 } else { 0.0 };
+    let dd_pct = if s.peak_equity > 0.0 {
+        (s.peak_equity - equity) / s.peak_equity * 100.0
+    } else {
+        0.0
+    };
     // Rolling 7-day drawdown — this is what actually drives the circuit breaker.
     // The CB uses equity_window, so we must derive the rolling peak from the same source.
-    let rolling_peak = s.equity_window.iter()
+    let rolling_peak = s
+        .equity_window
+        .iter()
         .map(|&(_, e)| e)
         .fold(equity, f64::max);
     let rolling_dd_pct = if rolling_peak > 0.0 {
         ((rolling_peak - equity) / rolling_peak * 100.0).max(0.0)
-    } else { 0.0 };
+    } else {
+        0.0
+    };
 
     // ── Metric strings ────────────────────────────────────────────────────
-    let kelly     = m.kelly_fraction();
-    let kelly_str = if kelly < 0.0 { "learning…".to_string() } else { format!("{:.1}%", kelly * 100.0) };
+    let kelly = m.kelly_fraction();
+    let kelly_str = if kelly < 0.0 {
+        "learning…".to_string()
+    } else {
+        format!("{:.1}%", kelly * 100.0)
+    };
     // Use the rolling-equity CB flag set by main loop — this is the same signal
     // that actually controls position sizing, avoiding a stale metrics-based read.
     let cb_active = s.cb_active;
-    let cb_label  = if cb_active { "⚡ CB Active" } else { "● Normal" };
+    let cb_label = if cb_active {
+        "⚡ CB Active"
+    } else {
+        "● Normal"
+    };
     let cb_colour = if cb_active { "#f85149" } else { "#3fb950" };
     // BUG FIX: was using m.current_dd (P&L-curve drawdown from closed trades only).
     // The CB is driven by rolling_dd_pct (7-day equity window) — use that here.
-    let cb_desc   = if cb_active {
+    let cb_desc = if cb_active {
         format!("0.35× sizes · 7d DD {:.1}%", rolling_dd_pct)
     } else {
         format!("Risk Normal · 7d DD {:.1}%", rolling_dd_pct)
     };
-    let pf_str    = if m.profit_factor.is_infinite() { "∞".to_string() } else { format!("{:.2}", m.profit_factor) };
+    let pf_str = if m.profit_factor.is_infinite() {
+        "∞".to_string()
+    } else {
+        format!("{:.2}", m.profit_factor)
+    };
 
     // ── Equity hero P&L class (drives colour glow) ────────────────────────
     // CB active overrides colour → flashing red border.
@@ -419,7 +499,7 @@ async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
     } else if total_pnl_pct < -1.5 {
         "equity-hero pnl-neg"
     } else {
-        "equity-hero"   // neutral — near break-even
+        "equity-hero" // neutral — near break-even
     };
 
     // ── AI status bar HTML ─────────────────────────────────────────────────
@@ -732,11 +812,13 @@ async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
             let ap = s.positions.iter().find(|p| p.symbol == a.symbol);
             let bp = s.positions.iter().find(|p| p.symbol == b.symbol);
             match (ap, bp) {
-                (Some(ap), Some(bp)) =>
-                    bp.unrealised_pnl.partial_cmp(&ap.unrealised_pnl).unwrap_or(std::cmp::Ordering::Equal),
-                (Some(_), None)  => std::cmp::Ordering::Less,
-                (None, Some(_))  => std::cmp::Ordering::Greater,
-                (None, None)     => {
+                (Some(ap), Some(bp)) => bp
+                    .unrealised_pnl
+                    .partial_cmp(&ap.unrealised_pnl)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => {
                     let ac = a.confidence.unwrap_or(0.0);
                     let bc = b.confidence.unwrap_or(0.0);
                     bc.partial_cmp(&ac).unwrap_or(std::cmp::Ordering::Equal)
@@ -906,7 +988,7 @@ async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
     // Shows equity relative to initial_capital (baseline = break-even).
     // Green fill + line when above initial capital; red when below.
     let sparkline_svg: String = {
-        let h       = &s.equity_history;
+        let h = &s.equity_history;
         let initial = s.initial_capital;
         if h.len() < 2 {
             // Not enough data yet — flat placeholder
@@ -916,55 +998,67 @@ async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
   <line x1="0" y1="46" x2="280" y2="46"
         stroke="#484f58" stroke-width="1.5" stroke-dasharray="4 4"/>
   <text x="284" y="50" fill="#484f58" font-size="9" font-family="monospace">—</text>
-</svg>"##.to_string()
+</svg>"##
+                .to_string()
         } else {
-            let w_px:   f64 = 280.0;   // chart area width (label gutter on right)
-            let h_px:   f64 = 80.0;
-            let pad_t:  f64 = 14.0;    // top padding (for "PORTFOLIO" label)
-            let pad_b:  f64 = 6.0;
-            let inner_h     = h_px - pad_t - pad_b;
+            let w_px: f64 = 280.0; // chart area width (label gutter on right)
+            let h_px: f64 = 80.0;
+            let pad_t: f64 = 14.0; // top padding (for "PORTFOLIO" label)
+            let pad_b: f64 = 6.0;
+            let inner_h = h_px - pad_t - pad_b;
 
             // Y-scale anchored to initial_capital so baseline is always visible
-            let data_min = h.iter().cloned().fold(f64::INFINITY,     f64::min).min(initial);
-            let data_max = h.iter().cloned().fold(f64::NEG_INFINITY, f64::max).max(initial);
+            let data_min = h.iter().cloned().fold(f64::INFINITY, f64::min).min(initial);
+            let data_max = h
+                .iter()
+                .cloned()
+                .fold(f64::NEG_INFINITY, f64::max)
+                .max(initial);
             // Symmetric 15 % buffer so the line never presses against the edges
-            let buf   = ((data_max - data_min).max(initial * 0.005)) * 0.18;
+            let buf = ((data_max - data_min).max(initial * 0.005)) * 0.18;
             let min_v = data_min - buf;
             let max_v = data_max + buf;
             let range = (max_v - min_v).max(0.01);
 
             // Map a $ value to an SVG y coordinate (top = high equity)
-            let to_y = |v: f64| -> f64 {
-                h_px - pad_b - (v - min_v) / range * inner_h
-            };
+            let to_y = |v: f64| -> f64 { h_px - pad_b - (v - min_v) / range * inner_h };
 
             let n = h.len() as f64;
-            let pts: String = h.iter().enumerate().map(|(i, &v)| {
-                let x = i as f64 / (n - 1.0) * w_px;
-                let y = to_y(v);
-                format!("{x:.1},{y:.1}")
-            }).collect::<Vec<_>>().join(" ");
+            let pts: String = h
+                .iter()
+                .enumerate()
+                .map(|(i, &v)| {
+                    let x = i as f64 / (n - 1.0) * w_px;
+                    let y = to_y(v);
+                    format!("{x:.1},{y:.1}")
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
 
-            let base_y   = to_y(initial);
-            let last_y   = to_y(*h.last().unwrap_or(&initial));
+            let base_y = to_y(initial);
+            let last_y = to_y(*h.last().unwrap_or(&initial));
             let last_val = *h.last().unwrap_or(&initial);
-            let max_y    = to_y(data_max);
+            let max_y = to_y(data_max);
 
             // Green when above initial capital, red when below
-            let trend_c  = if last_val >= initial { "#3fb950" } else { "#f85149" };
+            let trend_c = if last_val >= initial {
+                "#3fb950"
+            } else {
+                "#f85149"
+            };
 
             // Fill polygon: line path → close back along the baseline
             let fill_pts = format!("{pts} {w_px:.1},{base_y:.1} 0.0,{base_y:.1}");
 
             // Y-axis tick label values
-            let lbl_cur  = format!("${:.0}", last_val);
+            let lbl_cur = format!("${:.0}", last_val);
             let lbl_base = format!("${:.0}", initial);
-            let lbl_max  = format!("${:.0}", data_max);
+            let lbl_max = format!("${:.0}", data_max);
 
             // Label positions (right gutter starting at x=284)
-            let ly_cur  = last_y.max(pad_t + 4.0).min(h_px - 4.0);
+            let ly_cur = last_y.max(pad_t + 4.0).min(h_px - 4.0);
             let ly_base = base_y.max(pad_t + 4.0).min(h_px - 4.0);
-            let ly_max  = max_y.max(pad_t + 4.0).min(h_px - 4.0);
+            let ly_max = max_y.max(pad_t + 4.0).min(h_px - 4.0);
 
             // NOTE: r##"..."## (two hashes) is required here because SVG colour
             // attributes like fill="#484f58" contain the sequence `"#` which would
@@ -989,16 +1083,16 @@ async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
   <text x="286" y="{lm_y:.1}" fill="{m}" font-size="8" font-family="monospace"
         dominant-baseline="middle">{lm}</text>
 </svg>"##,
-                c    = trend_c,
-                m    = "#484f58",
-                w    = w_px,
-                by   = base_y,
-                fp   = fill_pts,
-                pts  = pts,
-                ly   = last_y,
-                lc   = lbl_cur,
-                lb   = lbl_base,
-                lm   = lbl_max,
+                c = trend_c,
+                m = "#484f58",
+                w = w_px,
+                by = base_y,
+                fp = fill_pts,
+                pts = pts,
+                ly = last_y,
+                lc = lbl_cur,
+                lb = lbl_base,
+                lm = lbl_max,
                 lc_y = ly_cur,
                 lb_y = ly_base,
                 lm_y = ly_max,
@@ -1007,26 +1101,30 @@ async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
     };
 
     // ── Signal weights: single-line inline strip ─────────────────────────
-    let w  = &s.signal_weights;
+    let w = &s.signal_weights;
     let wh = format!(
         r#"<div class="w-strip">{}{}{}{}{}{}<span class="w-strip-note">{total_closed} trades · live learning</span></div>"#,
-        wi("RSI",     w.rsi),
-        wi("BB",      w.bollinger),
-        wi("MACD",    w.macd),
-        wi("Trend",   w.trend),
+        wi("RSI", w.rsi),
+        wi("BB", w.bollinger),
+        wi("MACD", w.macd),
+        wi("Trend", w.trend),
         wi("OrdFlow", w.order_flow),
-        wi("🌙Sent",  w.sentiment),
+        wi("🌙Sent", w.sentiment),
         total_closed = s.closed_trades.len(),
     );
 
     // ── New format args for metric modals ──────────────────────────────────
     // These are injected as raw floats/ints so the JS modal can display them
     // and compute gauge positions without dealing with formatted strings.
-    let expect_signed = m.expectancy;  // signed (not .abs())
-    let pf_float  = if m.profit_factor.is_infinite() { 999.0f64 } else { m.profit_factor };
-    let kelly_float = m.kelly_fraction();   // -1.0 = sentinel "not enough data"
-    let cb_int    = if cb_active { 1i32 } else { 0i32 };
-    let wr_float  = m.win_rate * 100.0;
+    let expect_signed = m.expectancy; // signed (not .abs())
+    let pf_float = if m.profit_factor.is_infinite() {
+        999.0f64
+    } else {
+        m.profit_factor
+    };
+    let kelly_float = m.kelly_fraction(); // -1.0 = sentinel "not enough data"
+    let cb_int = if cb_active { 1i32 } else { 0i32 };
+    let wr_float = m.win_rate * 100.0;
 
     // ── METRIC_INFO: static JS data injected as a raw string (no brace escaping) ──
     // Injected via {metric_info_js} format arg so real {/} in JS don't need doubling.
@@ -1264,7 +1362,8 @@ function closeMetricModal(){
 }
 "#;
 
-    Html(format!(r#"<!DOCTYPE html>
+    Html(format!(
+        r#"<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
@@ -2220,56 +2319,70 @@ window.doResetStats = function() {{
 </script>
 
 </body></html>"#,
-        last_update  = s.last_update,
-        equity       = equity,
-        capital      = s.capital,
-        pool_bal     = s.house_money_pool,
-        pool_col_op  = if s.house_money_pool > 0.0 { "#3fb950" } else { "#8b949e" },
-        pnl_colour   = pnl_colour,
-        pnl_sign     = pnl_sign,
-        total_pnl    = total_pnl.abs(),
+        last_update = s.last_update,
+        equity = equity,
+        capital = s.capital,
+        pool_bal = s.house_money_pool,
+        pool_col_op = if s.house_money_pool > 0.0 {
+            "#3fb950"
+        } else {
+            "#8b949e"
+        },
+        pnl_colour = pnl_colour,
+        pnl_sign = pnl_sign,
+        total_pnl = total_pnl.abs(),
         total_pnl_pct = total_pnl_pct.abs(),
-        sc           = m.sharpe_class(),
-        sharpe       = m.sharpe,
-        sortc        = if m.sortino > 1.0 { "#3fb950" } else if m.sortino > 0.0 { "#e3b341" } else { "#f85149" },
-        sortino      = m.sortino,
-        expc         = if m.expectancy >= 0.0 { "#3fb950" } else { "#f85149" },
-        exps         = if m.expectancy >= 0.0 { "+" } else { "-" }, // BUG FIX: was "" → dropped "-"
-        expectancy   = m.expectancy.abs(),
-        pf           = pf_str,
-        wr           = m.win_rate * 100.0,
-        wins         = m.wins,
-        losses       = m.losses,
-        dd           = rolling_dd_pct,    // 7-day rolling (drives CB) — shown in metric
-        atdd         = dd_pct.max(0.0),   // all-time drawdown (tooltip only)
-        kelly_str    = kelly_str,
-        cbc          = cb_colour,
-        cbcc         = cb_card_class,
-        cb_label     = cb_label,
-        cb_desc      = cb_desc,
-        open_n       = s.positions.len(),
-        pos_cap      = 40,
+        sc = m.sharpe_class(),
+        sharpe = m.sharpe,
+        sortc = if m.sortino > 1.0 {
+            "#3fb950"
+        } else if m.sortino > 0.0 {
+            "#e3b341"
+        } else {
+            "#f85149"
+        },
+        sortino = m.sortino,
+        expc = if m.expectancy >= 0.0 {
+            "#3fb950"
+        } else {
+            "#f85149"
+        },
+        exps = if m.expectancy >= 0.0 { "+" } else { "-" }, // BUG FIX: was "" → dropped "-"
+        expectancy = m.expectancy.abs(),
+        pf = pf_str,
+        wr = m.win_rate * 100.0,
+        wins = m.wins,
+        losses = m.losses,
+        dd = rolling_dd_pct,    // 7-day rolling (drives CB) — shown in metric
+        atdd = dd_pct.max(0.0), // all-time drawdown (tooltip only)
+        kelly_str = kelly_str,
+        cbc = cb_colour,
+        cbcc = cb_card_class,
+        cb_label = cb_label,
+        cb_desc = cb_desc,
+        open_n = s.positions.len(),
+        pos_cap = 40,
         total_closed = s.closed_trades.len(),
-        cycles       = s.cycle_count,
-        cand_n       = s.candidates.len(),
-        committed    = committed,
-        status       = s.status,
-        pos_cards    = pos_cards,
-        wh           = wh,
-        cand_rows    = cand_rows,
-        closed_rows  = closed_rows,
-        dec_rows          = dec_rows,
-        next_cycle_at_ms  = s.next_cycle_at,
-        sparkline_svg     = sparkline_svg,
-        hero_class        = hero_class,
-        ai_status_html    = ai_status_html,
-        metric_info_js    = metric_info_js,
-        expect_signed     = expect_signed,
-        pf_float          = pf_float,
-        kelly_float       = kelly_float,
-        cb_int            = cb_int,
-        wr_float          = wr_float,
-        tracking_js       = crate::funnel::client_tracking_script(),
+        cycles = s.cycle_count,
+        cand_n = s.candidates.len(),
+        committed = committed,
+        status = s.status,
+        pos_cards = pos_cards,
+        wh = wh,
+        cand_rows = cand_rows,
+        closed_rows = closed_rows,
+        dec_rows = dec_rows,
+        next_cycle_at_ms = s.next_cycle_at,
+        sparkline_svg = sparkline_svg,
+        hero_class = hero_class,
+        ai_status_html = ai_status_html,
+        metric_info_js = metric_info_js,
+        expect_signed = expect_signed,
+        pf_float = pf_float,
+        kelly_float = kelly_float,
+        cb_int = cb_int,
+        wr_float = wr_float,
+        tracking_js = crate::funnel::client_tracking_script(),
     ))
 }
 
@@ -2277,19 +2390,21 @@ window.doResetStats = function() {{
 fn wi(label: &str, val: f64) -> String {
     format!(
         r#"<span class="w-item"><span class="w-item-label">{label}</span><span class="w-item-val">{val:.2}</span><div class="w-item-bar"><div class="w-item-fill" style="width:{pct:.0}%"></div></div></span>"#,
-        label = label, val = val, pct = (val * 100.0).min(100.0),
+        label = label,
+        val = val,
+        pct = (val * 100.0).min(100.0),
     )
 }
 
 fn reason_class(r: &str) -> &'static str {
     match r {
-        s if s.contains("Stop")    => "stop",
-        s if s.contains("Take")    => "take",
-        s if s.contains("Time")    => "time",
+        s if s.contains("Stop") => "stop",
+        s if s.contains("Take") => "take",
+        s if s.contains("Time") => "time",
         s if s.contains("Partial") => "partial",
-        s if s.contains("AI")      => "ai",    // BUG FIX: was mapped to "signal" (grey)
-        s if s.contains("Signal")  => "signal",
-        _                          => "signal",
+        s if s.contains("AI") => "ai", // BUG FIX: was mapped to "signal" (grey)
+        s if s.contains("Signal") => "signal",
+        _ => "signal",
     }
 }
 
@@ -2307,13 +2422,14 @@ fn consumer_shell_open(title: &str, active: &str) -> String {
             "<a href='{href}' style='padding:8px 18px;border-radius:6px;font-size:.88rem;\
              font-weight:{fw};color:{col};background:{bg};text-decoration:none'>{label}</a>",
             href = href,
-            fw   = if is_active { "600" } else { "400" },
-            col  = if is_active { "#e6edf3" } else { "#8b949e" },
-            bg   = if is_active { "#21262d" } else { "transparent" },
+            fw = if is_active { "600" } else { "400" },
+            col = if is_active { "#e6edf3" } else { "#8b949e" },
+            bg = if is_active { "#21262d" } else { "transparent" },
             label = label,
         )
     };
-    format!(r#"<!DOCTYPE html>
+    format!(
+        r#"<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -2369,6 +2485,7 @@ fn consumer_shell_open(title: &str, active: &str) -> String {
     {nav_history}
     {nav_tax}
     {nav_settings}
+    {nav_agents}
     <a href="/auth/logout" style="padding:8px 18px;border-radius:6px;font-size:.88rem;
        font-weight:400;color:#8b949e;background:transparent;text-decoration:none"
        title="Sign out">Sign out</a>
@@ -2376,11 +2493,12 @@ fn consumer_shell_open(title: &str, active: &str) -> String {
 </div>
 <div class="wrap">
 "#,
-        title        = title,
+        title = title,
         nav_overview = nav("Overview", "/app"),
-        nav_history  = nav("History",  "/app/history"),
-        nav_tax      = nav("Tax",       "/app/tax"),
-        nav_settings = nav("Settings",  "/app/settings"),
+        nav_history = nav("History", "/app/history"),
+        nav_tax = nav("Tax", "/app/tax"),
+        nav_settings = nav("Settings", "/app/settings"),
+        nav_agents = nav("Agents", "/app/agents"),
     )
 }
 
@@ -2702,15 +2820,22 @@ async fn consumer_app_handler(
 
     let (state_arc, tenant_id) = match resolve_consumer_state(&headers, &app).await {
         ConsumerStateResult::Ok { state, tenant_id } => (state, Some(tenant_id)),
-        ConsumerStateResult::NeedsLogin       => return axum::response::Redirect::to("/login").into_response(),
-        ConsumerStateResult::NeedsOnboarding { .. } => return axum::response::Redirect::to("/app/onboarding").into_response(),
+        ConsumerStateResult::NeedsLogin => {
+            return axum::response::Redirect::to("/login").into_response()
+        }
+        ConsumerStateResult::NeedsOnboarding { .. } => {
+            return axum::response::Redirect::to("/app/onboarding").into_response()
+        }
     };
 
     // Redirect to HL wallet setup if the user hasn't completed it yet
     if let Some(ref tid) = tenant_id {
         let setup_done = {
             let tenants = app.tenants.read().await;
-            tenants.get(tid).map(|h| h.config.hl_setup_done()).unwrap_or(true)
+            tenants
+                .get(tid)
+                .map(|h| h.config.hl_setup_done())
+                .unwrap_or(true)
         };
         if !setup_done {
             return axum::response::Redirect::to("/app/setup").into_response();
@@ -2724,7 +2849,8 @@ async fn consumer_app_handler(
         let zone_set = app.coinzilla_zone_id.is_some();
         let is_free = if let Some(ref tid) = tenant_id {
             let tenants = app.tenants.read().await;
-            tenants.get(tid)
+            tenants
+                .get(tid)
                 .map(|h| h.config.tier == crate::tenant::TenantTier::Free)
                 .unwrap_or(false)
         } else {
@@ -2733,17 +2859,26 @@ async fn consumer_app_handler(
         zone_set && is_free
     };
 
-    let committed: f64  = s.positions.iter().map(|p| p.size_usd).sum();
+    let committed: f64 = s.positions.iter().map(|p| p.size_usd).sum();
     let unrealised: f64 = s.positions.iter().map(|p| p.unrealised_pnl).sum();
-    let equity    = s.capital + committed + unrealised;
+    let equity = s.capital + committed + unrealised;
     let total_pnl = s.pnl + unrealised;
-    let pnl_pct   = if s.initial_capital > 0.0 { total_pnl / s.initial_capital * 100.0 } else { 0.0 };
-    let pnl_col   = if total_pnl >= 0.0 { "#3fb950" } else { "#f85149" };
-    let pnl_sign  = if total_pnl >= 0.0 { "+" } else { "-" };
+    let pnl_pct = if s.initial_capital > 0.0 {
+        total_pnl / s.initial_capital * 100.0
+    } else {
+        0.0
+    };
+    let pnl_col = if total_pnl >= 0.0 {
+        "#3fb950"
+    } else {
+        "#f85149"
+    };
+    let pnl_sign = if total_pnl >= 0.0 { "+" } else { "-" };
 
     // Referral block — only rendered when the operator has set REFERRAL_CODE
     let referral_block = match &s.referral_code {
-        Some(code) => format!(r#"<div class="card">
+        Some(code) => format!(
+            r#"<div class="card">
   <div class="card-label">Sign up for Hyperliquid</div>
   <div class="info-box">
     New to Hyperliquid? Create your account using our referral link and get a
@@ -2755,7 +2890,9 @@ async fn consumer_app_handler(
     <span class="note">Referral code: <b style="color:#e6edf3">{code}</b> · After creating your account,
     fund it with USDC and share your wallet address with us to get started.</span>
   </div>
-</div>"#, code = code),
+</div>"#,
+            code = code
+        ),
         None => String::new(),
     };
 
@@ -2764,7 +2901,8 @@ async fn consumer_app_handler(
         let zone_id = app.coinzilla_zone_id.as_deref().unwrap_or("");
         // Estimate CPM for tracking: $1.20 is the default established-publisher rate
         let cpm_est = 1.20_f64;
-        format!(r#"
+        format!(
+            r#"
 <div class="card" style="text-align:center;padding:12px 0 8px">
   <div style="font-size:.68rem;color:#484f58;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">
     Advertisement &nbsp;·&nbsp; <a href="/app/upgrade" style="color:#58a6ff;text-decoration:none">Remove ads with Pro</a>
@@ -2802,9 +2940,75 @@ async fn consumer_app_handler(
   setInterval(refreshAd, REFRESH_MS);
 }})();
 </script>
-"#, zone = zone_id, cpm = cpm_est)
+"#,
+            zone = zone_id,
+            cpm = cpm_est
+        )
     } else {
         String::new()
+    };
+
+    let pattern_insight_snapshot = {
+        let cache = app.pattern_cache.lock().await;
+        cache.latest()
+    };
+    let pattern_card = if let Some(insights) = pattern_insight_snapshot {
+        let summary = &insights.report_summary;
+        let date_str = insights.date.format("%Y-%m-%d").to_string();
+        let winner = summary
+            .daily_winner
+            .as_ref()
+            .map(|(sym, pnl)| format!("{} (${:0.2})", html_escape(sym), pnl))
+            .unwrap_or_else(|| "—".to_string());
+        let loser = summary
+            .daily_loser
+            .as_ref()
+            .map(|(sym, pnl)| format!("{} (${:0.2})", html_escape(sym), pnl))
+            .unwrap_or_else(|| "—".to_string());
+        let combo = insights.top_win_combos.first();
+        let combo_breakdown = combo
+            .map(|combo| html_escape(&combo.breakdown))
+            .unwrap_or_else(|| "—".to_string());
+        let combo_context = combo
+            .map(|combo| html_escape(&combo.context))
+            .unwrap_or_else(|| "—".to_string());
+        let combo_rate = combo.map(|combo| combo.win_rate * 100.0).unwrap_or(0.0);
+        format!(
+            r#"<div class="card">
+  <div class="card-label">AI pattern insights</div>
+  <div style="font-size:.9rem;color:#8b949e;margin-bottom:8px">Updated {date}</div>
+  <div class="metric-row" style="padding:4px 0">
+    <span class="ml">Winner</span>
+    <span class="mv">{winner}</span>
+  </div>
+  <div class="metric-row" style="padding:4px 0">
+    <span class="ml">Loser</span>
+    <span class="mv">{loser}</span>
+  </div>
+  <div style="font-size:.85rem;color:#e6edf3;margin-top:8px">
+    <div style="margin-bottom:4px">Top win combo</div>
+    <div style="font-size:.95rem;font-weight:600">{combo_breakdown}</div>
+    <div style="font-size:.8rem;color:#8b949e">{combo_context}</div>
+    <div style="font-size:.75rem;color:#58a6ff">Win rate {combo_rate:.0}%</div>
+  </div>
+  <a class="btn btn-green" href="/app/agents" style="margin-top:12px">Open Agent Console →</a>
+</div>"#,
+            date = date_str,
+            winner = winner,
+            loser = loser,
+            combo_breakdown = combo_breakdown,
+            combo_context = combo_context,
+            combo_rate = combo_rate,
+        )
+    } else {
+        r#"<div class="card">
+  <div class="card-label">Pattern insights</div>
+  <div class="info-box">
+    Run <code>cargo run --bin reporter</code> to refresh <code>reports/pattern_cache.json</code> and unlock the
+    latest win/loss combos before opening the agent console.
+  </div>
+</div>"#
+        .to_string()
     };
 
     let mut html = consumer_shell_open("My Account", "Overview");
@@ -2850,6 +3054,8 @@ async fn consumer_app_handler(
 {referral_block}
 
 {ad_block}
+
+{pattern_card}
 
 <p class="note" style="margin-top:8px;text-align:center">
   Auto-refreshes every 5 s · Last update: {ts}
@@ -2901,9 +3107,352 @@ async fn consumer_app_handler(
         ts              = s.last_update,
         referral_block  = referral_block,
         ad_block        = ad_block,
+        pattern_card    = pattern_card,
     ));
     html.push_str(consumer_shell_close());
     axum::response::Html(html).into_response()
+}
+
+fn html_escape(input: &str) -> String {
+    input
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#x27;")
+}
+
+async fn agent_app_handler(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let (state_arc, tenant_id) = match resolve_consumer_state(&headers, &app).await {
+        ConsumerStateResult::Ok { state, tenant_id } => (state, Some(tenant_id)),
+        ConsumerStateResult::NeedsLogin => {
+            return axum::response::Redirect::to("/login").into_response()
+        }
+        ConsumerStateResult::NeedsOnboarding { .. } => {
+            return axum::response::Redirect::to("/app/onboarding").into_response()
+        }
+    };
+
+    let s = state_arc.read().await;
+    let committed: f64 = s.positions.iter().map(|p| p.size_usd).sum();
+    let unrealised: f64 = s.positions.iter().map(|p| p.unrealised_pnl).sum();
+    let equity = s.capital + committed + unrealised;
+    let total_pnl = s.pnl + unrealised;
+    let positions_preview: Vec<_> = s
+        .positions
+        .iter()
+        .map(|p| {
+            json!({
+                "symbol": p.symbol,
+                "side": p.side,
+                "size_usd": p.size_usd,
+                "unrealised_pnl": p.unrealised_pnl,
+            })
+        })
+        .collect();
+    let init_payload = json!({
+        "capital": s.capital,
+        "equity": equity,
+        "total_pnl": total_pnl,
+        "positions": positions_preview,
+        "tenant_id": tenant_id.map(|id| id.as_str().to_owned()),
+    });
+    let html = format!(
+        r###"<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>OpenClaw Agent Control</title>
+  <style>
+    :root {{
+      color-scheme: dark;
+      font-family: 'Inter', system-ui, sans-serif;
+    }}
+    body {{
+      margin:0;
+      background:#060b12;
+      color:#e6edf3;
+    }}
+    .page {{
+      padding:28px;
+      max-width:1100px;
+      margin:0 auto;
+      display:flex;
+      flex-direction:column;
+      gap:18px;
+    }}
+    header {{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+    }}
+    header h1 {{
+      margin:0;
+      font-size:2rem;
+    }}
+    .grid {{
+      display:grid;
+      grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
+      gap:14px;
+    }}
+    .card {{
+      background:#0d1117;
+      border:1px solid #161b22;
+      border-radius:16px;
+      padding:18px;
+      box-shadow:0 10px 25px rgba(5,8,15,.5);
+    }}
+    .card h2 {{
+      margin-top:0;
+      font-size:1rem;
+      color:#8b949e;
+      text-transform:uppercase;
+      letter-spacing:.06em;
+    }}
+    .metric {{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      margin-bottom:6px;
+      font-size:1.05rem;
+    }}
+    .metric span {{
+      font-size:.9rem;
+      color:#8b949e;
+    }}
+    .list {{
+      margin:0;
+      padding:0;
+      list-style:none;
+      display:flex;
+      flex-direction:column;
+      gap:6px;
+      max-height:180px;
+      overflow:auto;
+    }}
+    .list li {{
+      padding:6px 8px;
+      background:#111720;
+      border-radius:8px;
+      font-size:.9rem;
+      display:flex;
+      justify-content:space-between;
+    }}
+    form {{
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
+      align-items:center;
+    }}
+    input, select {{
+      padding:10px 12px;
+      border-radius:10px;
+      border:1px solid #30363d;
+      background:#0d1117;
+      color:#e6edf3;
+      min-width:200px;
+    }}
+    button {{
+      background:#3fb950;
+      border:none;
+      border-radius:10px;
+      padding:10px 16px;
+      color:#0d1117;
+      font-weight:600;
+      cursor:pointer;
+      transition:.2s;
+    }}
+    button:hover {{
+      transform:translateY(-1px);
+    }}
+    .feedback {{
+      padding:12px;
+      border-radius:10px;
+      background:#0d1117;
+      border:1px solid #1d2633;
+      font-size:.9rem;
+      min-height:48px;
+    }}
+    .badge {{
+      display:inline-flex;
+      align-items:center;
+      gap:6px;
+    }}
+  </style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <div>
+      <h1>OpenClaw Agent Control</h1>
+      <p style="margin:4px 0 0;color:#58a6ff;font-size:.95rem;">Trade with the AI guardrail on behalf of x402 sessions.</p>
+    </div>
+    <a href="/app" style="color:#8b949e;text-decoration:none;border:1px solid #30363d;padding:8px 14px;border-radius:10px;">Return to Dashboard</a>
+  </header>
+  <div class="grid">
+    <div class="card">
+      <h2>Portfolio snapshot</h2>
+      <div class="metric">
+        <strong>Capital</strong>
+        <span id="capital-value">--</span>
+      </div>
+      <div class="metric">
+        <strong>Equity</strong>
+        <span id="equity-value">--</span>
+      </div>
+      <div class="metric">
+        <strong>Total PnL</strong>
+        <span id="pnl-value">--</span>
+      </div>
+      <h2 style="margin-top:14px;">Positions</h2>
+      <ul class="list" id="positions-list">
+        <li>Loading positions…</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h2>Guardrail combos</h2>
+      <div id="patterns-loading">Loading combos…</div>
+      <div id="pattern-combos" style="display:none;">
+        <p style="margin:0;font-size:.9rem;color:#8b949e;">Top win combo</p>
+        <p id="combo-breakdown" style="font-weight:600;margin:2px 0;"></p>
+        <p id="combo-context" style="margin:0;font-size:.8rem;color:#8b949e;"></p>
+        <p id="combo-winrate" style="margin:4px 0 0;font-size:.85rem;"></p>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Automation alert</h2>
+      <div id="alert-loading">Waiting for automation alert…</div>
+      <div id="alert-content" style="display:none;">
+        <p id="alert-updated" style="margin:0;font-size:.85rem;color:#58a6ff;"></p>
+        <p style="margin:6px 0 0;font-size:.9rem;">Winner: <strong id="alert-winner">—</strong></p>
+        <p style="margin:2px 0 0;font-size:.9rem;">Loser: <strong id="alert-loser">—</strong></p>
+        <p style="margin:10px 0 0;font-size:.9rem;">Top combo: <span id="alert-combo">—</span></p>
+      </div>
+    </div>
+  </div>
+  <form id="command-form">
+    <input type="text" id="command-input" placeholder="Tell Claude to change trades (e.g. close btc)" required />
+    <button type="submit">Send command</button>
+    <div class="badge" style="margin-left:auto;font-size:.8rem;color:#8b949e;">
+      Command publishes to /api/command on next cycle (≈30s)
+    </div>
+  </form>
+  <div id="command-feedback" class="feedback">Command responses will appear here.</div>
+</div>
+<script>
+  window.__AGENT_INIT = {init};
+
+  function formatMoney(value) {{
+    return `$${{value.toFixed(2)}}`;
+  }}
+
+  async function refreshState() {{
+    try {{
+      const response = await fetch('/api/state');
+      if (!response.ok) throw new Error('state fetch failed');
+      const data = await response.json();
+      document.getElementById('capital-value').textContent = formatMoney(data.free_capital ?? data.capital ?? 0);
+      document.getElementById('equity-value').textContent = formatMoney(data.capital + (data.open_positions || 0));
+      document.getElementById('pnl-value').textContent = formatMoney(data.pnl ?? 0);
+      const list = document.getElementById('positions-list');
+      list.innerHTML = '';
+      if ((data.positions || []).length === 0) {{
+        list.innerHTML = '<li>No open positions</li>';
+      }} else {{
+        data.positions.forEach(p => {{
+          const li = document.createElement('li');
+          li.innerHTML = `<span>${{p.symbol}} ({{p.side}})</span><span>${{formatMoney(p.unrealised_pnl)}}</span>`;
+          list.appendChild(li);
+        }});
+      }}
+    }} catch (err) {{
+      console.error(err);
+    }}
+  }}
+  refreshState();
+  setInterval(refreshState, 25000);
+
+  async function refreshPatterns() {{
+    try {{
+      const res = await fetch('/api/report/patterns');
+      if (!res.ok) throw new Error('patterns unavailable');
+      const data = await res.json();
+      const combo = (data.top_win_combos || [])[0] || null;
+      document.getElementById('patterns-loading').style.display = 'none';
+      document.getElementById('pattern-combos').style.display = 'block';
+      if (combo) {{
+        document.getElementById('combo-breakdown').textContent = combo.breakdown;
+        document.getElementById('combo-context').textContent = combo.context;
+        document.getElementById('combo-winrate').textContent = `${{(combo.win_rate * 100).toFixed(0)}}% win rate`;
+      }} else {{
+        document.getElementById('combo-breakdown').textContent = 'No combo data yet';
+        document.getElementById('combo-context').textContent = '';
+        document.getElementById('combo-winrate').textContent = '';
+      }}
+    }} catch (err) {{
+      document.getElementById('patterns-loading').textContent = 'Unable to load combos yet.';
+      console.error(err);
+    }}
+  }}
+  refreshPatterns();
+  setInterval(refreshPatterns, 15000);
+
+  async function refreshAlert() {{
+    try {{
+      const res = await fetch('/api/report/patterns/alerts');
+      if (!res.ok) throw new Error('alert missing');
+      const data = await res.json();
+      document.getElementById('alert-loading').style.display = 'none';
+      document.getElementById('alert-content').style.display = 'block';
+      document.getElementById('alert-updated').textContent = `Updated ${{data.updated_at}}`;
+      document.getElementById('alert-winner').textContent = data.winner ? `${{data.winner[0]}} ($${{data.winner[1].toFixed(2)}})` : '—';
+      document.getElementById('alert-loser').textContent = data.loser ? `${{data.loser[0]}} ($${{data.loser[1].toFixed(2)}})` : '—';
+      document.getElementById('alert-combo').textContent = `${{data.top_combo.breakdown}} · ${{data.top_combo.context}}`;
+    }} catch (err) {{
+      document.getElementById('alert-loading').textContent = 'Awaiting automation trigger…';
+      console.error(err);
+    }}
+  }}
+  refreshAlert();
+  setInterval(refreshAlert, 20000);
+
+  document.getElementById('command-form').addEventListener('submit', async function(e) {{
+    e.preventDefault();
+    const input = document.getElementById('command-input');
+    const command = input.value.trim();
+    if (!command) return;
+    const respEl = document.getElementById('command-feedback');
+    respEl.textContent = 'Sending command…';
+    try {{
+      const res = await fetch('/api/command', {{
+        method: 'POST',
+        headers: {{ 'Content-Type': 'application/json' }},
+        body: JSON.stringify({{ command }}),
+      }});
+      const data = await res.json();
+      if (!data.ok) {{
+        respEl.textContent = data.msg || 'Command rejected';
+      }} else {{
+        respEl.textContent = `Queued ${{data.action}} ${{data.symbol ?? ''}}`.trim();
+      }}
+    }} catch (err) {{
+      respEl.textContent = 'Command failed — check console.';
+      console.error(err);
+    }}
+    input.value = '';
+  }});
+</script>
+</body>
+</html>"###,
+        init = init_payload.to_string(),
+    );
+    Html(html).into_response()
 }
 
 // ─── Trade history page /app/history ─────────────────────────────────────────
@@ -2916,24 +3465,34 @@ async fn consumer_history_handler(
 
     let state_arc = match resolve_consumer_state(&headers, &app).await {
         ConsumerStateResult::Ok { state, .. } => state,
-        ConsumerStateResult::NeedsLogin       => return axum::response::Redirect::to("/login").into_response(),
-        ConsumerStateResult::NeedsOnboarding { .. } => return axum::response::Redirect::to("/app/onboarding").into_response(),
+        ConsumerStateResult::NeedsLogin => {
+            return axum::response::Redirect::to("/login").into_response()
+        }
+        ConsumerStateResult::NeedsOnboarding { .. } => {
+            return axum::response::Redirect::to("/app/onboarding").into_response()
+        }
     };
     let s = state_arc.read().await;
 
     let rows: String = if s.closed_trades.is_empty() {
         "<tr><td colspan='9' style='color:#8b949e;text-align:center;padding:20px'>No closed trades yet.</td></tr>".to_string()
     } else {
-        s.closed_trades.iter().rev().map(|t| {
-            let pnl_col = if t.pnl >= 0.0 { "#3fb950" } else { "#f85149" };
-            let pnl_sign = if t.pnl >= 0.0 { "+" } else { "" };
-            let fees = if t.fees_est > 0.0 { t.fees_est }
-                       else { crate::ledger::estimate_fees(t.size_usd, t.leverage.max(1.0)) };
-            let net = t.pnl - fees;
-            let net_col = if net >= 0.0 { "#3fb950" } else { "#f85149" };
-            let date = t.closed_at.get(..10).unwrap_or(&t.closed_at);
-            format!(
-                "<tr>\
+        s.closed_trades
+            .iter()
+            .rev()
+            .map(|t| {
+                let pnl_col = if t.pnl >= 0.0 { "#3fb950" } else { "#f85149" };
+                let pnl_sign = if t.pnl >= 0.0 { "+" } else { "" };
+                let fees = if t.fees_est > 0.0 {
+                    t.fees_est
+                } else {
+                    crate::ledger::estimate_fees(t.size_usd, t.leverage.max(1.0))
+                };
+                let net = t.pnl - fees;
+                let net_col = if net >= 0.0 { "#3fb950" } else { "#f85149" };
+                let date = t.closed_at.get(..10).unwrap_or(&t.closed_at);
+                format!(
+                    "<tr>\
                    <td class='muted' style='font-size:.75rem'>{date}</td>\
                    <td><b>{sym}</b></td>\
                    <td style='color:{sc}'>{side}</td>\
@@ -2944,32 +3503,44 @@ async fn consumer_history_handler(
                    <td style='color:#f85149'>-{fees:.3}</td>\
                    <td style='color:{nc};font-weight:600'>{nps}{net:.2}</td>\
                  </tr>",
-                date  = date,
-                sym   = t.symbol,
-                side  = t.side,
-                sc    = if t.side == "LONG" { "#3fb950" } else { "#f85149" },
-                entry = t.entry,
-                exit  = t.exit,
-                lev   = t.leverage.max(1.0),
-                pc    = pnl_col,
-                ps    = pnl_sign,
-                pnl   = t.pnl,
-                fees  = fees,
-                nc    = net_col,
-                nps   = if net >= 0.0 { "+" } else { "" },
-                net   = net,
-            )
-        }).collect()
+                    date = date,
+                    sym = t.symbol,
+                    side = t.side,
+                    sc = if t.side == "LONG" {
+                        "#3fb950"
+                    } else {
+                        "#f85149"
+                    },
+                    entry = t.entry,
+                    exit = t.exit,
+                    lev = t.leverage.max(1.0),
+                    pc = pnl_col,
+                    ps = pnl_sign,
+                    pnl = t.pnl,
+                    fees = fees,
+                    nc = net_col,
+                    nps = if net >= 0.0 { "+" } else { "" },
+                    net = net,
+                )
+            })
+            .collect()
     };
 
     // Summary totals
     let total_gross: f64 = s.closed_trades.iter().map(|t| t.pnl).sum();
-    let total_fees: f64  = s.closed_trades.iter().map(|t| {
-        if t.fees_est > 0.0 { t.fees_est }
-        else { crate::ledger::estimate_fees(t.size_usd, t.leverage.max(1.0)) }
-    }).sum();
+    let total_fees: f64 = s
+        .closed_trades
+        .iter()
+        .map(|t| {
+            if t.fees_est > 0.0 {
+                t.fees_est
+            } else {
+                crate::ledger::estimate_fees(t.size_usd, t.leverage.max(1.0))
+            }
+        })
+        .sum();
     let total_net = total_gross - total_fees;
-    let wins  = s.closed_trades.iter().filter(|t| t.pnl > 0.0).count();
+    let wins = s.closed_trades.iter().filter(|t| t.pnl > 0.0).count();
     let total = s.closed_trades.len();
 
     let mut html = consumer_shell_open("Trade History", "History");
@@ -3034,9 +3605,11 @@ async fn consumer_tax_handler(
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
     match resolve_consumer_state(&headers, &app).await {
-        ConsumerStateResult::Ok { .. }          => consumer_tax_page().into_response(),
-        ConsumerStateResult::NeedsLogin         => axum::response::Redirect::to("/login").into_response(),
-        ConsumerStateResult::NeedsOnboarding{..}=> axum::response::Redirect::to("/app/onboarding").into_response(),
+        ConsumerStateResult::Ok { .. } => consumer_tax_page().into_response(),
+        ConsumerStateResult::NeedsLogin => axum::response::Redirect::to("/login").into_response(),
+        ConsumerStateResult::NeedsOnboarding { .. } => {
+            axum::response::Redirect::to("/app/onboarding").into_response()
+        }
     }
 }
 
@@ -3081,7 +3654,8 @@ fn consumer_tax_page() -> axum::response::Html<String> {
     };
 
     let mut html = consumer_shell_open("Tax Report", "Tax");
-    html.push_str(&format!(r#"
+    html.push_str(&format!(
+        r#"
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
   <div>
     <div style="font-size:.88rem;font-weight:600;color:#e6edf3">Annual P&amp;L Summary</div>
@@ -3124,22 +3698,30 @@ async fn consumer_tax_csv_handler(
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
     match resolve_consumer_state(&headers, &app).await {
-        ConsumerStateResult::NeedsLogin          => return axum::response::Redirect::to("/login").into_response(),
-        ConsumerStateResult::NeedsOnboarding{..} => return axum::response::Redirect::to("/app/onboarding").into_response(),
-        ConsumerStateResult::Ok { .. }           => {},
+        ConsumerStateResult::NeedsLogin => {
+            return axum::response::Redirect::to("/login").into_response()
+        }
+        ConsumerStateResult::NeedsOnboarding { .. } => {
+            return axum::response::Redirect::to("/app/onboarding").into_response()
+        }
+        ConsumerStateResult::Ok { .. } => {}
     }
     let (csv, _) = crate::ledger::read_all();
-    let filename  = format!("tradingbots_trades_{}.csv",
-        chrono::Utc::now().format("%Y%m%d"));
+    let filename = format!(
+        "tradingbots_trades_{}.csv",
+        chrono::Utc::now().format("%Y%m%d")
+    );
     (
         [
-            ("Content-Type",        "text/csv; charset=utf-8"),
-            ("Content-Disposition", Box::leak(
-                format!("attachment; filename=\"{}\"", filename).into_boxed_str()
-            )),
+            ("Content-Type", "text/csv; charset=utf-8"),
+            (
+                "Content-Disposition",
+                Box::leak(format!("attachment; filename=\"{}\"", filename).into_boxed_str()),
+            ),
         ],
         csv,
-    ).into_response()
+    )
+        .into_response()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3152,9 +3734,9 @@ async fn consumer_tax_csv_handler(
 /// HMAC is valid; `None` otherwise (missing, tampered, or expired).
 fn get_session_tenant_id(
     headers: &axum::http::HeaderMap,
-    secret:  &str,
+    secret: &str,
 ) -> Option<crate::tenant::TenantId> {
-    let cookie_hdr  = headers.get("cookie")?.to_str().ok()?;
+    let cookie_hdr = headers.get("cookie")?.to_str().ok()?;
     let session_val = crate::privy::extract_session_cookie(cookie_hdr)?;
     crate::privy::verify_session(session_val, secret).ok()
 }
@@ -3163,7 +3745,7 @@ fn get_session_tenant_id(
 pub enum ConsumerStateResult {
     /// Authenticated and has accepted terms — ready to serve trading data.
     Ok {
-        state:     SharedState,
+        state: SharedState,
         tenant_id: crate::tenant::TenantId,
     },
     /// No valid session cookie (or Privy is not configured in single-op mode).
@@ -3183,26 +3765,29 @@ pub enum ConsumerStateResult {
 ///   terms check, return `ConsumerStateResult::Ok` with the global state.
 async fn resolve_consumer_state(
     headers: &axum::http::HeaderMap,
-    app:     &AppState,
+    app: &AppState,
 ) -> ConsumerStateResult {
     // Single-operator mode: no auth, no terms wall
     if app.privy_app_id.is_none() {
         // Use a synthetic TenantId for the operator in single-op mode
         let tid = crate::tenant::TenantId::from_str("operator");
-        return ConsumerStateResult::Ok { state: app.bot_state.clone(), tenant_id: tid };
+        return ConsumerStateResult::Ok {
+            state: app.bot_state.clone(),
+            tenant_id: tid,
+        };
     }
 
     // Multi-tenant mode: require valid session cookie
     let tid = match get_session_tenant_id(headers, &app.session_secret) {
         Some(t) => t,
-        None    => return ConsumerStateResult::NeedsLogin,
+        None => return ConsumerStateResult::NeedsLogin,
     };
 
     // Check terms acceptance
     let tenants = app.tenants.read().await;
-    let handle  = match tenants.get(&tid) {
+    let handle = match tenants.get(&tid) {
         Some(h) => h,
-        None    => return ConsumerStateResult::NeedsLogin,
+        None => return ConsumerStateResult::NeedsLogin,
     };
 
     if handle.config.terms_accepted_at.is_none() {
@@ -3210,7 +3795,7 @@ async fn resolve_consumer_state(
     }
 
     ConsumerStateResult::Ok {
-        state:     handle.state.clone(),
+        state: handle.state.clone(),
         tenant_id: tid,
     }
 }
@@ -3225,17 +3810,17 @@ struct SessionRequest {
     /// Invite code entered on the login page — required for new signups.
     /// Existing users who already have a session don't need to re-supply this.
     #[serde(default)]
-    invite_code:  Option<String>,
+    invite_code: Option<String>,
     /// First-touch acquisition source (utm_source) — sent by the login page JS
     /// from the URL query params / cookie captured on landing.
     #[serde(default)]
-    utm_source:   Option<String>,
+    utm_source: Option<String>,
     /// utm_campaign captured at landing — sent through to funnel_events.
     #[serde(default)]
     utm_campaign: Option<String>,
     /// True when the user arrived via our Hyperliquid referral link.
     #[serde(default)]
-    hl_referred:  bool,
+    hl_referred: bool,
 }
 
 /// `POST /auth/session`
@@ -3249,21 +3834,26 @@ async fn auth_session_handler(
     State(app): State<AppState>,
     axum::Json(req): axum::Json<SessionRequest>,
 ) -> axum::response::Response {
-    use axum::response::IntoResponse;
     use axum::http::StatusCode;
+    use axum::response::IntoResponse;
 
     let privy_app_id = match &app.privy_app_id {
         Some(id) => id.clone(),
-        None     => return (StatusCode::SERVICE_UNAVAILABLE,
-                            "Privy is not configured on this server").into_response(),
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Privy is not configured on this server",
+            )
+                .into_response()
+        }
     };
 
     // Verify the Privy JWT (ES256, JWKS-backed)
-    let privy_did = match crate::privy::verify_privy_jwt(
-        &req.token, &privy_app_id, &app.jwks_cache,
-    ).await {
+    let privy_did = match crate::privy::verify_privy_jwt(&req.token, &privy_app_id, &app.jwks_cache)
+        .await
+    {
         Ok(did) => did,
-        Err(e)  => {
+        Err(e) => {
             log::warn!("⚠ Privy JWT verification failed: {}", e);
             return (StatusCode::UNAUTHORIZED, "Invalid or expired Privy token").into_response();
         }
@@ -3289,23 +3879,26 @@ async fn auth_session_handler(
         };
 
         match &app.db {
-            Some(db) => {
-                match crate::invite::claim_invite_code(db, &code).await {
-                    Ok(Some(invite)) => { claimed_invite = Some(invite); }
-                    Ok(None) => {
-                        return (StatusCode::FORBIDDEN,
-                            axum::Json(serde_json::json!({"error":"invalid_invite","message":"That invite code is invalid, already used, or expired. Ask for a new one."}))).into_response();
-                    }
-                    Err(e) => {
-                        log::error!("invite claim DB error: {}", e);
-                        return (StatusCode::INTERNAL_SERVER_ERROR,
-                            axum::Json(serde_json::json!({"error":"db_error","message":"Could not validate invite code. Please try again."}))).into_response();
-                    }
+            Some(db) => match crate::invite::claim_invite_code(db, &code).await {
+                Ok(Some(invite)) => {
+                    claimed_invite = Some(invite);
                 }
-            }
+                Ok(None) => {
+                    return (StatusCode::FORBIDDEN,
+                            axum::Json(serde_json::json!({"error":"invalid_invite","message":"That invite code is invalid, already used, or expired. Ask for a new one."}))).into_response();
+                }
+                Err(e) => {
+                    log::error!("invite claim DB error: {}", e);
+                    return (StatusCode::INTERNAL_SERVER_ERROR,
+                            axum::Json(serde_json::json!({"error":"db_error","message":"Could not validate invite code. Please try again."}))).into_response();
+                }
+            },
             None => {
                 // No DB — accept any non-empty code in dev/paper mode
-                log::warn!("⚠ No DB — invite code '{}' accepted without validation", code);
+                log::warn!(
+                    "⚠ No DB — invite code '{}' accepted without validation",
+                    code
+                );
             }
         }
     }
@@ -3390,8 +3983,8 @@ async fn auth_session_handler(
         if let (Some(db), Some(invite)) = (&app.db, &claimed_invite) {
             let tenant_uuid = uuid::Uuid::parse_str(tenant_id.as_str()).ok();
             let campaign_id = invite.campaign_id;
-            let invited_by  = invite.created_by;
-            let code_used   = req.invite_code.clone().unwrap_or_default();
+            let invited_by = invite.created_by;
+            let code_used = req.invite_code.clone().unwrap_or_default();
 
             if let Some(tid) = tenant_uuid {
                 let _ = sqlx::query!(
@@ -3411,13 +4004,14 @@ async fn auth_session_handler(
     // ── Fire funnel events (non-blocking) ─────────────────────────────────────
     crate::funnel::auth_success(
         &app.db,
-        "",           // anon_id — client fires LOGIN_CLICK with it separately
+        "", // anon_id — client fires LOGIN_CLICK with it separately
         &tenant_id,
         is_new,
         referral_source.as_deref(),
         req.hl_referred,
         req.utm_campaign.as_deref(),
-    ).await;
+    )
+    .await;
 
     // ── Issue HMAC-signed session cookie (7-day TTL) ───────────────────────
     let set_cookie = crate::privy::set_session_header(&tenant_id, &app.session_secret);
@@ -3434,7 +4028,8 @@ async fn auth_session_handler(
         .header("Content-Type", "application/json")
         .body(axum::body::Body::from(format!(
             r#"{{"ok":true,"tenant_id":"{}","in_campaign":{}}}"#,
-            tenant_id.as_str(), in_campaign
+            tenant_id.as_str(),
+            in_campaign
         )))
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
@@ -3442,12 +4037,10 @@ async fn auth_session_handler(
 /// `GET /auth/logout`
 ///
 /// Clears the session cookie and redirects to `/login`.
-async fn auth_logout_handler(
-    State(_app): State<AppState>,
-) -> axum::response::Response {
+async fn auth_logout_handler(State(_app): State<AppState>) -> axum::response::Response {
     axum::response::Response::builder()
         .status(302)
-        .header("Location",  "/login")
+        .header("Location", "/login")
         .header("Set-Cookie", crate::privy::clear_session_header())
         .body(axum::body::Body::empty())
         .unwrap()
@@ -3459,7 +4052,10 @@ async fn privy_bundle_handler() -> impl axum::response::IntoResponse {
     use axum::http::header;
     (
         [
-            (header::CONTENT_TYPE,  "application/javascript; charset=utf-8"),
+            (
+                header::CONTENT_TYPE,
+                "application/javascript; charset=utf-8",
+            ),
             (header::CACHE_CONTROL, "public, max-age=86400"),
         ],
         PRIVY_BUNDLE_JS,
@@ -3474,19 +4070,17 @@ async fn privy_bundle_handler() -> impl axum::response::IntoResponse {
 ///   "Login" button that triggers Privy's authentication modal.
 /// - When Privy is not configured: shows a message directing to `/app`
 ///   (single-operator mode — auth not required).
-async fn login_handler(
-    State(app): State<AppState>,
-) -> axum::response::Html<String> {
+async fn login_handler(State(app): State<AppState>) -> axum::response::Html<String> {
     let body = if let Some(ref app_id) = app.privy_app_id {
         // Build optional walletConnectCloudProjectId JS config key.
         // When env var is set we inject it; otherwise omit so Privy falls back
         // to injected-wallet-only mode (MetaMask browser extension).
         let wc_config = match &app.walletconnect_project_id {
-            Some(id) if !id.is_empty() =>
-                format!(", walletConnectCloudProjectId: '{}'", id),
+            Some(id) if !id.is_empty() => format!(", walletConnectCloudProjectId: '{}'", id),
             _ => String::new(),
         };
-        format!(r#"<!DOCTYPE html>
+        format!(
+            r#"<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -3856,7 +4450,10 @@ import('/static/privy-login.js').then(({{ PrivyProvider, usePrivy, createElement
   setErr('Could not load authentication SDK: ' + e.message);
 }});
 </script>
-</body></html>"#, app_id = app_id, wc_config = wc_config)
+</body></html>"#,
+            app_id = app_id,
+            wc_config = wc_config
+        )
     } else {
         // Single-operator mode — Privy not configured
         r#"<!DOCTYPE html>
@@ -3881,7 +4478,8 @@ import('/static/privy-login.js').then(({{ PrivyProvider, usePrivy, createElement
      This deployment is running in single-operator mode.</p>
   <a href="/app">Open dashboard →</a>
 </div>
-</body></html>"#.to_string()
+</body></html>"#
+            .to_string()
     };
     axum::response::Html(body)
 }
@@ -3920,7 +4518,7 @@ async fn onboarding_handler(
     if app.privy_app_id.is_some() {
         let tid = match get_session_tenant_id(&headers, &app.session_secret) {
             Some(t) => t,
-            None    => return axum::response::Redirect::to("/login").into_response(),
+            None => return axum::response::Redirect::to("/login").into_response(),
         };
         // If already accepted, skip this page
         let tenants = app.tenants.read().await;
@@ -4080,7 +4678,7 @@ async fn onboarding_accept_handler(
 
     let tid = match get_session_tenant_id(&headers, &app.session_secret) {
         Some(t) => t,
-        None    => return axum::response::Redirect::to("/login").into_response(),
+        None => return axum::response::Redirect::to("/login").into_response(),
     };
 
     // Accept ToS (idempotent)
@@ -4092,14 +4690,16 @@ async fn onboarding_accept_handler(
     // Generate HL trading wallet if the tenant doesn't have one yet
     let needs_wallet = {
         let tenants = app.tenants.read().await;
-        tenants.get(&tid).map(|h| !h.config.has_hl_wallet()).unwrap_or(false)
+        tenants
+            .get(&tid)
+            .map(|h| !h.config.has_hl_wallet())
+            .unwrap_or(false)
     };
 
     if needs_wallet {
         let (address, private_key) = crate::hl_wallet::generate_keypair();
-        let key_enc = crate::hl_wallet::encrypt_key(
-            &private_key, &app.session_secret, tid.as_str(),
-        );
+        let key_enc =
+            crate::hl_wallet::encrypt_key(&private_key, &app.session_secret, tid.as_str());
 
         // Update in-memory tenant
         {
@@ -4124,7 +4724,10 @@ async fn onboarding_accept_handler(
     // If setup already acknowledged on a previous visit, skip straight to /app
     let setup_done = {
         let tenants = app.tenants.read().await;
-        tenants.get(&tid).map(|h| h.config.hl_setup_done()).unwrap_or(false)
+        tenants
+            .get(&tid)
+            .map(|h| h.config.hl_setup_done())
+            .unwrap_or(false)
     };
 
     if setup_done {
@@ -4147,28 +4750,50 @@ async fn consumer_settings_handler(
 
     let tid = match resolve_consumer_state(&headers, &app).await {
         ConsumerStateResult::Ok { tenant_id, .. } => tenant_id,
-        ConsumerStateResult::NeedsLogin           => return axum::response::Redirect::to("/login").into_response(),
-        ConsumerStateResult::NeedsOnboarding{..}  => return axum::response::Redirect::to("/app/onboarding").into_response(),
+        ConsumerStateResult::NeedsLogin => {
+            return axum::response::Redirect::to("/login").into_response()
+        }
+        ConsumerStateResult::NeedsOnboarding { .. } => {
+            return axum::response::Redirect::to("/app/onboarding").into_response()
+        }
     };
 
-    let (display_name, email, wallet, tier, trial_days, terms_ts, wallet_ts, hl_balance,
-         net_dep, total_dep, total_with, max_pos, trial_expired,
-         hl_trading_addr, hl_setup_done) = {
+    let (
+        display_name,
+        email,
+        wallet,
+        tier,
+        trial_days,
+        terms_ts,
+        wallet_ts,
+        hl_balance,
+        net_dep,
+        total_dep,
+        total_with,
+        max_pos,
+        trial_expired,
+        hl_trading_addr,
+        hl_setup_done,
+    ) = {
         let tenants = app.tenants.read().await;
         let h = match tenants.get(&tid) {
             Some(h) => h,
-            None    => return axum::response::Redirect::to("/login").into_response(),
+            None => return axum::response::Redirect::to("/login").into_response(),
         };
-        let fund_sum  = crate::fund_tracker::summary(&tid);
+        let fund_sum = crate::fund_tracker::summary(&tid);
         (
             h.config.display_name.clone(),
             h.config.email.clone().unwrap_or_else(|| "—".to_string()),
             h.config.wallet_address.clone(),
             format!("{:?}", h.config.tier),
             h.config.trial_days_remaining(),
-            h.config.terms_accepted_at.map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
+            h.config
+                .terms_accepted_at
+                .map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
                 .unwrap_or_else(|| "—".to_string()),
-            h.config.wallet_linked_at.map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
+            h.config
+                .wallet_linked_at
+                .map(|t| t.format("%Y-%m-%d %H:%M UTC").to_string())
                 .unwrap_or_else(|| "—".to_string()),
             h.config.hl_balance_usd,
             fund_sum.net_deposits,
@@ -4182,7 +4807,8 @@ async fn consumer_settings_handler(
     };
 
     let wallet_section = if let Some(ref addr) = wallet {
-        format!(r#"
+        format!(
+            r#"
 <div class="metric-row">
   <span class="ml">HL Wallet</span>
   <span class="mv" style="font-family:monospace;font-size:.78rem">{addr}</span>
@@ -4195,16 +4821,17 @@ async fn consumer_settings_handler(
   <span class="ml">Wallet linked</span>
   <span class="mv">{wallet_ts}</span>
 </div>"#,
-            addr       = addr,
+            addr = addr,
             hl_balance = hl_balance,
-            wallet_ts  = wallet_ts,
+            wallet_ts = wallet_ts,
         )
     } else {
         r#"<div class="info-box" style="margin-top:4px">
   No wallet linked yet. Paste your Hyperliquid wallet address (0x…) below.
   Your funds never leave your HL account — we only need the address to query
   your balance and attribute trades to your account.
-</div>"#.to_string()
+</div>"#
+            .to_string()
     };
 
     // HL auto-generated trading wallet section (separate from the auth/Privy wallet)
@@ -4214,8 +4841,11 @@ async fn consumer_settings_handler(
   <span class="ml" style="color:#e3b341">Setup incomplete</span>
   <span class="mv"><a href="/app/setup" style="color:#58a6ff">Resume setup wizard →</a></span>
 </div>"#
-        } else { "" };
-        format!(r#"
+        } else {
+            ""
+        };
+        format!(
+            r#"
 <div class="card" style="margin-top:16px">
   <div class="card-label">Your Trading Wallet</div>
   <p style="font-size:.8rem;color:#8b949e;margin-bottom:12px">
@@ -4243,7 +4873,7 @@ async fn consumer_settings_handler(
     You can always re-export it here. Never share it with anyone.
   </p>
 </div>"#,
-            addr       = addr,
+            addr = addr,
             setup_link = setup_link,
         )
     } else {
@@ -4251,18 +4881,21 @@ async fn consumer_settings_handler(
     };
 
     let tier_badge = match tier.as_str() {
-        "Pro"      => r#"<span style="color:#3fb950;font-weight:700">Pro</span>"#,
+        "Pro" => r#"<span style="color:#3fb950;font-weight:700">Pro</span>"#,
         "Internal" => r#"<span style="color:#e3b341;font-weight:700">Internal</span>"#,
-        _          => r#"<span style="color:#8b949e;font-weight:600">Free</span>"#,
+        _ => r#"<span style="color:#8b949e;font-weight:600">Free</span>"#,
     };
 
     let trial_note = if trial_days > 0 {
-        format!(r#"<span style="color:#e3b341;font-size:.78rem;margin-left:6px">
+        format!(
+            r#"<span style="color:#e3b341;font-size:.78rem;margin-left:6px">
   ({trial_days} trial day{s} remaining)</span>"#,
             trial_days = trial_days,
-            s          = if trial_days == 1 { "" } else { "s" },
+            s = if trial_days == 1 { "" } else { "s" },
         )
-    } else { String::new() };
+    } else {
+        String::new()
+    };
 
     // Position cap row — shown in account card
     let pos_cap_row = {
@@ -4274,19 +4907,23 @@ async fn consumer_settings_handler(
         let cap_colour = if trial_expired { "#f85149" } else { "#3fb950" };
         let cap_hint = if trial_expired {
             r#" &nbsp;<span style="font-size:.75rem;color:#8b949e">(upgrade to Pro for unlimited)</span>"#
-        } else { "" };
-        format!(r#"<div class="metric-row">
+        } else {
+            ""
+        };
+        format!(
+            r#"<div class="metric-row">
     <span class="ml">Open positions</span>
     <span class="mv" style="color:{cap_colour}">{cap_str}{cap_hint}</span>
   </div>"#,
             cap_colour = cap_colour,
-            cap_str    = cap_str,
-            cap_hint   = cap_hint,
+            cap_str = cap_str,
+            cap_hint = cap_hint,
         )
     };
 
     let mut html = consumer_shell_open("Settings", "Settings");
-    html.push_str(&format!(r#"
+    html.push_str(&format!(
+        r#"
 <div class="card">
   <div class="card-label">Account</div>
   <div class="metric-row">
@@ -4354,17 +4991,21 @@ async fn consumer_settings_handler(
   <a href="/auth/logout">sign out</a>.
 </p>
 "#,
-        display_name              = display_name,
-        email                     = email,
-        tier_badge                = tier_badge,
-        trial_note                = trial_note,
-        pos_cap_row               = pos_cap_row,
-        terms_ts                  = terms_ts,
-        wallet_section            = wallet_section,
-        link_label                = if wallet.is_some() { "Update" } else { "Link Wallet" },
-        total_dep                 = total_dep,
-        total_with                = total_with,
-        net_dep                   = net_dep,
+        display_name = display_name,
+        email = email,
+        tier_badge = tier_badge,
+        trial_note = trial_note,
+        pos_cap_row = pos_cap_row,
+        terms_ts = terms_ts,
+        wallet_section = wallet_section,
+        link_label = if wallet.is_some() {
+            "Update"
+        } else {
+            "Link Wallet"
+        },
+        total_dep = total_dep,
+        total_with = total_with,
+        net_dep = net_dep,
         hl_trading_wallet_section = hl_trading_wallet_section,
         upgrade_block = if tier == "Free" && trial_expired {
             // Trial has expired — hard upgrade call-to-action
@@ -4394,7 +5035,9 @@ async fn consumer_settings_handler(
   </p>
   <a href="/billing/checkout" class="btn btn-green" data-funnel="upgrade_click">Upgrade to Pro →</a>
 </div>"#
-        } else { "" },
+        } else {
+            ""
+        },
     ));
     html.push_str(consumer_shell_close());
     axum::response::Html(html).into_response()
@@ -4410,21 +5053,25 @@ async fn consumer_settings_wallet_handler(
 
     let tid = match get_session_tenant_id(&headers, &app.session_secret) {
         Some(t) => t,
-        None    => return axum::response::Redirect::to("/login").into_response(),
+        None => return axum::response::Redirect::to("/login").into_response(),
     };
 
     let address = match form.get("address") {
         Some(a) => a.trim().to_string(),
-        None    => return axum::response::Redirect::to("/app/settings?error=missing_address").into_response(),
+        None => {
+            return axum::response::Redirect::to("/app/settings?error=missing_address")
+                .into_response()
+        }
     };
 
     {
         let mut tenants = app.tenants.write().await;
         match tenants.link_wallet(&tid, &address) {
-            Ok(_)  => log::info!("🔗 Tenant {} updated wallet to {}", tid, address),
+            Ok(_) => log::info!("🔗 Tenant {} updated wallet to {}", tid, address),
             Err(e) => {
                 log::warn!("⚠ Wallet link failed for tenant {}: {}", tid, e);
-                return axum::response::Redirect::to("/app/settings?error=invalid_address").into_response();
+                return axum::response::Redirect::to("/app/settings?error=invalid_address")
+                    .into_response();
             }
         }
     }
@@ -4442,17 +5089,23 @@ async fn consumer_settings_wallet_handler(
 /// or incorrect.  Username is always `"admin"`.
 fn check_admin_auth(headers: &axum::http::HeaderMap, password: &str) -> bool {
     let auth_header = match headers.get("authorization") {
-        Some(v) => match v.to_str() { Ok(s) => s, Err(_) => return false },
-        None    => return false,
+        Some(v) => match v.to_str() {
+            Ok(s) => s,
+            Err(_) => return false,
+        },
+        None => return false,
     };
     let encoded = match auth_header.strip_prefix("Basic ") {
         Some(e) => e,
-        None    => return false,
+        None => return false,
     };
     use base64::Engine as _;
     let decoded = match base64::engine::general_purpose::STANDARD.decode(encoded) {
-        Ok(bytes) => match String::from_utf8(bytes) { Ok(s) => s, Err(_) => return false },
-        Err(_)    => return false,
+        Ok(bytes) => match String::from_utf8(bytes) {
+            Ok(s) => s,
+            Err(_) => return false,
+        },
+        Err(_) => return false,
     };
     // Expected format: "admin:<password>"
     decoded == format!("admin:{}", password)
@@ -4464,7 +5117,10 @@ fn www_authenticate_response() -> axum::response::Response {
     use axum::response::IntoResponse;
     axum::response::Response::builder()
         .status(401)
-        .header("WWW-Authenticate", r#"Basic realm="TradingBots.fun Admin", charset="UTF-8""#)
+        .header(
+            "WWW-Authenticate",
+            r#"Basic realm="TradingBots.fun Admin", charset="UTF-8""#,
+        )
         .body(axum::body::Body::from("Unauthorized"))
         .unwrap_or_else(|_| axum::http::StatusCode::UNAUTHORIZED.into_response())
 }
@@ -4478,8 +5134,13 @@ async fn admin_dashboard_handler(
 
     let password = match &app.admin_password {
         Some(p) => p.clone(),
-        None    => return (axum::http::StatusCode::SERVICE_UNAVAILABLE,
-                          "Admin panel is not configured. Set ADMIN_PASSWORD.").into_response(),
+        None => {
+            return (
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                "Admin panel is not configured. Set ADMIN_PASSWORD.",
+            )
+                .into_response()
+        }
     };
 
     if !check_admin_auth(&headers, &password) {
@@ -4488,14 +5149,109 @@ async fn admin_dashboard_handler(
 
     let (tenant_count, pro_count, free_count, total_balance) = {
         let tenants = app.tenants.read().await;
-        let count    = tenants.count();
-        let pro      = tenants.all().filter(|h| h.config.tier == crate::tenant::TenantTier::Pro).count();
-        let free     = tenants.all().filter(|h| h.config.tier == crate::tenant::TenantTier::Free).count();
+        let count = tenants.count();
+        let pro = tenants
+            .all()
+            .filter(|h| h.config.tier == crate::tenant::TenantTier::Pro)
+            .count();
+        let free = tenants
+            .all()
+            .filter(|h| h.config.tier == crate::tenant::TenantTier::Free)
+            .count();
         let balance: f64 = tenants.all().map(|h| h.config.hl_balance_usd).sum();
         (count, pro, free, balance)
     };
 
-    let html = format!(r#"<!DOCTYPE html>
+    let pattern_snapshot = {
+        let cache = app.pattern_cache.lock().await;
+        cache.latest()
+    };
+    let pattern_panel = if let Some(insights) = pattern_snapshot {
+        let summary = &insights.report_summary;
+        let winner = summary
+            .daily_winner
+            .as_ref()
+            .map(|(sym, pnl)| format!("{} (${:0.2})", html_escape(sym), pnl))
+            .unwrap_or_else(|| "—".to_string());
+        let loser = summary
+            .daily_loser
+            .as_ref()
+            .map(|(sym, pnl)| format!("{} (${:0.2})", html_escape(sym), pnl))
+            .unwrap_or_else(|| "—".to_string());
+        let win_combo_rows = if insights.top_win_combos.is_empty() {
+            "<li style=\"color:#8b949e\">Not enough combos yet.</li>".to_string()
+        } else {
+            insights
+                .top_win_combos
+                .iter()
+                .take(3)
+                .map(|combo| {
+                    format!(
+                        "<li>{} · {} · {rate:.0}% · {wins}W/{losses}L</li>",
+                        html_escape(&combo.breakdown),
+                        html_escape(&combo.context),
+                        rate = combo.win_rate * 100.0,
+                        wins = combo.wins,
+                        losses = combo.losses,
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("")
+        };
+        let loss_combo_rows = if insights.top_loss_combos.is_empty() {
+            "<li style=\"color:#8b949e\">False-breakout / stall data pending.</li>".to_string()
+        } else {
+            insights
+                .top_loss_combos
+                .iter()
+                .take(3)
+                .map(|combo| {
+                    format!(
+                        "<li>{} · {} · {rate:.0}% · {wins}W/{losses}L</li>",
+                        html_escape(&combo.breakdown),
+                        html_escape(&combo.context),
+                        rate = combo.win_rate * 100.0,
+                        wins = combo.wins,
+                        losses = combo.losses,
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("")
+        };
+        format!(
+            r#"<div class="card">
+  <div class="cl">Pattern cache · {date}</div>
+  <div class="cv-sm">Winner: {winner} · Loser: {loser}</div>
+  <div style="margin-top:12px;font-size:.8rem;color:#8b949e">Top win combos</div>
+  <ul style="margin:6px 0;padding-left:18px;color:#c9d1d9;font-size:.83rem;line-height:1.5">
+    {win_combo_rows}
+  </ul>
+  <div style="font-size:.8rem;color:#8b949e">Loss warnings</div>
+  <ul style="margin:6px 0;padding-left:18px;color:#c9d1d9;font-size:.83rem;line-height:1.5">
+    {loss_combo_rows}
+  </ul>
+  <div style="margin-top:12px;font-size:.78rem;color:#8b949e">
+    <a href="/app/agents" style="color:#58a6ff">Open agent console</a> · rerun <code>scripts/verify_pattern_cache.sh</code> after exits.
+  </div>
+</div>"#,
+            date = insights.date.format("%Y-%m-%d"),
+            winner = winner,
+            loser = loser,
+            win_combo_rows = win_combo_rows,
+            loss_combo_rows = loss_combo_rows,
+        )
+    } else {
+        r#"<div class="card">
+  <div class="cl">Pattern cache</div>
+  <div class="info-box">
+    No cached insights yet. Run <code>cargo run --bin reporter</code> so <code>reports/pattern_cache.json</code> can feed the AI bar and automation alerts.
+  </div>
+</div>"#
+        .to_string()
+    };
+
+    let html = format!(
+        r#"<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -4530,6 +5286,7 @@ async fn admin_dashboard_handler(
     <a href="/admin">Dashboard</a>
     <a href="/admin/users">Users</a>
     <a href="/admin/wallets">Wallets</a>
+    <a href="/app/agents">Agents</a>
     <a href="/">Operator view</a>
   </div>
 </div>
@@ -4540,6 +5297,8 @@ async fn admin_dashboard_handler(
   <div class="card"><div class="cl">Free</div><div class="cv" style="color:#8b949e">{free_count}</div></div>
   <div class="card"><div class="cl">Total HL Balance</div><div class="cv-sm">${total_balance:.2}</div></div>
 </div>
+
+{pattern_panel}
 
 <p style="font-size:.85rem;color:#8b949e;margin-bottom:28px">
   <a href="/admin/users">View all users →</a>
@@ -4602,10 +5361,11 @@ function resetStats() {{
 </script>
 </body>
 </html>"#,
-        tenant_count  = tenant_count,
-        pro_count     = pro_count,
-        free_count    = free_count,
+        tenant_count = tenant_count,
+        pro_count = pro_count,
+        free_count = free_count,
         total_balance = total_balance,
+        pattern_panel = pattern_panel,
     );
 
     axum::response::Html(html).into_response()
@@ -4628,8 +5388,13 @@ async fn admin_reset_stats_handler(
 
     let password = match &app.admin_password {
         Some(p) => p.clone(),
-        None    => return (axum::http::StatusCode::SERVICE_UNAVAILABLE,
-                          "Admin panel not configured.").into_response(),
+        None => {
+            return (
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                "Admin panel not configured.",
+            )
+                .into_response()
+        }
     };
     if !check_admin_auth(&headers, &password) {
         return www_authenticate_response();
@@ -4643,26 +5408,26 @@ async fn admin_reset_stats_handler(
         let unrealised: f64 = s.positions.iter().map(|p| p.unrealised_pnl).sum();
         let current_equity = s.capital + committed + unrealised;
         // Reset financials — keep current equity as new starting point
-        s.capital         = current_equity - committed; // free cash only
-        s.initial_capital = ic;                         // keep original for context
-        s.pnl             = 0.0;
-        s.peak_equity     = current_equity;
-        s.equity_window   = std::collections::VecDeque::new();
-        s.equity_history  = vec![];
-        s.cb_active       = false;
+        s.capital = current_equity - committed; // free cash only
+        s.initial_capital = ic; // keep original for context
+        s.pnl = 0.0;
+        s.peak_equity = current_equity;
+        s.equity_window = std::collections::VecDeque::new();
+        s.equity_history = vec![];
+        s.cb_active = false;
         // Clear history
-        s.closed_trades      = vec![];
-        s.recent_decisions   = vec![];
-        s.metrics            = crate::metrics::PerformanceMetrics::default();
+        s.closed_trades = vec![];
+        s.recent_decisions = vec![];
+        s.metrics = crate::metrics::PerformanceMetrics::default();
         // Clear house-money pool (profits are gone from the P&L slate)
-        s.house_money_pool   = 0.0;
-        s.pool_deployed_usd  = 0.0;
-        s.recently_closed    = std::collections::VecDeque::new();
+        s.house_money_pool = 0.0;
+        s.pool_deployed_usd = 0.0;
+        s.recently_closed = std::collections::VecDeque::new();
         // Mark positions as starting fresh — reset their entry context for P&L tracking
         // (positions themselves are kept open, only pool funding tracking resets)
         for p in s.positions.iter_mut() {
             p.funded_from_pool = false;
-            p.pool_stake_usd   = 0.0;
+            p.pool_stake_usd = 0.0;
         }
     }
 
@@ -4683,8 +5448,13 @@ async fn admin_users_handler(
 
     let password = match &app.admin_password {
         Some(p) => p.clone(),
-        None    => return (axum::http::StatusCode::SERVICE_UNAVAILABLE,
-                          "Admin panel not configured").into_response(),
+        None => {
+            return (
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                "Admin panel not configured",
+            )
+                .into_response()
+        }
     };
 
     if !check_admin_auth(&headers, &password) {
@@ -4693,23 +5463,28 @@ async fn admin_users_handler(
 
     let rows: String = {
         let tenants = app.tenants.read().await;
-        tenants.all().map(|h| {
-            let tier_col = match h.config.tier {
-                crate::tenant::TenantTier::Pro      => "#3fb950",
-                crate::tenant::TenantTier::Internal => "#e3b341",
-                crate::tenant::TenantTier::Free     => "#8b949e",
-            };
-            let wallet_short = h.config.wallet_address.as_deref()
-                .map(|w| format!("{}…{}", &w[..6], &w[w.len().saturating_sub(4)..]))
-                .unwrap_or_else(|| "—".to_string());
-            let terms_ok = if h.config.terms_accepted_at.is_some() {
-                r#"<span style="color:#3fb950">✓</span>"#
-            } else {
-                r#"<span style="color:#f85149">✗</span>"#
-            };
-            let fund_sum = crate::fund_tracker::summary(&h.id);
-            format!(
-                "<tr>\
+        tenants
+            .all()
+            .map(|h| {
+                let tier_col = match h.config.tier {
+                    crate::tenant::TenantTier::Pro => "#3fb950",
+                    crate::tenant::TenantTier::Internal => "#e3b341",
+                    crate::tenant::TenantTier::Free => "#8b949e",
+                };
+                let wallet_short = h
+                    .config
+                    .wallet_address
+                    .as_deref()
+                    .map(|w| format!("{}…{}", &w[..6], &w[w.len().saturating_sub(4)..]))
+                    .unwrap_or_else(|| "—".to_string());
+                let terms_ok = if h.config.terms_accepted_at.is_some() {
+                    r#"<span style="color:#3fb950">✓</span>"#
+                } else {
+                    r#"<span style="color:#f85149">✗</span>"#
+                };
+                let fund_sum = crate::fund_tracker::summary(&h.id);
+                format!(
+                    "<tr>\
                    <td style='font-family:monospace;font-size:.72rem'>{id_short}</td>\
                    <td>{name}</td>\
                    <td style='color:{tier_col}'>{tier:?}</td>\
@@ -4718,19 +5493,21 @@ async fn admin_users_handler(
                    <td style='font-size:.8rem'>${dep:.2}</td>\
                    <td>{terms}</td>\
                  </tr>",
-                id_short  = &h.id.as_str()[..8.min(h.id.as_str().len())],
-                name      = h.config.display_name,
-                tier_col  = tier_col,
-                tier      = h.config.tier,
-                wallet    = wallet_short,
-                bal       = h.config.hl_balance_usd,
-                dep       = fund_sum.net_deposits,
-                terms     = terms_ok,
-            )
-        }).collect()
+                    id_short = &h.id.as_str()[..8.min(h.id.as_str().len())],
+                    name = h.config.display_name,
+                    tier_col = tier_col,
+                    tier = h.config.tier,
+                    wallet = wallet_short,
+                    bal = h.config.hl_balance_usd,
+                    dep = fund_sum.net_deposits,
+                    terms = terms_ok,
+                )
+            })
+            .collect()
     };
 
-    let html = format!(r#"<!DOCTYPE html>
+    let html = format!(
+        r#"<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -4791,7 +5568,9 @@ async fn admin_users_handler(
 </html>"#,
         rows = if rows.is_empty() {
             "<tr><td colspan='7' style='color:#8b949e;text-align:center;padding:20px'>No users registered yet.</td></tr>".to_string()
-        } else { rows },
+        } else {
+            rows
+        },
     );
 
     axum::response::Html(html).into_response()
@@ -4816,24 +5595,29 @@ async fn admin_wallets_handler(
 
     let password = match &app.admin_password {
         Some(p) => p.clone(),
-        None    => return (axum::http::StatusCode::SERVICE_UNAVAILABLE,
-                          "Admin panel not configured").into_response(),
+        None => {
+            return (
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                "Admin panel not configured",
+            )
+                .into_response()
+        }
     };
     if !check_admin_auth(&headers, &password) {
         return www_authenticate_response();
     }
 
     struct WalletRow {
-        name:          String,
-        capital:       f64,
-        equity:        f64,
-        realised_pnl:  f64,
-        unrealised:    f64,
-        return_pct:    f64,
-        open_pos:      usize,
+        name: String,
+        capital: f64,
+        equity: f64,
+        realised_pnl: f64,
+        unrealised: f64,
+        return_pct: f64,
+        open_pos: usize,
         closed_trades: usize,
-        est_ltv_usd:   f64,
-        trend:         &'static str,
+        est_ltv_usd: f64,
+        trend: &'static str,
     }
 
     let rows_data: Vec<WalletRow> = {
@@ -4842,56 +5626,85 @@ async fn admin_wallets_handler(
         for h in tm.all() {
             let s = h.state.read().await;
             let unrealised: f64 = s.positions.iter().map(|p| p.unrealised_pnl).sum();
-            let committed:  f64 = s.positions.iter().map(|p| p.size_usd).sum();
-            let equity      = s.capital + committed + unrealised;
-            let return_pct  = if s.initial_capital > 0.0 {
+            let committed: f64 = s.positions.iter().map(|p| p.size_usd).sum();
+            let equity = s.capital + committed + unrealised;
+            let return_pct = if s.initial_capital > 0.0 {
                 (equity - s.initial_capital) / s.initial_capital * 100.0
-            } else { 0.0 };
+            } else {
+                0.0
+            };
             // Estimate LTV: 3 bps entry + 3 bps exit = 6 bps per round-trip
             let avg_size: f64 = if !s.closed_trades.is_empty() {
                 s.closed_trades.iter().map(|t| t.size_usd).sum::<f64>()
                     / s.closed_trades.len() as f64
-            } else { s.initial_capital * 0.08 };
+            } else {
+                s.initial_capital * 0.08
+            };
             let est_ltv = s.closed_trades.len() as f64 * avg_size * 0.0006;
-            let trend = if return_pct > 2.0 { "🟢" }
-                        else if return_pct > -1.0 { "🟡" }
-                        else { "🔴" };
+            let trend = if return_pct > 2.0 {
+                "🟢"
+            } else if return_pct > -1.0 {
+                "🟡"
+            } else {
+                "🔴"
+            };
             out.push(WalletRow {
-                name:          h.config.display_name.clone(),
-                capital:       s.initial_capital,
+                name: h.config.display_name.clone(),
+                capital: s.initial_capital,
                 equity,
-                realised_pnl:  s.pnl,
+                realised_pnl: s.pnl,
                 unrealised,
                 return_pct,
-                open_pos:      s.positions.len(),
+                open_pos: s.positions.len(),
                 closed_trades: s.closed_trades.len(),
-                est_ltv_usd:   est_ltv,
+                est_ltv_usd: est_ltv,
                 trend,
             });
         }
-        out.sort_by(|a, b| a.capital.partial_cmp(&b.capital)
-            .unwrap_or(std::cmp::Ordering::Equal));
+        out.sort_by(|a, b| {
+            a.capital
+                .partial_cmp(&b.capital)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         out
     };
 
     let total_est_ltv: f64 = rows_data.iter().map(|r| r.est_ltv_usd).sum();
-    let total_equity:  f64 = rows_data.iter().map(|r| r.equity).sum();
+    let total_equity: f64 = rows_data.iter().map(|r| r.equity).sum();
     let total_capital: f64 = rows_data.iter().map(|r| r.capital).sum();
-    let total_ret_pct  = if total_capital > 0.0 {
+    let total_ret_pct = if total_capital > 0.0 {
         (total_equity - total_capital) / total_capital * 100.0
-    } else { 0.0 };
+    } else {
+        0.0
+    };
 
-    let table_rows: String = rows_data.iter().map(|r| {
-        let ret_col  = if r.return_pct >= 0.0 { "#3fb950" } else { "#f85149" };
-        let upnl_col = if r.unrealised >= 0.0 { "#3fb950" } else { "#f85149" };
-        let pnl_sign = if r.realised_pnl >= 0.0 { "+" } else { "" };
-        let cap_tier = if r.capital <= 25.0 { "Nano" }
-            else if r.capital <= 100.0 { "Micro" }
-            else if r.capital <= 500.0 { "Small" }
-            else if r.capital <= 2000.0 { "Mid" }
-            else { "Large" };
-        format!(
-            "<tr>\
+    let table_rows: String = rows_data
+        .iter()
+        .map(|r| {
+            let ret_col = if r.return_pct >= 0.0 {
+                "#3fb950"
+            } else {
+                "#f85149"
+            };
+            let upnl_col = if r.unrealised >= 0.0 {
+                "#3fb950"
+            } else {
+                "#f85149"
+            };
+            let pnl_sign = if r.realised_pnl >= 0.0 { "+" } else { "" };
+            let cap_tier = if r.capital <= 25.0 {
+                "Nano"
+            } else if r.capital <= 100.0 {
+                "Micro"
+            } else if r.capital <= 500.0 {
+                "Small"
+            } else if r.capital <= 2000.0 {
+                "Mid"
+            } else {
+                "Large"
+            };
+            format!(
+                "<tr>\
                <td>{trend} <b>{name}</b></td>\
                <td style='color:#8b949e;font-size:.75em'>{tier}</td>\
                <td>${cap:.0}</td>\
@@ -4901,17 +5714,26 @@ async fn admin_wallets_handler(
                <td>{ops} open · {cl} closed</td>\
                <td style='color:#e3b341'>${ltv:.4}</td>\
              </tr>",
-            trend = r.trend,  name = r.name,  tier = cap_tier,
-            cap   = r.capital,  eq = r.equity,
-            rc    = ret_col,  ret = r.return_pct,
-            ps    = pnl_sign,  rpnl = r.realised_pnl,
-            uc    = upnl_col,  us   = r.unrealised,
-            ops   = r.open_pos,  cl = r.closed_trades,
-            ltv   = r.est_ltv_usd,
-        )
-    }).collect();
+                trend = r.trend,
+                name = r.name,
+                tier = cap_tier,
+                cap = r.capital,
+                eq = r.equity,
+                rc = ret_col,
+                ret = r.return_pct,
+                ps = pnl_sign,
+                rpnl = r.realised_pnl,
+                uc = upnl_col,
+                us = r.unrealised,
+                ops = r.open_pos,
+                cl = r.closed_trades,
+                ltv = r.est_ltv_usd,
+            )
+        })
+        .collect();
 
-    let html = format!(r#"<!DOCTYPE html>
+    let html = format!(
+        r#"<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -5007,18 +5829,29 @@ async fn admin_wallets_handler(
 </div>
 </body>
 </html>"#,
-        wc        = rows_data.len(),
-        tc        = total_capital,
-        te        = total_equity,
-        teq_col   = if total_equity >= total_capital { "#3fb950" } else { "#f85149" },
-        tr        = total_ret_pct,
-        tret_col  = if total_ret_pct >= 0.0 { "#3fb950" } else { "#f85149" },
+        wc = rows_data.len(),
+        tc = total_capital,
+        te = total_equity,
+        teq_col = if total_equity >= total_capital {
+            "#3fb950"
+        } else {
+            "#f85149"
+        },
+        tr = total_ret_pct,
+        tret_col = if total_ret_pct >= 0.0 {
+            "#3fb950"
+        } else {
+            "#f85149"
+        },
         ltv_total = total_est_ltv,
-        trows     = if table_rows.is_empty() {
+        trows = if table_rows.is_empty() {
             "<tr><td colspan='8' style='color:#8b949e;text-align:center;padding:20px'>\
              No wallets active — restart the bot to seed demo wallets.\
-             </td></tr>".to_string()
-        } else { table_rows },
+             </td></tr>"
+                .to_string()
+        } else {
+            table_rows
+        },
     );
 
     axum::response::Html(html).into_response()
@@ -5026,9 +5859,7 @@ async fn admin_wallets_handler(
 
 /// Google Pay requires no domain verification — it is automatically enabled
 /// in Stripe Checkout when the user's device supports it.
-async fn apple_pay_domain_handler(
-    State(app): State<AppState>,
-) -> axum::response::Response {
+async fn apple_pay_domain_handler(State(app): State<AppState>) -> axum::response::Response {
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
     match &app.apple_pay_domain_assoc {
@@ -5036,12 +5867,14 @@ async fn apple_pay_domain_handler(
             StatusCode::OK,
             [("Content-Type", "text/plain; charset=utf-8")],
             content.clone(),
-        ).into_response(),
+        )
+            .into_response(),
         None => (
             StatusCode::NOT_FOUND,
             "Apple Pay domain association file not configured.\n\
              Set APPLE_PAY_DOMAIN_ASSOC in your environment.",
-        ).into_response(),
+        )
+            .into_response(),
     }
 }
 
@@ -5058,23 +5891,28 @@ async fn apple_pay_domain_handler(
 ///
 /// Shows the current standings, prize pool, countdown timer, and how to get
 /// an invite code.  No authentication required — it's a viral acquisition page.
-async fn leaderboard_handler(
-    State(app): State<AppState>,
-) -> axum::response::Html<String> {
+async fn leaderboard_handler(State(app): State<AppState>) -> axum::response::Html<String> {
     let (campaign, entries) = match &app.db {
         Some(db) => {
             let c = crate::leaderboard::active_campaign(db).await.ok().flatten();
             let e = if c.is_some() {
-                crate::leaderboard::live_standings(db, 50).await.unwrap_or_default()
-            } else { vec![] };
+                crate::leaderboard::live_standings(db, 50)
+                    .await
+                    .unwrap_or_default()
+            } else {
+                vec![]
+            };
             (c, e)
         }
         None => (None, vec![]),
     };
 
-    let campaign_title = campaign.as_ref().map(|c| c.title.clone())
+    let campaign_title = campaign
+        .as_ref()
+        .map(|c| c.title.clone())
         .unwrap_or_else(|| "Weekly Trading Contest".into());
-    let campaign_desc = campaign.as_ref()
+    let campaign_desc = campaign
+        .as_ref()
         .and_then(|c| c.description.clone())
         .unwrap_or_else(|| "Top traders by % return win weekly prizes.".into());
     let prize_pool = campaign.as_ref().map(|c| c.prize_pool_usd).unwrap_or(0.0);
@@ -5090,32 +5928,45 @@ async fn leaderboard_handler(
     let rows_html: String = if entries.is_empty() {
         r#"<tr><td colspan="5" style="text-align:center;color:#484f58;padding:32px">No trades recorded yet this week — be the first!</td></tr>"#.into()
     } else {
-        entries.iter().map(|e| {
-            let medal = match e.rank { 1 => "🥇", 2 => "🥈", 3 => "🥉", _ => "" };
-            let pct_color = if e.pct_return >= 0.0 { "#3fb950" } else { "#f85149" };
-            let pct_sign  = if e.pct_return >= 0.0 { "+" } else { "" };
-            format!(
-                r#"<tr class="lb-row{rank_cls}">
+        entries
+            .iter()
+            .map(|e| {
+                let medal = match e.rank {
+                    1 => "🥇",
+                    2 => "🥈",
+                    3 => "🥉",
+                    _ => "",
+                };
+                let pct_color = if e.pct_return >= 0.0 {
+                    "#3fb950"
+                } else {
+                    "#f85149"
+                };
+                let pct_sign = if e.pct_return >= 0.0 { "+" } else { "" };
+                format!(
+                    r#"<tr class="lb-row{rank_cls}">
                   <td class="lb-rank">{medal}{rank}</td>
                   <td class="lb-name">{name}</td>
                   <td class="lb-wallet">{wallet}</td>
                   <td class="lb-trades">{trades}</td>
                   <td class="lb-pct" style="color:{pct_color}">{pct_sign}{pct:.2}%</td>
                 </tr>"#,
-                rank_cls = if e.rank <= 3 { " top3" } else { "" },
-                medal = medal,
-                rank  = e.rank,
-                name  = html_escape(&e.display_name),
-                wallet = e.wallet_short,
-                trades = e.trades_in_period,
-                pct_color = pct_color,
-                pct_sign  = pct_sign,
-                pct       = e.pct_return,
-            )
-        }).collect()
+                    rank_cls = if e.rank <= 3 { " top3" } else { "" },
+                    medal = medal,
+                    rank = e.rank,
+                    name = html_escape(&e.display_name),
+                    wallet = e.wallet_short,
+                    trades = e.trades_in_period,
+                    pct_color = pct_color,
+                    pct_sign = pct_sign,
+                    pct = e.pct_return,
+                )
+            })
+            .collect()
     };
 
-    axum::response::Html(format!(r#"<!DOCTYPE html>
+    axum::response::Html(format!(
+        r#"<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -5232,19 +6083,13 @@ function tick() {{
 if (secsLeft > 0) tick();
 </script>
 </body></html>"#,
-        title      = html_escape(&campaign_title),
-        desc       = html_escape(&campaign_desc),
+        title = html_escape(&campaign_title),
+        desc = html_escape(&campaign_desc),
         prizes_html = prizes_html,
         prize_pool = prize_pool as i64,
-        rows_html  = rows_html,
+        rows_html = rows_html,
         seconds_left = seconds_left,
     ))
-}
-
-// ─── tiny helper ─────────────────────────────────────────────────────────────
-fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
-     .replace('"', "&quot;").replace('\'', "&#39;")
 }
 
 /// `POST /app/invite/generate` — authenticated endpoint.
@@ -5260,14 +6105,24 @@ async fn generate_invite_handler(
 
     let tenant_id = match crate::privy::require_tenant_id(&headers, &app.session_secret) {
         Ok(id) => id,
-        Err(_) => return (StatusCode::UNAUTHORIZED,
-            axum::Json(serde_json::json!({"error":"Unauthorized"}))).into_response(),
+        Err(_) => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                axum::Json(serde_json::json!({"error":"Unauthorized"})),
+            )
+                .into_response()
+        }
     };
 
     let db = match &app.db {
         Some(db) => db,
-        None => return (StatusCode::SERVICE_UNAVAILABLE,
-            axum::Json(serde_json::json!({"error":"Database not configured"}))).into_response(),
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                axum::Json(serde_json::json!({"error":"Database not configured"})),
+            )
+                .into_response()
+        }
     };
 
     match crate::invite::generate_referral_code(db, &tenant_id).await {
@@ -5276,11 +6131,15 @@ async fn generate_invite_handler(
             "code": code,
             "share_url": format!("/login?invite={}", code),
             "expires_days": 30,
-        })).into_response(),
+        }))
+        .into_response(),
         Err(e) => {
             log::error!("generate_invite_handler: {}", e);
-            (StatusCode::INTERNAL_SERVER_ERROR,
-             axum::Json(serde_json::json!({"error":"Could not generate code"}))).into_response()
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(serde_json::json!({"error":"Could not generate code"})),
+            )
+                .into_response()
         }
     }
 }
@@ -5295,14 +6154,24 @@ async fn get_invite_handler(
 
     let tenant_id = match crate::privy::require_tenant_id(&headers, &app.session_secret) {
         Ok(id) => id,
-        Err(_) => return (StatusCode::UNAUTHORIZED,
-            axum::Json(serde_json::json!({"error":"Unauthorized"}))).into_response(),
+        Err(_) => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                axum::Json(serde_json::json!({"error":"Unauthorized"})),
+            )
+                .into_response()
+        }
     };
 
     let db = match &app.db {
         Some(db) => db,
-        None => return (StatusCode::SERVICE_UNAVAILABLE,
-            axum::Json(serde_json::json!({"error":"Database not configured"}))).into_response(),
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                axum::Json(serde_json::json!({"error":"Database not configured"})),
+            )
+                .into_response()
+        }
     };
 
     let code = match crate::invite::get_referral_code_for_tenant(db, &tenant_id).await {
@@ -5310,18 +6179,24 @@ async fn get_invite_handler(
         Ok(None) => {
             // Auto-generate on first request
             match crate::invite::generate_referral_code(db, &tenant_id).await {
-                Ok(c)  => c,
+                Ok(c) => c,
                 Err(e) => {
                     log::error!("get_invite auto-generate: {}", e);
-                    return (StatusCode::INTERNAL_SERVER_ERROR,
-                        axum::Json(serde_json::json!({"error":"Could not generate code"}))).into_response();
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        axum::Json(serde_json::json!({"error":"Could not generate code"})),
+                    )
+                        .into_response();
                 }
             }
         }
         Err(e) => {
             log::error!("get_invite_handler: {}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR,
-                axum::Json(serde_json::json!({"error":"DB error"}))).into_response();
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(serde_json::json!({"error":"DB error"})),
+            )
+                .into_response();
         }
     };
 
@@ -5329,20 +6204,23 @@ async fn get_invite_handler(
         "ok": true,
         "code": code,
         "share_url": format!("/login?invite={}", code),
-    })).into_response()
+    }))
+    .into_response()
 }
 
 /// `GET /api/leaderboard` — JSON endpoint for the current standings.
-async fn api_leaderboard_handler(
-    State(app): State<AppState>,
-) -> impl axum::response::IntoResponse {
+async fn api_leaderboard_handler(State(app): State<AppState>) -> impl axum::response::IntoResponse {
     use axum::response::IntoResponse;
     let db = match &app.db {
         Some(db) => db,
-        None => return axum::Json(serde_json::json!({"entries":[],"campaign":null})).into_response(),
+        None => {
+            return axum::Json(serde_json::json!({"entries":[],"campaign":null})).into_response()
+        }
     };
     let campaign = crate::leaderboard::active_campaign(db).await.ok().flatten();
-    let entries  = crate::leaderboard::live_standings(db, 100).await.unwrap_or_default();
+    let entries = crate::leaderboard::live_standings(db, 100)
+        .await
+        .unwrap_or_default();
     axum::Json(serde_json::json!({ "campaign": campaign, "entries": entries })).into_response()
 }
 
@@ -5350,9 +6228,7 @@ async fn api_leaderboard_handler(
 /// Returns the last 90 days of AUM snapshots as JSON.
 /// Used by the landing page to render the TVL hero graph client-side.
 /// No authentication required — returns aggregate data only, never per-tenant.
-async fn public_tvl_handler(
-    State(app): State<AppState>,
-) -> impl axum::response::IntoResponse {
+async fn public_tvl_handler(State(app): State<AppState>) -> impl axum::response::IntoResponse {
     use axum::http::{HeaderMap, StatusCode};
 
     let mut headers = HeaderMap::new();
@@ -5372,7 +6248,7 @@ async fn public_tvl_handler(
     };
 
     let points = match db.get_aum_history(90).await {
-        Ok(p)  => p,
+        Ok(p) => p,
         Err(e) => {
             log::warn!("public_tvl_handler: DB error: {e}");
             return (
@@ -5418,9 +6294,7 @@ async fn public_tvl_handler(
 /// Returns a self-contained SVG sparkline of the TVL curve.
 /// Embed directly in the landing page `<img src="/api/public/tvl/svg">` —
 /// no JavaScript required.  Auto-updates every 60 seconds via HTTP cache.
-async fn public_tvl_svg_handler(
-    State(app): State<AppState>,
-) -> impl axum::response::IntoResponse {
+async fn public_tvl_svg_handler(State(app): State<AppState>) -> impl axum::response::IntoResponse {
     use axum::http::{HeaderMap, StatusCode};
 
     let mut headers = HeaderMap::new();
@@ -5449,15 +6323,23 @@ async fn public_tvl_svg_handler(
     // Build SVG using the same proven pattern as the equity sparkline.
     let w_px: f64 = 480.0;
     let h_px: f64 = 80.0;
-    let pad:  f64 = 8.0;
-    let inner_h   = h_px - 2.0 * pad;
+    let pad: f64 = 8.0;
+    let inner_h = h_px - 2.0 * pad;
 
     let values: Vec<f64> = points.iter().map(|p| p.total_aum).collect();
     let deposited = points.first().map(|p| p.deposited_capital).unwrap_or(0.0);
 
-    let data_min = values.iter().cloned().fold(f64::INFINITY, f64::min).min(deposited);
-    let data_max = values.iter().cloned().fold(f64::NEG_INFINITY, f64::max).max(deposited);
-    let buf   = ((data_max - data_min).max(deposited * 0.002)) * 0.15;
+    let data_min = values
+        .iter()
+        .cloned()
+        .fold(f64::INFINITY, f64::min)
+        .min(deposited);
+    let data_max = values
+        .iter()
+        .cloned()
+        .fold(f64::NEG_INFINITY, f64::max)
+        .max(deposited);
+    let buf = ((data_max - data_min).max(deposited * 0.002)) * 0.15;
     let min_v = data_min - buf;
     let max_v = data_max + buf;
     let range = (max_v - min_v).max(0.01);
@@ -5465,16 +6347,25 @@ async fn public_tvl_svg_handler(
     let to_y = |v: f64| h_px - pad - (v - min_v) / range * inner_h;
 
     let n = values.len() as f64;
-    let pts: String = values.iter().enumerate().map(|(i, &v)| {
-        let x = i as f64 / (n - 1.0) * w_px;
-        let y = to_y(v);
-        format!("{x:.1},{y:.1}")
-    }).collect::<Vec<_>>().join(" ");
+    let pts: String = values
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| {
+            let x = i as f64 / (n - 1.0) * w_px;
+            let y = to_y(v);
+            format!("{x:.1},{y:.1}")
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
 
-    let base_y  = to_y(deposited);
-    let last_y  = to_y(*values.last().unwrap());
-    let last_v  = *values.last().unwrap();
-    let trend_c = if last_v >= deposited { "#3fb950" } else { "#f85149" };
+    let base_y = to_y(deposited);
+    let last_y = to_y(*values.last().unwrap());
+    let last_v = *values.last().unwrap();
+    let trend_c = if last_v >= deposited {
+        "#3fb950"
+    } else {
+        "#f85149"
+    };
     let fill_pts = format!("{pts} {w_px:.1},{base_y:.1} 0.0,{base_y:.1}");
 
     let latest_pnl_pct = points.last().map(|p| p.pnl_pct).unwrap_or(0.0);
@@ -5494,11 +6385,11 @@ async fn public_tvl_svg_handler(
   <text x="8" y="20" font-family="system-ui,sans-serif" font-size="11"
         fill="{c}" font-weight="600">{label}</text>
 </svg>"##,
-        c   = trend_c,
-        by  = base_y,
-        fp  = fill_pts,
+        c = trend_c,
+        by = base_y,
+        fp = fill_pts,
         pts = pts,
-        ly  = last_y,
+        ly = last_y,
         label = label,
     );
 
@@ -5514,32 +6405,32 @@ async fn public_tvl_svg_handler(
 /// Validates the `event_type` against the known set, attaches the server-side
 /// tenant context if the session cookie is present, then writes to `funnel_events`.
 async fn funnel_event_handler(
-    State(app):    State<AppState>,
-    headers:       HeaderMap,
-    body:          axum::extract::Json<crate::funnel::FunnelEventPayload>,
+    State(app): State<AppState>,
+    headers: HeaderMap,
+    body: axum::extract::Json<crate::funnel::FunnelEventPayload>,
 ) -> axum::http::StatusCode {
+    use crate::funnel::{record, FunnelEvent};
     use axum::http::StatusCode;
-    use crate::funnel::{FunnelEvent, record};
 
     let payload = body.0;
 
     // Map the string event_type → enum (rejects unknown values)
     let event = match payload.event_type.as_str() {
-        "PAGE_VIEW"         => FunnelEvent::PageView,
-        "LOGIN_CLICK"       => FunnelEvent::LoginClick,
-        "AUTH_SUCCESS"      => FunnelEvent::AuthSuccess,
-        "TRIAL_START"       => FunnelEvent::TrialStart,
-        "TERMS_ACCEPTED"    => FunnelEvent::TermsAccepted,
-        "WALLET_LINKED"     => FunnelEvent::WalletLinked,
-        "FIRST_POSITION"    => FunnelEvent::FirstPosition,
-        "UPGRADE_CLICK"     => FunnelEvent::UpgradeClick,
-        "CHECKOUT_STARTED"  => FunnelEvent::CheckoutStarted,
-        "UPGRADED"          => FunnelEvent::Upgraded,
-        "TRIAL_EXPIRED"     => FunnelEvent::TrialExpired,
-        "CHURNED"           => FunnelEvent::Churned,
-        "AD_IMPRESSION"     => FunnelEvent::AdImpression,
-        "AD_CLICK"          => FunnelEvent::AdClick,
-        _                   => return StatusCode::BAD_REQUEST,
+        "PAGE_VIEW" => FunnelEvent::PageView,
+        "LOGIN_CLICK" => FunnelEvent::LoginClick,
+        "AUTH_SUCCESS" => FunnelEvent::AuthSuccess,
+        "TRIAL_START" => FunnelEvent::TrialStart,
+        "TERMS_ACCEPTED" => FunnelEvent::TermsAccepted,
+        "WALLET_LINKED" => FunnelEvent::WalletLinked,
+        "FIRST_POSITION" => FunnelEvent::FirstPosition,
+        "UPGRADE_CLICK" => FunnelEvent::UpgradeClick,
+        "CHECKOUT_STARTED" => FunnelEvent::CheckoutStarted,
+        "UPGRADED" => FunnelEvent::Upgraded,
+        "TRIAL_EXPIRED" => FunnelEvent::TrialExpired,
+        "CHURNED" => FunnelEvent::Churned,
+        "AD_IMPRESSION" => FunnelEvent::AdImpression,
+        "AD_CLICK" => FunnelEvent::AdClick,
+        _ => return StatusCode::BAD_REQUEST,
     };
 
     // Resolve tenant from session cookie if present (pre-auth events have None)
@@ -5552,7 +6443,8 @@ async fn funnel_event_handler(
         &payload.anon_id,
         tid.as_ref(),
         Some(payload.extra),
-    ).await;
+    )
+    .await;
 
     StatusCode::NO_CONTENT
 }
@@ -5565,7 +6457,7 @@ struct TradeNotePayload {
     /// Index into `bot_state.closed_trades` (0 = most recent).
     index: usize,
     /// Operator's plain-text note — max 500 chars.
-    note:  String,
+    note: String,
 }
 
 /// `POST /api/trade-note` — attach an operator note to a closed trade.
@@ -5576,9 +6468,9 @@ struct TradeNotePayload {
 /// Requires a valid admin session (checked via `ADMIN_PASSWORD`).
 /// Returns 204 No Content on success, 400 on bad input, 404 if index OOB.
 async fn trade_note_handler(
-    State(app):  State<AppState>,
-    headers:     HeaderMap,
-    body:        axum::extract::Json<TradeNotePayload>,
+    State(app): State<AppState>,
+    headers: HeaderMap,
+    body: axum::extract::Json<TradeNotePayload>,
 ) -> axum::http::StatusCode {
     use axum::http::StatusCode;
 
@@ -5618,13 +6510,13 @@ async fn trade_note_handler(
     // Persist to DB (best-effort — don't fail the request if DB is down).
     // Uses sqlx::query() (not macro) so migration 007 need not exist at compile time.
     if let Some(db) = &app.db {
-        let idx  = payload.index as i64;
+        let idx = payload.index as i64;
         let note = payload.note.clone();
         let _ = sqlx::query(
             "INSERT INTO closed_trade_notes (trade_index, note, updated_at) \
              VALUES ($1, $2, NOW()) \
              ON CONFLICT (trade_index) DO UPDATE \
-               SET note = EXCLUDED.note, updated_at = NOW()"
+               SET note = EXCLUDED.note, updated_at = NOW()",
         )
         .bind(idx)
         .bind(note)
@@ -5633,6 +6525,145 @@ async fn trade_note_handler(
     }
 
     StatusCode::NO_CONTENT
+}
+
+#[derive(Debug, Deserialize)]
+struct ReportQueryPayload {
+    question: String,
+    answer: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ReportQueryResponse {
+    answer: Option<String>,
+    cached: bool,
+    report_hash: String,
+}
+
+async fn api_report_latest_handler(
+    State(_app): State<AppState>,
+) -> Result<Json<reporting::ReportSummary>, axum::http::StatusCode> {
+    match reporting::load_summary() {
+        Ok(summary) => Ok(Json(summary)),
+        Err(_) => Err(axum::http::StatusCode::NOT_FOUND),
+    }
+}
+
+async fn api_report_query_handler(
+    State(app): State<AppState>,
+    Json(payload): Json<ReportQueryPayload>,
+) -> Result<Json<ReportQueryResponse>, axum::http::StatusCode> {
+    if payload.question.trim().is_empty() {
+        return Err(axum::http::StatusCode::BAD_REQUEST);
+    }
+    let summary = reporting::load_summary().map_err(|_| axum::http::StatusCode::NOT_FOUND)?;
+    let report_hash = summary.report_hash.clone();
+    let mut cache = app.report_cache.lock().await;
+    if let Some(answer) = payload.answer {
+        cache.store(&payload.question, &report_hash, answer.clone());
+        let _ = cache.save();
+        return Ok(Json(ReportQueryResponse {
+            answer: Some(answer),
+            cached: false,
+            report_hash,
+        }));
+    }
+    if let Some(entry) = cache.lookup(&payload.question, &report_hash) {
+        return Ok(Json(ReportQueryResponse {
+            answer: Some(entry.answer.clone()),
+            cached: true,
+            report_hash,
+        }));
+    }
+    Ok(Json(ReportQueryResponse {
+        answer: None,
+        cached: false,
+        report_hash,
+    }))
+}
+
+async fn api_report_patterns_handler(
+    State(app): State<AppState>,
+) -> Result<Json<pattern_insights::PatternInsights>, axum::http::StatusCode> {
+    let cache = app.pattern_cache.lock().await;
+    if let Some(insights) = cache.latest() {
+        Ok(Json(insights))
+    } else {
+        Err(axum::http::StatusCode::NOT_FOUND)
+    }
+}
+
+async fn api_pattern_alert_handler(
+    State(_app): State<AppState>,
+) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
+    let path = PathBuf::from("reports").join("pattern_cache_alert.json");
+    match fs::read_to_string(&path) {
+        Ok(text) => match serde_json::from_str::<serde_json::Value>(&text) {
+            Ok(json) => Ok(Json(json)),
+            Err(_) => Err(axum::http::StatusCode::INTERNAL_SERVER_ERROR),
+        },
+        Err(_) => Err(axum::http::StatusCode::NOT_FOUND),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct BridgeWithdrawRequest {
+    amount_usd: f64,
+    destination: String,
+}
+
+async fn bridge_withdraw_handler(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+    axum::Json(req): axum::Json<BridgeWithdrawRequest>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let tenant_id = match get_session_tenant_id(&headers, &app.session_secret) {
+        Some(t) => t,
+        None => {
+            return axum::http::StatusCode::UNAUTHORIZED.into_response();
+        }
+    };
+
+    match app
+        .bridge_manager
+        .request_withdrawal(&tenant_id, req.amount_usd, req.destination.trim())
+        .await
+    {
+        Ok(record) => axum::response::Json(record.view()).into_response(),
+        Err(e) => (
+            axum::http::StatusCode::BAD_REQUEST,
+            axum::response::Json(serde_json::json!({
+                "error": "bridge_failed",
+                "message": e.to_string(),
+            })),
+        )
+            .into_response(),
+    }
+}
+
+async fn bridge_status_handler(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let tenant_id = match get_session_tenant_id(&headers, &app.session_secret) {
+        Some(t) => t,
+        None => {
+            return axum::http::StatusCode::UNAUTHORIZED.into_response();
+        }
+    };
+
+    match app.bridge_manager.fetch_record(&id).await {
+        Some(record) if record.tenant_id == tenant_id => {
+            axum::response::Json(record.view()).into_response()
+        }
+        Some(_) => axum::http::StatusCode::FORBIDDEN.into_response(),
+        None => axum::http::StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 /// Minimal base64 encoder (no external dep) — only used for the Basic-Auth check above.
@@ -5662,7 +6693,6 @@ fn base64_encode(input: &str) -> String {
     out
 }
 
-
 // ─────────────────────────────────────────────────────────────────────────────
 //  HL Wallet setup  (/app/setup)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -5680,7 +6710,7 @@ async fn hl_setup_handler(
 
     let tid = match get_session_tenant_id(&headers, &app.session_secret) {
         Some(t) => t,
-        None    => return axum::response::Redirect::to("/login").into_response(),
+        None => return axum::response::Redirect::to("/login").into_response(),
     };
 
     // Terms must be accepted before setup
@@ -5703,20 +6733,23 @@ async fn hl_setup_handler(
     };
 
     // Decrypt private key for display — only materialised in memory here
-    let private_key = match crate::hl_wallet::decrypt_key(
-        &key_enc_str, &app.session_secret, tid.as_str(),
-    ) {
-        Ok(k)  => k,
-        Err(e) => {
-            log::error!("❌ HL wallet key decrypt failed for {}: {}", tid, e);
-            return (axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                    "Key decryption failed — please contact support").into_response();
-        }
-    };
+    let private_key =
+        match crate::hl_wallet::decrypt_key(&key_enc_str, &app.session_secret, tid.as_str()) {
+            Ok(k) => k,
+            Err(e) => {
+                log::error!("❌ HL wallet key decrypt failed for {}: {}", tid, e);
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    "Key decryption failed — please contact support",
+                )
+                    .into_response();
+            }
+        };
 
     let setup_done_js = if setup_complete { "true" } else { "false" };
 
-    let html = format!(r###"<!DOCTYPE html>
+    let html = format!(
+        r###"<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -6009,8 +7042,8 @@ if (SETUP_DONE) {{
 }}
 </script>
 </body></html>"###,
-        address      = address,
-        private_key  = private_key,
+        address = address,
+        private_key = private_key,
         setup_done_js = setup_done_js,
     );
 
@@ -6032,7 +7065,7 @@ async fn hl_setup_complete_handler(
 
     let tid = match get_session_tenant_id(&headers, &app.session_secret) {
         Some(t) => t,
-        None    => return axum::http::StatusCode::UNAUTHORIZED.into_response(),
+        None => return axum::http::StatusCode::UNAUTHORIZED.into_response(),
     };
 
     {
@@ -6065,23 +7098,26 @@ async fn hl_balance_api_handler(
 
     let tid = match get_session_tenant_id(&headers, &app.session_secret) {
         Some(t) => t,
-        None    => return axum::http::StatusCode::UNAUTHORIZED.into_response(),
+        None => return axum::http::StatusCode::UNAUTHORIZED.into_response(),
     };
 
     let address = {
         let tenants = app.tenants.read().await;
-        tenants.get(&tid).and_then(|h| h.config.hl_wallet_address.clone())
+        tenants
+            .get(&tid)
+            .and_then(|h| h.config.hl_wallet_address.clone())
     };
 
     let balance_usd = match address {
         Some(ref addr) => crate::hl_wallet::check_balance(addr).await,
-        None           => 0.0,
+        None => 0.0,
     };
 
     axum::response::Json(serde_json::json!({
         "balance_usd": balance_usd,
         "address":     address,
-    })).into_response()
+    }))
+    .into_response()
 }
 
 /// `GET /api/hl/wallet/key.json` — export the tenant's HL trading wallet as a
@@ -6094,7 +7130,7 @@ async fn hl_export_key_handler(
 
     let tid = match get_session_tenant_id(&headers, &app.session_secret) {
         Some(t) => t,
-        None    => return axum::http::StatusCode::UNAUTHORIZED.into_response(),
+        None => return axum::http::StatusCode::UNAUTHORIZED.into_response(),
     };
 
     let (address, key_enc) = {
@@ -6110,16 +7146,24 @@ async fn hl_export_key_handler(
 
     let (addr, enc) = match (address, key_enc) {
         (Some(a), Some(k)) => (a, k),
-        _ => return (axum::http::StatusCode::NOT_FOUND,
-                     "No HL wallet found for this account").into_response(),
+        _ => {
+            return (
+                axum::http::StatusCode::NOT_FOUND,
+                "No HL wallet found for this account",
+            )
+                .into_response()
+        }
     };
 
     let private_key = match crate::hl_wallet::decrypt_key(&enc, &app.session_secret, tid.as_str()) {
-        Ok(k)  => k,
+        Ok(k) => k,
         Err(e) => {
             log::error!("❌ HL key export decrypt failed for {}: {}", tid, e);
-            return (axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                    "Key decryption failed").into_response();
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Key decryption failed",
+            )
+                .into_response();
         }
     };
 
@@ -6132,13 +7176,15 @@ async fn hl_export_key_handler(
         "note": "Keep this file safe. Import into MetaMask or any EVM wallet to access your Hyperliquid account externally."
     });
 
-    let json_str = serde_json::to_string_pretty(&payload)
-        .unwrap_or_else(|_| "{{}}".to_string());
+    let json_str = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{{}}".to_string());
 
     axum::response::Response::builder()
         .status(200)
         .header("Content-Type", "application/json")
-        .header("Content-Disposition", "attachment; filename=\"tradingbots-wallet.json\"")
+        .header(
+            "Content-Disposition",
+            "attachment; filename=\"tradingbots-wallet.json\"",
+        )
         .header("Cache-Control", "no-store")
         .body(axum::body::Body::from(json_str))
         .unwrap_or_else(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response())
@@ -6166,8 +7212,10 @@ fn parse_trade_command(cmd: &str) -> Option<BotCommand> {
     let words: Vec<&str> = lower.split_whitespace().collect();
 
     // ── "close all" variants ──────────────────────────────────────────────
-    if lower.contains("close all") || lower.contains("close everything")
-        || lower.contains("exit all") || lower.contains("sell all")
+    if lower.contains("close all")
+        || lower.contains("close everything")
+        || lower.contains("exit all")
+        || lower.contains("sell all")
         || lower.contains("close every")
     {
         return Some(BotCommand::CloseAll);
@@ -6187,13 +7235,17 @@ fn parse_trade_command(cmd: &str) -> Option<BotCommand> {
             "close" | "exit" | "sell" => {
                 // "close kFloki", "exit BTC"
                 if let Some(sym) = words.get(i + 1).filter(|&&w| w != "all") {
-                    return Some(BotCommand::ClosePosition { symbol: sym.to_uppercase() });
+                    return Some(BotCommand::ClosePosition {
+                        symbol: sym.to_uppercase(),
+                    });
                 }
             }
             "tp" => {
                 // "tp SOL"
                 if let Some(sym) = words.get(i + 1) {
-                    return Some(BotCommand::TakePartial { symbol: sym.to_uppercase() });
+                    return Some(BotCommand::TakePartial {
+                        symbol: sym.to_uppercase(),
+                    });
                 }
             }
             "profit" | "profits" => {
@@ -6206,7 +7258,9 @@ fn parse_trade_command(cmd: &str) -> Option<BotCommand> {
                     next
                 };
                 if let Some(s) = sym {
-                    return Some(BotCommand::TakePartial { symbol: s.to_uppercase() });
+                    return Some(BotCommand::TakePartial {
+                        symbol: s.to_uppercase(),
+                    });
                 }
             }
             _ => {}
@@ -6236,7 +7290,9 @@ async fn command_handler(
 
     // Accept either a valid consumer session OR the operator Basic-Auth header.
     let has_consumer_session = get_session_tenant_id(&headers, &app.session_secret).is_some();
-    let has_admin_auth = app.admin_password.as_deref()
+    let has_admin_auth = app
+        .admin_password
+        .as_deref()
         .map(|pw| check_admin_auth(&headers, pw))
         .unwrap_or(false);
     if !has_consumer_session && !has_admin_auth {
@@ -6248,10 +7304,12 @@ async fn command_handler(
         return axum::response::Json(serde_json::json!({
             "ok": false,
             "msg": "Command too long (max 200 chars)."
-        })).into_response();
+        }))
+        .into_response();
     }
 
-    let cmd_clean: String = req.command
+    let cmd_clean: String = req
+        .command
         .chars()
         .map(|c| if (c as u32) < 32 && c != ' ' { ' ' } else { c })
         .collect::<String>()
@@ -6263,24 +7321,36 @@ async fn command_handler(
         Some(bot_cmd) => {
             // Build a human-readable description for the response
             let (action, symbol, msg) = match &bot_cmd {
-                BotCommand::ClosePosition { symbol } =>
-                    ("ClosePosition", symbol.clone(),
-                     format!("Closing {symbol} on next cycle ⏱")),
-                BotCommand::TakePartial { symbol } =>
-                    ("TakePartial", symbol.clone(),
-                     format!("Taking partial profit on {symbol} (tranche 1/3) on next cycle ⏱")),
-                BotCommand::CloseAll =>
-                    ("CloseAll", String::new(),
-                     "Closing ALL positions on next cycle ⏱".to_string()),
-                BotCommand::CloseProfitable =>
-                    ("CloseProfitable", String::new(),
-                     "Taking profits on all winning positions on next cycle ⏱".to_string()),
-                BotCommand::OpenLong { symbol, .. } =>
-                    ("OpenLong", symbol.clone(),
-                     format!("Opening LONG on {symbol} on next cycle ⏱")),
-                BotCommand::OpenShort { symbol, .. } =>
-                    ("OpenShort", symbol.clone(),
-                     format!("Opening SHORT on {symbol} on next cycle ⏱")),
+                BotCommand::ClosePosition { symbol } => (
+                    "ClosePosition",
+                    symbol.clone(),
+                    format!("Closing {symbol} on next cycle ⏱"),
+                ),
+                BotCommand::TakePartial { symbol } => (
+                    "TakePartial",
+                    symbol.clone(),
+                    format!("Taking partial profit on {symbol} (tranche 1/3) on next cycle ⏱"),
+                ),
+                BotCommand::CloseAll => (
+                    "CloseAll",
+                    String::new(),
+                    "Closing ALL positions on next cycle ⏱".to_string(),
+                ),
+                BotCommand::CloseProfitable => (
+                    "CloseProfitable",
+                    String::new(),
+                    "Taking profits on all winning positions on next cycle ⏱".to_string(),
+                ),
+                BotCommand::OpenLong { symbol, .. } => (
+                    "OpenLong",
+                    symbol.clone(),
+                    format!("Opening LONG on {symbol} on next cycle ⏱"),
+                ),
+                BotCommand::OpenShort { symbol, .. } => (
+                    "OpenShort",
+                    symbol.clone(),
+                    format!("Opening SHORT on {symbol} on next cycle ⏱"),
+                ),
             };
 
             // Push to queue
@@ -6294,7 +7364,8 @@ async fn command_handler(
                 "action": action,
                 "symbol": symbol,
                 "msg":    msg,
-            })).into_response()
+            }))
+            .into_response()
         }
         None => {
             // Not a recognised trade command — tell the caller
@@ -6305,7 +7376,8 @@ async fn command_handler(
                      Try: 'close SOL', 'take profit ETH', 'close all', 'take profits'.",
                     cmd_clean
                 )
-            })).into_response()
+            }))
+            .into_response()
         }
     }
 }
@@ -6325,7 +7397,11 @@ async fn thesis_get_handler(
 
     // Accept consumer session OR operator Basic-Auth
     let has_consumer = get_session_tenant_id(&headers, &app.session_secret).is_some();
-    let has_admin    = app.admin_password.as_deref().map(|pw| check_admin_auth(&headers, pw)).unwrap_or(false);
+    let has_admin = app
+        .admin_password
+        .as_deref()
+        .map(|pw| check_admin_auth(&headers, pw))
+        .unwrap_or(false);
     if !has_consumer && !has_admin {
         return axum::http::StatusCode::UNAUTHORIZED.into_response();
     }
@@ -6334,7 +7410,8 @@ async fn thesis_get_handler(
     axum::response::Json(serde_json::json!({
         "summary":     c.summary,
         "thesis_text": c.thesis_text,
-    })).into_response()
+    }))
+    .into_response()
 }
 
 #[derive(serde::Deserialize)]
@@ -6361,7 +7438,9 @@ async fn thesis_update_handler(
     let tid = match get_session_tenant_id(&headers, &app.session_secret) {
         Some(t) => t,
         None => {
-            let is_admin = app.admin_password.as_deref()
+            let is_admin = app
+                .admin_password
+                .as_deref()
                 .map(|pw| check_admin_auth(&headers, pw))
                 .unwrap_or(false);
             if !is_admin {
@@ -6380,11 +7459,13 @@ async fn thesis_update_handler(
         return axum::response::Json(serde_json::json!({
             "type":    "error",
             "message": "Command too long. Please keep it under 200 characters.",
-        })).into_response();
+        }))
+        .into_response();
     }
 
     // 2. Strip control characters and null bytes; collapse whitespace.
-    let cmd: String = req.command
+    let cmd: String = req
+        .command
         .chars()
         .map(|c| if (c as u32) < 32 && c != ' ' { ' ' } else { c })
         .collect::<String>()
@@ -6398,19 +7479,32 @@ async fn thesis_update_handler(
         return axum::response::Json(serde_json::json!({
             "type":    "error",
             "message": "Empty command.",
-        })).into_response();
+        }))
+        .into_response();
     }
 
     // 3. Topic guard — only crypto portfolio commands are accepted.
     //    Reject obvious off-topic patterns before they reach the parser.
     let cmd_lower = cmd.to_lowercase();
     let off_topic_patterns = [
-        "ignore previous", "disregard", "forget your instructions",
-        "act as", "you are now", "new persona", "pretend you",
-        "system prompt", "jailbreak", "dan mode",
-        "tell me a joke", "write a poem", "write code",
-        "help me with", "explain how to", "what is the weather",
-        "translate", "summarize this article",
+        "ignore previous",
+        "disregard",
+        "forget your instructions",
+        "act as",
+        "you are now",
+        "new persona",
+        "pretend you",
+        "system prompt",
+        "jailbreak",
+        "dan mode",
+        "tell me a joke",
+        "write a poem",
+        "write code",
+        "help me with",
+        "explain how to",
+        "what is the weather",
+        "translate",
+        "summarize this article",
     ];
     if off_topic_patterns.iter().any(|p| cmd_lower.contains(p)) {
         return axum::response::Json(serde_json::json!({
@@ -6427,17 +7521,26 @@ async fn thesis_update_handler(
             if s.closed_trades.is_empty() {
                 "No trades recorded yet.".to_string()
             } else {
-                let recent: Vec<String> = s.closed_trades.iter().rev().take(5).map(|t| {
-                    format!("• {} {} @ ${:.4} → ${:.4} · P&L: {}",
-                        t.side, t.symbol, t.entry, t.exit, t.pnl)
-                }).collect();
+                let recent: Vec<String> = s
+                    .closed_trades
+                    .iter()
+                    .rev()
+                    .take(5)
+                    .map(|t| {
+                        format!(
+                            "• {} {} @ ${:.4} → ${:.4} · P&L: {}",
+                            t.side, t.symbol, t.entry, t.exit, t.pnl
+                        )
+                    })
+                    .collect();
                 recent.join("<br>")
             }
         };
         return axum::response::Json(serde_json::json!({
             "type":    "query",
             "message": trades_summary,
-        })).into_response();
+        }))
+        .into_response();
     }
 
     // ── Constraint update path ────────────────────────────────────────────────
@@ -6448,13 +7551,24 @@ async fn thesis_update_handler(
         (None, None, None, None)
     } else {
         let wl_str = parsed.symbol_whitelist.as_ref().map(|v| v.join(","));
-        (wl_str, parsed.sector_filter.clone(), parsed.max_leverage_override, parsed.thesis_text.clone())
+        (
+            wl_str,
+            parsed.sector_filter.clone(),
+            parsed.max_leverage_override,
+            parsed.thesis_text.clone(),
+        )
     };
 
     // Update in-memory tenant config
     {
         let mut tenants = app.tenants.write().await;
-        let _ = tenants.update_thesis(&tid, thesis_txt.clone(), whitelist_str.clone(), sector.clone(), max_lev);
+        let _ = tenants.update_thesis(
+            &tid,
+            thesis_txt.clone(),
+            whitelist_str.clone(),
+            sector.clone(),
+            max_lev,
+        );
     }
 
     // Persist to DB (non-blocking)
@@ -6470,7 +7584,11 @@ async fn thesis_update_handler(
                          sector_filter        = $3,
                          max_leverage_override = $4
                      WHERE id = $5",
-                    txt2, wl2, sec2, max_lev, tid_uuid,
+                    txt2,
+                    wl2,
+                    sec2,
+                    max_lev,
+                    tid_uuid,
                 )
                 .execute(db2.pool())
                 .await
@@ -6491,10 +7609,17 @@ async fn thesis_update_handler(
     }
 
     let (resp_type, message, summary) = if parsed.is_empty() {
-        ("reset", "AI decides everything now — all constraints cleared.".to_string(), None)
+        (
+            "reset",
+            "AI decides everything now — all constraints cleared.".to_string(),
+            None,
+        )
     } else {
         let sum = parsed.summary.clone().unwrap_or_default();
-        let msg = format!("Thesis updated: {}. The bot will apply these constraints from the next cycle.", sum);
+        let msg = format!(
+            "Thesis updated: {}. The bot will apply these constraints from the next cycle.",
+            sum
+        );
         ("update", msg, parsed.summary.clone())
     };
 
@@ -6502,7 +7627,8 @@ async fn thesis_update_handler(
         "type":    resp_type,
         "message": message,
         "summary": summary,
-    })).into_response()
+    }))
+    .into_response()
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -6514,9 +7640,7 @@ async fn thesis_update_handler(
 /// Visible to any visitor — no authentication required.
 /// All numbers are live, fetched from `/api/public/tvl` and `/api/public/stats`
 /// via client-side JavaScript that auto-refreshes every 30 seconds.
-async fn public_landing_handler(
-    State(_app): State<AppState>,
-) -> axum::response::Html<String> {
+async fn public_landing_handler(State(_app): State<AppState>) -> axum::response::Html<String> {
     axum::response::Html(r##"<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -6709,6 +7833,7 @@ th{padding:9px 14px;font-size:.65rem;font-weight:700;color:var(--dim);text-trans
     <span class="live-badge"><span id="live-pill-text">1 Bot</span> Live</span>
     <a href="#how" class="nav-link">How it works</a>
     <a href="#bot-api" class="nav-link">Bot API</a>
+    <a href="/app/agents" class="nav-link">Agent Console</a>
     <a href="/login" class="nav-cta">Start Trading →</a>
   </div>
 </nav>
@@ -7191,7 +8316,8 @@ async fn api_public_stats_handler(
 
     // Use non-macro query to avoid requiring .sqlx/ cache regeneration.
     // Fetches all tenants with their latest equity snapshot and open position count.
-    let rows = sqlx::query(r#"
+    let rows = sqlx::query(
+        r#"
         SELECT
             t.id::text                                              AS tenant_id,
             COALESCE(t.display_name, 'Anonymous')                  AS display_name,
@@ -7213,7 +8339,8 @@ async fn api_public_stats_handler(
             )                                                       AS open_positions
         FROM   tenants t
         ORDER  BY t.initial_capital DESC
-    "#)
+    "#,
+    )
     .fetch_all(db.pool())
     .await;
 
@@ -7227,21 +8354,27 @@ async fn api_public_stats_handler(
             )
         }
         Ok(rows) => {
-            let accounts: Vec<serde_json::Value> = rows.iter().map(|r| {
-                use sqlx::Row;
-                let display_name: String = r.try_get("display_name").unwrap_or_else(|_| "Anonymous".into());
-                let initial_capital: f64 = r.try_get("initial_capital").unwrap_or(0.0);
-                let current_equity: f64  = r.try_get("current_equity").unwrap_or(initial_capital);
-                let open_positions: i32  = r.try_get("open_positions").unwrap_or(0);
-                let wallet_address: Option<String> = r.try_get("wallet_address").ok().flatten();
-                serde_json::json!({
-                    "display_name":    display_name,
-                    "initial_capital": initial_capital,
-                    "current_equity":  current_equity,
-                    "open_positions":  open_positions,
-                    "wallet_address":  wallet_address,
+            let accounts: Vec<serde_json::Value> = rows
+                .iter()
+                .map(|r| {
+                    use sqlx::Row;
+                    let display_name: String = r
+                        .try_get("display_name")
+                        .unwrap_or_else(|_| "Anonymous".into());
+                    let initial_capital: f64 = r.try_get("initial_capital").unwrap_or(0.0);
+                    let current_equity: f64 =
+                        r.try_get("current_equity").unwrap_or(initial_capital);
+                    let open_positions: i32 = r.try_get("open_positions").unwrap_or(0);
+                    let wallet_address: Option<String> = r.try_get("wallet_address").ok().flatten();
+                    serde_json::json!({
+                        "display_name":    display_name,
+                        "initial_capital": initial_capital,
+                        "current_equity":  current_equity,
+                        "open_positions":  open_positions,
+                        "wallet_address":  wallet_address,
+                    })
                 })
-            }).collect();
+                .collect();
 
             (
                 StatusCode::OK,
@@ -7264,15 +8397,15 @@ async fn api_public_stats_handler(
 /// Generate a simple time-based unique ID.
 fn new_id(prefix: &str) -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
-    let dur = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+    let dur = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
     format!("{}_{:x}{:x}", prefix, dur.as_millis(), dur.subsec_nanos())
 }
 
 /// `GET /api/v1/status` — unauthenticated machine-readable bot status.
 /// Returns live AUM, P&L, win rate and x402 payment info.
-async fn api_v1_status_handler(
-    State(app): State<AppState>,
-) -> axum::response::Response {
+async fn api_v1_status_handler(State(app): State<AppState>) -> axum::response::Response {
     use axum::response::IntoResponse;
     let s = app.bot_state.read().await;
     let m = &s.metrics;
@@ -7295,7 +8428,8 @@ async fn api_v1_status_handler(
             "endpoint":       "POST /api/v1/session",
             "docs":           "https://tradingbots.fun/api/v1/status"
         }
-    })).into_response()
+    }))
+    .into_response()
 }
 
 /// x402 payment requirements object (embedded in 402 responses).
@@ -7323,17 +8457,18 @@ fn x402_payment_requirements(resource: &str) -> serde_json::Value {
 /// Returns `Ok(true)` = payment confirmed, `Ok(false)` = tx not found / wrong
 /// recipient / insufficient amount, `Err(_)` = RPC call failed.
 async fn verify_base_usdc_payment(
-    tx_hash:       &str,
-    recipient:     &str,      // our X402_WALLET, lower-cased
-    min_usdc_units: u64,      // 10_000_000 for 10 USDC
+    tx_hash: &str,
+    recipient: &str,     // our X402_WALLET, lower-cased
+    min_usdc_units: u64, // 10_000_000 for 10 USDC
 ) -> Result<bool, String> {
     // USDC on Base mainnet
-    const USDC_CONTRACT: &str  = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
+    const USDC_CONTRACT: &str = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913";
     // keccak256("Transfer(address,address,uint256)")
-    const TRANSFER_TOPIC: &str = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+    const TRANSFER_TOPIC: &str =
+        "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 
-    let rpc_url = std::env::var("BASE_RPC_URL")
-        .unwrap_or_else(|_| "https://mainnet.base.org".to_string());
+    let rpc_url =
+        std::env::var("BASE_RPC_URL").unwrap_or_else(|_| "https://mainnet.base.org".to_string());
 
     let body = serde_json::json!({
         "jsonrpc": "2.0",
@@ -7359,7 +8494,7 @@ async fn verify_base_usdc_payment(
 
     let receipt = match resp.get("result") {
         Some(r) if !r.is_null() => r,
-        _ => return Ok(false),  // tx not yet mined or not found
+        _ => return Ok(false), // tx not yet mined or not found
     };
 
     // Must be a successful tx (status = "0x1")
@@ -7369,7 +8504,7 @@ async fn verify_base_usdc_payment(
 
     let logs = match receipt.get("logs").and_then(|l| l.as_array()) {
         Some(l) => l,
-        None    => return Ok(false),
+        None => return Ok(false),
     };
 
     let recipient_lc = recipient.to_lowercase();
@@ -7378,7 +8513,8 @@ async fn verify_base_usdc_payment(
 
     for log in logs {
         // Must be from USDC contract
-        let log_addr = log.get("address")
+        let log_addr = log
+            .get("address")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_lowercase();
@@ -7403,16 +8539,19 @@ async fn verify_base_usdc_payment(
         }
 
         // data = 32-byte hex-encoded uint256 value
-        let data_hex = log.get("data")
+        let data_hex = log
+            .get("data")
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .trim_start_matches("0x");
 
         // Decode as big-endian u64 (safe up to ~18 USDC * 10^6; USDC max is fine)
         let padded = format!("{:0>64}", data_hex);
-        let amount_bytes = hex::decode(&padded[48..64])  // last 8 bytes
+        let amount_bytes = hex::decode(&padded[48..64]) // last 8 bytes
             .unwrap_or_default();
-        let amount: u64 = amount_bytes.iter().fold(0u64, |acc, &b| acc * 256 + b as u64);
+        let amount: u64 = amount_bytes
+            .iter()
+            .fold(0u64, |acc, &b| acc * 256 + b as u64);
 
         if amount >= min_usdc_units {
             return Ok(true);
@@ -7428,7 +8567,7 @@ async fn verify_base_usdc_payment(
 /// **With** `X-Payment: 0x{txHash}` → verifies on Base mainnet, then creates session.
 async fn api_v1_session_handler(
     State(app): State<AppState>,
-    headers:    axum::http::HeaderMap,
+    headers: axum::http::HeaderMap,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
 
@@ -7467,7 +8606,8 @@ async fn api_v1_session_handler(
             axum::response::Json(serde_json::json!({
                 "error": "Invalid X-Payment value — expected 0x{66-char txHash}"
             })),
-        ).into_response();
+        )
+            .into_response();
     }
 
     // ── On-chain verification: confirm 10 USDC reached our wallet ─────────
@@ -7479,7 +8619,11 @@ async fn api_v1_session_handler(
             log::info!("✅ x402 payment verified on-chain: {}", &tx_hash[..12]);
         }
         Ok(false) => {
-            log::warn!("❌ x402 payment not verified (tx={}, wallet={})", &tx_hash[..12], &our_wallet[..8]);
+            log::warn!(
+                "❌ x402 payment not verified (tx={}, wallet={})",
+                &tx_hash[..12],
+                &our_wallet[..8]
+            );
             return (
                 axum::http::StatusCode::PAYMENT_REQUIRED,
                 axum::response::Json(serde_json::json!({
@@ -7490,24 +8634,29 @@ async fn api_v1_session_handler(
                     "amount":  "10 USDC (10000000 units)",
                     "network": "base-mainnet"
                 })),
-            ).into_response();
+            )
+                .into_response();
         }
         Err(rpc_err) => {
             // RPC unreachable — allow with a warning (don't block on infra issues)
-            log::warn!("⚠ x402 RPC verification failed ({}), accepting provisionally: {}", rpc_err, &tx_hash[..12]);
+            log::warn!(
+                "⚠ x402 RPC verification failed ({}), accepting provisionally: {}",
+                rpc_err,
+                &tx_hash[..12]
+            );
         }
     }
 
-    let session_id  = new_id("ses");
-    let token       = new_id("tok");
-    let now         = chrono::Utc::now();
-    let expires_at  = now + chrono::Duration::days(30);
+    let session_id = new_id("ses");
+    let token = new_id("tok");
+    let now = chrono::Utc::now();
+    let expires_at = now + chrono::Duration::days(30);
 
     let session = BotSession {
-        id:         session_id.clone(),
-        token:      token.clone(),
-        tx_hash:    tx_hash.clone(),
-        plan:       "starter".to_string(),
+        id: session_id.clone(),
+        token: token.clone(),
+        tx_hash: tx_hash.clone(),
+        plan: "starter".to_string(),
         created_at: now.to_rfc3339(),
         expires_at: expires_at.to_rfc3339(),
     };
@@ -7517,7 +8666,11 @@ async fn api_v1_session_handler(
         s.bot_sessions.insert(session_id.clone(), session);
     }
 
-    log::info!("🤖 x402 session created: {} (tx {})", session_id, &tx_hash[..10.min(tx_hash.len())]);
+    log::info!(
+        "🤖 x402 session created: {} (tx {})",
+        session_id,
+        &tx_hash[..10.min(tx_hash.len())]
+    );
 
     axum::response::Json(serde_json::json!({
         "ok":         true,
@@ -7529,14 +8682,15 @@ async fn api_v1_session_handler(
             "status":  format!("/api/v1/session/{}", session_id),
             "command": format!("/api/v1/session/{}/command", session_id)
         }
-    })).into_response()
+    }))
+    .into_response()
 }
 
 /// Validate `Authorization: Bearer {token}` against stored session.
 /// Returns `Ok(plan)` on success or an error response.
 async fn validate_bot_session(
-    app:        &AppState,
-    headers:    &axum::http::HeaderMap,
+    app: &AppState,
+    headers: &axum::http::HeaderMap,
     session_id: &str,
 ) -> Result<String, axum::response::Response> {
     use axum::response::IntoResponse;
@@ -7551,13 +8705,15 @@ async fn validate_bot_session(
         None => Err((
             axum::http::StatusCode::NOT_FOUND,
             axum::response::Json(serde_json::json!({"error":"Session not found"})),
-        ).into_response()),
+        )
+            .into_response()),
         Some(sess) => {
             if auth_token.as_deref() != Some(sess.token.as_str()) {
                 return Err((
                     axum::http::StatusCode::UNAUTHORIZED,
                     axum::response::Json(serde_json::json!({"error":"Invalid bearer token"})),
-                ).into_response());
+                )
+                    .into_response());
             }
             Ok(sess.plan.clone())
         }
@@ -7566,9 +8722,9 @@ async fn validate_bot_session(
 
 /// `GET /api/v1/session/{id}` — live bot status for an authenticated session.
 async fn api_v1_session_status_handler(
-    State(app):                              State<AppState>,
-    headers:                                 axum::http::HeaderMap,
-    axum::extract::Path(session_id):         axum::extract::Path<String>,
+    State(app): State<AppState>,
+    headers: axum::http::HeaderMap,
+    axum::extract::Path(session_id): axum::extract::Path<String>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
     if let Err(e) = validate_bot_session(&app, &headers, &session_id).await {
@@ -7597,7 +8753,8 @@ async fn api_v1_session_status_handler(
                 "leverage":       p.leverage,
             })).collect::<Vec<_>>()
         }
-    })).into_response()
+    }))
+    .into_response()
 }
 
 /// `POST /api/v1/session/{id}/command` — queue a trade command for the bot.
@@ -7605,53 +8762,93 @@ async fn api_v1_session_status_handler(
 /// Body: `{"cmd": "close_position", "symbol": "SOL"}`
 /// Valid `cmd` values: `close_position`, `take_profit`, `close_all`, `close_profitable`
 async fn api_v1_session_command_handler(
-    State(app):                      State<AppState>,
-    headers:                         axum::http::HeaderMap,
+    State(app): State<AppState>,
+    headers: axum::http::HeaderMap,
     axum::extract::Path(session_id): axum::extract::Path<String>,
-    axum::extract::Json(body):       axum::extract::Json<serde_json::Value>,
+    axum::extract::Json(body): axum::extract::Json<serde_json::Value>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
     if let Err(e) = validate_bot_session(&app, &headers, &session_id).await {
         return e;
     }
 
-    let cmd_str = body.get("cmd").and_then(|v| v.as_str()).unwrap_or("").to_string();
-    let symbol  = body.get("symbol").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let cmd_str = body
+        .get("cmd")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let symbol = body
+        .get("symbol")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
 
     let cmd: BotCommand = match cmd_str.as_str() {
         "close_position" | "close" => {
             if symbol.is_empty() {
-                return (axum::http::StatusCode::BAD_REQUEST,
-                    axum::response::Json(serde_json::json!({"error":"symbol required for close_position"}))).into_response();
+                return (
+                    axum::http::StatusCode::BAD_REQUEST,
+                    axum::response::Json(
+                        serde_json::json!({"error":"symbol required for close_position"}),
+                    ),
+                )
+                    .into_response();
             }
             BotCommand::ClosePosition { symbol }
         }
         "take_profit" | "tp" => {
             if symbol.is_empty() {
-                return (axum::http::StatusCode::BAD_REQUEST,
-                    axum::response::Json(serde_json::json!({"error":"symbol required for take_profit"}))).into_response();
+                return (
+                    axum::http::StatusCode::BAD_REQUEST,
+                    axum::response::Json(
+                        serde_json::json!({"error":"symbol required for take_profit"}),
+                    ),
+                )
+                    .into_response();
             }
             BotCommand::TakePartial { symbol }
         }
-        "close_all"         => BotCommand::CloseAll,
-        "close_profitable"  => BotCommand::CloseProfitable,
+        "close_all" => BotCommand::CloseAll,
+        "close_profitable" => BotCommand::CloseProfitable,
         "open_long" | "buy_long" | "long" => {
-            let sym = if !symbol.is_empty() { symbol } else {
-                return (axum::http::StatusCode::BAD_REQUEST,
-                    axum::response::Json(serde_json::json!({"error":"symbol required for open_long"}))).into_response();
+            let sym = if !symbol.is_empty() {
+                symbol
+            } else {
+                return (
+                    axum::http::StatusCode::BAD_REQUEST,
+                    axum::response::Json(
+                        serde_json::json!({"error":"symbol required for open_long"}),
+                    ),
+                )
+                    .into_response();
             };
             let size_usd = body.get("size_usd").and_then(|v| v.as_f64());
-            let leverage  = body.get("leverage").and_then(|v| v.as_f64());
-            BotCommand::OpenLong { symbol: sym, size_usd, leverage }
+            let leverage = body.get("leverage").and_then(|v| v.as_f64());
+            BotCommand::OpenLong {
+                symbol: sym,
+                size_usd,
+                leverage,
+            }
         }
         "open_short" | "buy_short" | "short" => {
-            let sym = if !symbol.is_empty() { symbol } else {
-                return (axum::http::StatusCode::BAD_REQUEST,
-                    axum::response::Json(serde_json::json!({"error":"symbol required for open_short"}))).into_response();
+            let sym = if !symbol.is_empty() {
+                symbol
+            } else {
+                return (
+                    axum::http::StatusCode::BAD_REQUEST,
+                    axum::response::Json(
+                        serde_json::json!({"error":"symbol required for open_short"}),
+                    ),
+                )
+                    .into_response();
             };
             let size_usd = body.get("size_usd").and_then(|v| v.as_f64());
-            let leverage  = body.get("leverage").and_then(|v| v.as_f64());
-            BotCommand::OpenShort { symbol: sym, size_usd, leverage }
+            let leverage = body.get("leverage").and_then(|v| v.as_f64());
+            BotCommand::OpenShort {
+                symbol: sym,
+                size_usd,
+                leverage,
+            }
         }
         other => {
             // Fall back to the NLP parser for natural-language commands
@@ -7677,7 +8874,8 @@ async fn api_v1_session_command_handler(
         "ok":      true,
         "queued":  true,
         "message": "Command queued — executes on next trading cycle (~30s)"
-    })).into_response()
+    }))
+    .into_response()
 }
 
 /// `POST /api/v1/session/{id}/query` — natural-language AI interface for bots.
@@ -7693,57 +8891,92 @@ async fn api_v1_session_command_handler(
 ///   `{"query": "what is my current P&L?"}`
 ///   `{"query": "show my open positions"}`
 async fn api_v1_query_handler(
-    State(app):                      State<AppState>,
-    headers:                         axum::http::HeaderMap,
+    State(app): State<AppState>,
+    headers: axum::http::HeaderMap,
     axum::extract::Path(session_id): axum::extract::Path<String>,
-    axum::extract::Json(body):       axum::extract::Json<serde_json::Value>,
+    axum::extract::Json(body): axum::extract::Json<serde_json::Value>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
     if let Err(e) = validate_bot_session(&app, &headers, &session_id).await {
         return e;
     }
 
-    let query = body.get("query").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    let query = body
+        .get("query")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
     if query.is_empty() {
-        return (axum::http::StatusCode::BAD_REQUEST,
-            axum::response::Json(serde_json::json!({"error":"query field required"}))).into_response();
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            axum::response::Json(serde_json::json!({"error":"query field required"})),
+        )
+            .into_response();
     }
 
     let ql = query.to_lowercase();
 
     // ── 1. Detect open-position intent ───────────────────────────────────
     let open_intent = {
-        let is_open  = ql.contains("open") || ql.contains("enter") || ql.contains("buy") || ql.contains("long") || ql.contains("short");
+        let is_open = ql.contains("open")
+            || ql.contains("enter")
+            || ql.contains("buy")
+            || ql.contains("long")
+            || ql.contains("short");
         let is_close = ql.contains("close") || ql.contains("take profit") || ql.contains("sell");
         is_open && !is_close
     };
 
     if open_intent {
         // Parse: "open a long on SOL with $200 2x" / "buy ETH $100 3x leverage"
-        let is_long  = !ql.contains("short") && !ql.contains("sell");
-        let symbol   = ql.split_whitespace()
-            .find(|w| w.chars().all(|c| c.is_alphanumeric()) && w.len() >= 2 && w.len() <= 8
-                   && !["open","long","short","buy","sell","enter","a","an","the","on","with","at","x","leverage"].contains(w))
+        let is_long = !ql.contains("short") && !ql.contains("sell");
+        let symbol = ql
+            .split_whitespace()
+            .find(|w| {
+                w.chars().all(|c| c.is_alphanumeric())
+                    && w.len() >= 2
+                    && w.len() <= 8
+                    && ![
+                        "open", "long", "short", "buy", "sell", "enter", "a", "an", "the", "on",
+                        "with", "at", "x", "leverage",
+                    ]
+                    .contains(w)
+            })
             .map(|s| s.to_uppercase());
         // Extract dollar amount
         let size_usd = {
             let mut found = None;
             for tok in ql.split_whitespace() {
                 let t = tok.trim_start_matches('$');
-                if let Ok(n) = t.parse::<f64>() { if n >= 1.0 { found = Some(n); break; } }
+                if let Ok(n) = t.parse::<f64>() {
+                    if n >= 1.0 {
+                        found = Some(n);
+                        break;
+                    }
+                }
             }
             found
         };
         // Extract leverage (e.g. "2x" "3x" "5x")
-        let leverage = ql.split_whitespace()
-            .find(|w| w.ends_with('x') && w[..w.len()-1].parse::<f64>().is_ok())
-            .and_then(|w| w[..w.len()-1].parse::<f64>().ok());
+        let leverage = ql
+            .split_whitespace()
+            .find(|w| w.ends_with('x') && w[..w.len() - 1].parse::<f64>().is_ok())
+            .and_then(|w| w[..w.len() - 1].parse::<f64>().ok());
 
         if let Some(sym) = symbol {
             let cmd = if is_long {
-                BotCommand::OpenLong  { symbol: sym.clone(), size_usd, leverage }
+                BotCommand::OpenLong {
+                    symbol: sym.clone(),
+                    size_usd,
+                    leverage,
+                }
             } else {
-                BotCommand::OpenShort { symbol: sym.clone(), size_usd, leverage }
+                BotCommand::OpenShort {
+                    symbol: sym.clone(),
+                    size_usd,
+                    leverage,
+                }
             };
             {
                 let mut s = app.bot_state.write().await;
@@ -7751,7 +8984,7 @@ async fn api_v1_query_handler(
             }
             let side_str = if is_long { "LONG" } else { "SHORT" };
             let size_str = size_usd.map_or("default size".to_string(), |v| format!("${v:.0}"));
-            let lev_str  = leverage.map_or("1×".to_string(), |v| format!("{v:.1}×"));
+            let lev_str = leverage.map_or("1×".to_string(), |v| format!("{v:.1}×"));
             return axum::response::Json(serde_json::json!({
                 "ok":      true,
                 "action":  "queued",
@@ -7768,9 +9001,9 @@ async fn api_v1_query_handler(
     if let Some(cmd) = parse_trade_command(&query) {
         let label = match &cmd {
             BotCommand::ClosePosition { symbol } => format!("Closing {symbol}"),
-            BotCommand::TakePartial   { symbol } => format!("Taking partial profit on {symbol}"),
-            BotCommand::CloseAll                 => "Closing all positions".to_string(),
-            BotCommand::CloseProfitable          => "Closing all profitable positions".to_string(),
+            BotCommand::TakePartial { symbol } => format!("Taking partial profit on {symbol}"),
+            BotCommand::CloseAll => "Closing all positions".to_string(),
+            BotCommand::CloseProfitable => "Closing all profitable positions".to_string(),
             _ => "Command queued".to_string(),
         };
         {
@@ -7781,7 +9014,8 @@ async fn api_v1_query_handler(
             "ok":     true,
             "action": "queued",
             "answer": format!("{label} — executes on next cycle (~30s)"),
-        })).into_response();
+        }))
+        .into_response();
     }
 
     // ── 3. State questions — answer from live BotState ────────────────────
@@ -7792,23 +9026,45 @@ async fn api_v1_query_handler(
     let aum = s.capital + committed + unrealised;
 
     // Build plain-English answer based on keywords
-    let answer = if ql.contains("pnl") || ql.contains("profit") || ql.contains("gain") || ql.contains("loss") {
-        format!("Current session P&L: {}{:.2} USD ({}{:.2}%). Win rate: {:.0}% across {} trades.",
-            if s.pnl >= 0.0 {"+"} else {""}, s.pnl,
-            if s.pnl >= 0.0 {"+"} else {""}, (s.pnl / s.initial_capital.max(1.0)) * 100.0,
-            m.win_rate * 100.0, m.total_trades)
+    let answer = if ql.contains("pnl")
+        || ql.contains("profit")
+        || ql.contains("gain")
+        || ql.contains("loss")
+    {
+        format!(
+            "Current session P&L: {}{:.2} USD ({}{:.2}%). Win rate: {:.0}% across {} trades.",
+            if s.pnl >= 0.0 { "+" } else { "" },
+            s.pnl,
+            if s.pnl >= 0.0 { "+" } else { "" },
+            (s.pnl / s.initial_capital.max(1.0)) * 100.0,
+            m.win_rate * 100.0,
+            m.total_trades
+        )
     } else if ql.contains("position") || ql.contains("open") || ql.contains("holding") {
         if s.positions.is_empty() {
             "No open positions right now. The bot is scanning for signals.".to_string()
         } else {
-            let summary: Vec<String> = s.positions.iter().map(|p|
-                format!("{} {} | entry ${:.4} | P&L {}{:.2}",
-                    p.symbol, p.side, p.entry_price,
-                    if p.unrealised_pnl >= 0.0 {"+"} else {""}, p.unrealised_pnl)
-            ).collect();
+            let summary: Vec<String> = s
+                .positions
+                .iter()
+                .map(|p| {
+                    format!(
+                        "{} {} | entry ${:.4} | P&L {}{:.2}",
+                        p.symbol,
+                        p.side,
+                        p.entry_price,
+                        if p.unrealised_pnl >= 0.0 { "+" } else { "" },
+                        p.unrealised_pnl
+                    )
+                })
+                .collect();
             format!("{} open: {}", s.positions.len(), summary.join(" · "))
         }
-    } else if ql.contains("aum") || ql.contains("capital") || ql.contains("balance") || ql.contains("equity") {
+    } else if ql.contains("aum")
+        || ql.contains("capital")
+        || ql.contains("balance")
+        || ql.contains("equity")
+    {
         format!("Total AUM: ${aum:.2} | Free capital: ${:.2} | Committed: ${committed:.2} | Unrealised: ${unrealised:+.2}",
             s.capital)
     } else if ql.contains("win") || ql.contains("rate") || ql.contains("performance") {
@@ -7816,7 +9072,8 @@ async fn api_v1_query_handler(
             m.win_rate * 100.0, m.profit_factor, m.sharpe, m.total_trades)
     } else if ql.contains("circuit") || ql.contains("breaker") || ql.contains("cb") {
         if s.cb_active {
-            "⚡ Circuit breaker ACTIVE — position sizes reduced to 35%. Drawdown limit hit.".to_string()
+            "⚡ Circuit breaker ACTIVE — position sizes reduced to 35%. Drawdown limit hit."
+                .to_string()
         } else {
             "Circuit breaker is normal. Full position sizing active.".to_string()
         }
@@ -7849,7 +9106,8 @@ async fn api_v1_query_handler(
                 "leverage":       p.leverage,
             })).collect::<Vec<_>>()
         }
-    })).into_response()
+    }))
+    .into_response()
 }
 
 /// `GET /api/v1/session/{id}/hl/account` — live Hyperliquid account state.
@@ -7857,8 +9115,8 @@ async fn api_v1_query_handler(
 /// Calls the HL public info API with the configured wallet address.
 /// Returns raw clearinghouse state (balances, perp positions, margin usage).
 async fn api_v1_hl_account_handler(
-    State(app):                      State<AppState>,
-    headers:                         axum::http::HeaderMap,
+    State(app): State<AppState>,
+    headers: axum::http::HeaderMap,
     axum::extract::Path(session_id): axum::extract::Path<String>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
@@ -7868,10 +9126,13 @@ async fn api_v1_hl_account_handler(
 
     let wallet = std::env::var("HYPERLIQUID_WALLET_ADDRESS").unwrap_or_default();
     if wallet.is_empty() {
-        return (axum::http::StatusCode::SERVICE_UNAVAILABLE,
+        return (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
             axum::response::Json(serde_json::json!({
                 "error": "HYPERLIQUID_WALLET_ADDRESS not configured on this server"
-            }))).into_response();
+            })),
+        )
+            .into_response();
     }
 
     // HL public info API — no signing required for reads
@@ -7881,92 +9142,120 @@ async fn api_v1_hl_account_handler(
         "https://api.hyperliquid.xyz/info"
     };
 
-    let client  = reqwest::Client::new();
+    let client = reqwest::Client::new();
     let payload = serde_json::json!({ "type": "clearinghouseState", "user": wallet });
 
     match client.post(hl_url).json(&payload).send().await {
         Err(e) => (
             axum::http::StatusCode::BAD_GATEWAY,
             axum::response::Json(serde_json::json!({"error": format!("HL API error: {e}")})),
-        ).into_response(),
-        Ok(resp) => {
-            match resp.json::<serde_json::Value>().await {
-                Ok(data) => axum::response::Json(serde_json::json!({
-                    "ok":     true,
-                    "wallet": wallet,
-                    "hl":     data,
-                })).into_response(),
-                Err(e) => (
-                    axum::http::StatusCode::BAD_GATEWAY,
-                    axum::response::Json(serde_json::json!({"error": format!("HL parse error: {e}")})),
-                ).into_response(),
-            }
-        }
+        )
+            .into_response(),
+        Ok(resp) => match resp.json::<serde_json::Value>().await {
+            Ok(data) => axum::response::Json(serde_json::json!({
+                "ok":     true,
+                "wallet": wallet,
+                "hl":     data,
+            }))
+            .into_response(),
+            Err(e) => (
+                axum::http::StatusCode::BAD_GATEWAY,
+                axum::response::Json(serde_json::json!({"error": format!("HL parse error: {e}")})),
+            )
+                .into_response(),
+        },
     }
 }
 
-pub async fn serve(app_state: AppState, port: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub async fn serve(
+    app_state: AppState,
+    port: u16,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let app = Router::new()
         .route("/", get(public_landing_handler))
         .route("/dashboard", get(dashboard_handler))
-        .route("/app",                  get(consumer_app_handler))
-        .route("/app/history",          get(consumer_history_handler))
-        .route("/app/tax",              get(consumer_tax_handler))
-        .route("/app/tax/csv",          get(consumer_tax_csv_handler))
-        .route("/api/state",            get(api_state_handler))
+        .route("/app", get(consumer_app_handler))
+        .route("/app/agents", get(agent_app_handler))
+        .route("/app/history", get(consumer_history_handler))
+        .route("/app/tax", get(consumer_tax_handler))
+        .route("/app/tax/csv", get(consumer_tax_csv_handler))
+        .route("/api/state", get(api_state_handler))
         // ── Stripe billing ─────────────────────────────────────────────────
-        .route("/billing/checkout",     get(crate::stripe::checkout_handler))
-        .route("/billing/success",      get(crate::stripe::success_handler))
-        .route("/billing/trial",        get(crate::stripe::trial_handler))
-        .route("/webhooks/stripe",      post(crate::stripe::webhook_handler))
+        .route("/billing/checkout", get(crate::stripe::checkout_handler))
+        .route("/billing/success", get(crate::stripe::success_handler))
+        .route("/billing/trial", get(crate::stripe::trial_handler))
+        .route("/webhooks/stripe", post(crate::stripe::webhook_handler))
         // ── Privy authentication ────────────────────────────────────────────
-        .route("/login",                get(login_handler))
+        .route("/login", get(login_handler))
         .route("/static/privy-login.js", get(privy_bundle_handler))
-        .route("/auth/session",         post(auth_session_handler))
-        .route("/auth/logout",          get(auth_logout_handler))
+        .route("/auth/session", post(auth_session_handler))
+        .route("/auth/logout", get(auth_logout_handler))
         // ── Onboarding / Terms wall ─────────────────────────────────────────
-        .route("/app/onboarding",       get(onboarding_handler))
-        .route("/app/onboarding/accept",post(onboarding_accept_handler))
-        .route("/app/setup",             get(hl_setup_handler))
-        .route("/app/setup/complete",    post(hl_setup_complete_handler))
-        .route("/api/hl/balance",        get(hl_balance_api_handler))
-        .route("/api/hl/wallet/key.json",get(hl_export_key_handler))
+        .route("/app/onboarding", get(onboarding_handler))
+        .route("/app/onboarding/accept", post(onboarding_accept_handler))
+        .route("/app/setup", get(hl_setup_handler))
+        .route("/app/setup/complete", post(hl_setup_complete_handler))
+        .route("/api/hl/balance", get(hl_balance_api_handler))
+        .route("/api/hl/wallet/key.json", get(hl_export_key_handler))
         // ── Consumer settings ───────────────────────────────────────────────
-        .route("/app/settings",         get(consumer_settings_handler))
-        .route("/app/settings/wallet",  post(consumer_settings_wallet_handler))
+        .route("/app/settings", get(consumer_settings_handler))
+        .route(
+            "/app/settings/wallet",
+            post(consumer_settings_wallet_handler),
+        )
         // ── Admin panel (HTTP Basic Auth) ───────────────────────────────────
-        .route("/admin",                get(admin_dashboard_handler))
-        .route("/admin/users",          get(admin_users_handler))
-        .route("/admin/wallets",        get(admin_wallets_handler))
+        .route("/admin", get(admin_dashboard_handler))
+        .route("/admin/users", get(admin_users_handler))
+        .route("/admin/wallets", get(admin_wallets_handler))
         .route("/api/admin/reset-stats", post(admin_reset_stats_handler))
         // ── Apple Pay domain verification ───────────────────────────────────
-        .route("/.well-known/apple-developer-merchantid-domain-association",
-                                        get(apple_pay_domain_handler))
+        .route(
+            "/.well-known/apple-developer-merchantid-domain-association",
+            get(apple_pay_domain_handler),
+        )
         // ── Public API — no auth, rate-limited at the nginx level ──────────
         // Used by the landing page TVL hero graph and external integrations.
-        .route("/api/public/tvl",       get(public_tvl_handler))
-        .route("/api/public/tvl/svg",   get(public_tvl_svg_handler))
-        .route("/api/public/stats",     get(api_public_stats_handler))
+        .route("/api/public/tvl", get(public_tvl_handler))
+        .route("/api/public/tvl/svg", get(public_tvl_svg_handler))
+        .route("/api/public/stats", get(api_public_stats_handler))
         // ── Funnel / analytics (first-party, no third-party scripts) ───────
-        .route("/api/funnel",           post(funnel_event_handler))
+        .route("/api/funnel", post(funnel_event_handler))
         // ── Trade journal ────────────────────────────────────────────────
-        .route("/api/trade-note",       post(trade_note_handler))
+        .route("/api/trade-note", post(trade_note_handler))
+        .route("/api/report/latest", get(api_report_latest_handler))
+        .route("/api/report/query", post(api_report_query_handler))
+        .route("/api/report/patterns", get(api_report_patterns_handler))
+        .route(
+            "/api/report/patterns/alerts",
+            get(api_pattern_alert_handler),
+        )
+        .route("/api/bridge/withdraw", post(bridge_withdraw_handler))
+        .route("/api/bridge/status/:id", get(bridge_status_handler))
         // ── Leaderboard & invite codes ──────────────────────────────────────
-        .route("/leaderboard",          get(leaderboard_handler))
-        .route("/app/invite",           get(get_invite_handler))
-        .route("/app/invite/generate",  post(generate_invite_handler))
-        .route("/api/leaderboard",      get(api_leaderboard_handler))
+        .route("/leaderboard", get(leaderboard_handler))
+        .route("/app/invite", get(get_invite_handler))
+        .route("/app/invite/generate", post(generate_invite_handler))
+        .route("/api/leaderboard", get(api_leaderboard_handler))
         // ── Investment thesis ────────────────────────────────────────────────
-        .route("/api/thesis",           get(thesis_get_handler).post(thesis_update_handler))
+        .route(
+            "/api/thesis",
+            get(thesis_get_handler).post(thesis_update_handler),
+        )
         // ── AI trade commands ────────────────────────────────────────────────
-        .route("/api/command",          post(command_handler))
+        .route("/api/command", post(command_handler))
         // ── Bot API v1 — x402 payment-gated ─────────────────────────────────
-        .route("/api/v1/status",                        get(api_v1_status_handler))
-        .route("/api/v1/session",                       post(api_v1_session_handler))
-        .route("/api/v1/session/:id",                   get(api_v1_session_status_handler))
-        .route("/api/v1/session/:id/command",           post(api_v1_session_command_handler))
-        .route("/api/v1/session/:id/query",             post(api_v1_query_handler))
-        .route("/api/v1/session/:id/hl/account",        get(api_v1_hl_account_handler))
+        .route("/api/v1/status", get(api_v1_status_handler))
+        .route("/api/v1/session", post(api_v1_session_handler))
+        .route("/api/v1/session/:id", get(api_v1_session_status_handler))
+        .route(
+            "/api/v1/session/:id/command",
+            post(api_v1_session_command_handler),
+        )
+        .route("/api/v1/session/:id/query", post(api_v1_query_handler))
+        .route(
+            "/api/v1/session/:id/hl/account",
+            get(api_v1_hl_account_handler),
+        )
         .with_state(app_state);
     let addr = format!("0.0.0.0:{}", port);
     log::info!("🌐 Dashboard at http://{}", addr);
@@ -7988,40 +9277,54 @@ mod tests {
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    fn make_pos(side: &str, entry: f64, stop: f64, qty: f64, size_usd: f64, upnl: f64) -> PaperPosition {
+    fn make_pos(
+        side: &str,
+        entry: f64,
+        stop: f64,
+        qty: f64,
+        size_usd: f64,
+        upnl: f64,
+    ) -> PaperPosition {
         PaperPosition {
-            symbol:          "TEST".to_string(),
-            side:            side.to_string(),
-            entry_price:     entry,
-            quantity:        qty,
+            symbol: "TEST".to_string(),
+            side: side.to_string(),
+            entry_price: entry,
+            quantity: qty,
             size_usd,
-            stop_loss:       stop,
-            take_profit:     entry * 1.10,
-            atr_at_entry:    entry * 0.02,
+            stop_loss: stop,
+            take_profit: entry * 1.10,
+            atr_at_entry: entry * 0.02,
             high_water_mark: entry,
-            low_water_mark:  entry,
-            partial_closed:  false,
+            low_water_mark: entry,
+            partial_closed: false,
             r_dollars_risked: (entry - stop).abs() * qty,
             tranches_closed: 0,
-            dca_count:       0,
-            leverage:        1.0,
-            cycles_held:     0,
-            entry_time:      "00:00:00 UTC".to_string(),
-            unrealised_pnl:  upnl,
-            contrib:         SignalContribution::default(),
-            ai_action:        None,
-            ai_reason:        None,
+            dca_count: 0,
+            leverage: 1.0,
+            cycles_held: 0,
+            entry_time: "00:00:00 UTC".to_string(),
+            unrealised_pnl: upnl,
+            contrib: SignalContribution::default(),
+            ai_action: None,
+            ai_reason: None,
             entry_confidence: 0.68,
             trade_budget_usd: size_usd,
-            dca_spent_usd:    0.0,
+            dca_spent_usd: 0.0,
             btc_ret_at_entry: 0.0,
             initial_margin_usd: size_usd,
-            ob_sentiment:       String::new(),
-            ob_bid_wall_near:   false,
-            ob_ask_wall_near:   false,
-            ob_adverse_cycles:  0,
-            funded_from_pool:   false,
-            pool_stake_usd:     0.0,
+            ob_sentiment: String::new(),
+            ob_bid_wall_near: false,
+            ob_ask_wall_near: false,
+            ob_adverse_cycles: 0,
+            order_flow_confidence: 0.0,
+            order_flow_direction: String::new(),
+            funding_rate: 0.0,
+            funding_delta: 0.0,
+            onchain_strength: 0.0,
+            cex_premium_pct: 0.0,
+            cex_mode: String::new(),
+            funded_from_pool: false,
+            pool_stake_usd: 0.0,
         }
     }
 
@@ -8030,14 +9333,14 @@ mod tests {
     #[test]
     fn equity_includes_capital_committed_and_unrealised() {
         // equity = free_capital + committed_margin + unrealised_pnl
-        let capital    = 800.0;
-        let size_usd   = 100.0; // margin committed
-        let unrealised = 25.0;  // open profit
+        let capital = 800.0;
+        let size_usd = 100.0; // margin committed
+        let unrealised = 25.0; // open profit
         let pos = make_pos("LONG", 100.0, 95.0, 3.0, size_usd, unrealised);
 
         let computed_equity: f64 = capital
             + pos.size_usd          // committed
-            + pos.unrealised_pnl;   // unrealised
+            + pos.unrealised_pnl; // unrealised
         assert!(
             (computed_equity - 925.0).abs() < 1e-10,
             "equity = 800 + 100 + 25 = 925, got {computed_equity}"
@@ -8046,7 +9349,7 @@ mod tests {
 
     #[test]
     fn equity_with_losing_position_reduces_below_capital_plus_committed() {
-        let capital    = 800.0;
+        let capital = 800.0;
         let unrealised = -30.0; // open loss
         let pos = make_pos("LONG", 100.0, 95.0, 3.0, 100.0, unrealised);
         let equity: f64 = capital + pos.size_usd + pos.unrealised_pnl;
@@ -8059,10 +9362,13 @@ mod tests {
     #[test]
     fn total_pnl_combines_realised_and_unrealised() {
         // total_pnl = s.pnl (closed) + sum(unrealised_pnl)
-        let realised: f64 = 50.0;  // closed trade profits
+        let realised: f64 = 50.0; // closed trade profits
         let unrealised = -10.0; // current open loss
         let total = realised + unrealised;
-        assert!((total - 40.0).abs() < 1e-10, "total P&L: $50 realised - $10 open = $40");
+        assert!(
+            (total - 40.0).abs() < 1e-10,
+            "total P&L: $50 realised - $10 open = $40"
+        );
     }
 
     #[test]
@@ -8088,7 +9394,10 @@ mod tests {
         // REGRESSION: old code used "" for negative, causing sign to be dropped
         // when combined with .abs() → would display "$50.00" instead of "-$50.00"
         let sign = if total_pnl >= 0.0 { "+" } else { "-" };
-        assert_eq!(sign, "-", "REGRESSION: negative PnL must use '-' prefix, not empty string");
+        assert_eq!(
+            sign, "-",
+            "REGRESSION: negative PnL must use '-' prefix, not empty string"
+        );
     }
 
     #[test]
@@ -8149,7 +9458,10 @@ mod tests {
         let equity = 1000.0;
         let window: VecDeque<(i64, f64)> = VecDeque::new();
         let rolling_peak = window.iter().map(|&(_, e)| e).fold(equity, f64::max);
-        assert_eq!(rolling_peak, equity, "empty window → rolling_peak = current equity");
+        assert_eq!(
+            rolling_peak, equity,
+            "empty window → rolling_peak = current equity"
+        );
         let dd = ((rolling_peak - equity) / rolling_peak * 100.0).max(0.0);
         assert_eq!(dd, 0.0, "empty window → zero drawdown");
     }
@@ -8159,7 +9471,7 @@ mod tests {
         // The all-time peak is tracked separately in s.peak_equity.
         // This can be much higher than the rolling 7-day peak.
         let peak_equity: f64 = 5000.0; // hit months ago
-        let equity      = 1000.0; // current
+        let equity = 1000.0; // current
         let dd_pct = (peak_equity - equity) / peak_equity * 100.0;
         assert!(
             (dd_pct - 80.0).abs() < 1e-10,
@@ -8173,23 +9485,29 @@ mod tests {
     fn cb_uses_rolling_dd_not_all_time_dd() {
         // The CB threshold is 8% rolling DD.
         // A position with 80% all-time DD but only 3% 7-day DD should NOT trigger CB.
-        let peak_equity     = 5000.0;
-        let equity          = 1000.0;
+        let peak_equity = 5000.0;
+        let equity = 1000.0;
         let all_time_dd_pct = (peak_equity - equity) / peak_equity * 100.0; // 80%
 
         // Rolling window only has recent data
         let mut window: VecDeque<(i64, f64)> = VecDeque::new();
         window.push_back((0, 1020.0));
         window.push_back((1, 1000.0));
-        let rolling_peak    = window.iter().map(|&(_, e)| e).fold(equity, f64::max);
-        let rolling_dd_pct  = ((rolling_peak - equity) / rolling_peak * 100.0).max(0.0);
+        let rolling_peak = window.iter().map(|&(_, e)| e).fold(equity, f64::max);
+        let rolling_dd_pct = ((rolling_peak - equity) / rolling_peak * 100.0).max(0.0);
 
         let cb_threshold = 8.0_f64;
-        let cb_from_all_time  = all_time_dd_pct > cb_threshold;
-        let cb_from_rolling   = rolling_dd_pct  > cb_threshold;
+        let cb_from_all_time = all_time_dd_pct > cb_threshold;
+        let cb_from_rolling = rolling_dd_pct > cb_threshold;
 
-        assert!(cb_from_all_time,  "all-time DD 80% would trigger CB: {all_time_dd_pct}%");
-        assert!(!cb_from_rolling, "rolling 7d DD {rolling_dd_pct}% should NOT trigger CB");
+        assert!(
+            cb_from_all_time,
+            "all-time DD 80% would trigger CB: {all_time_dd_pct}%"
+        );
+        assert!(
+            !cb_from_rolling,
+            "rolling 7d DD {rolling_dd_pct}% should NOT trigger CB"
+        );
     }
 
     // ── reason_class helper ───────────────────────────────────────────────────
@@ -8219,7 +9537,8 @@ mod tests {
         // REGRESSION: AI-Close was incorrectly mapped to "signal" (grey text).
         // It should now map to "ai" (yellow, bold).
         assert_eq!(
-            reason_class("AI-Close"), "ai",
+            reason_class("AI-Close"),
+            "ai",
             "REGRESSION: AI-Close must map to 'ai' class, not 'signal'"
         );
     }
@@ -8239,7 +9558,7 @@ mod tests {
     #[test]
     fn wi_produces_html_with_label_and_value() {
         let html = wi("RSI", 0.75);
-        assert!(html.contains("RSI"),  "wi() must contain label");
+        assert!(html.contains("RSI"), "wi() must contain label");
         assert!(html.contains("0.75"), "wi() must contain formatted value");
     }
 
@@ -8247,7 +9566,10 @@ mod tests {
     fn wi_bar_width_capped_at_100_percent() {
         // val > 1.0 should cap bar width at 100%
         let html = wi("OverVal", 1.5);
-        assert!(html.contains("width:100%"), "bar width must be capped at 100%: {html}");
+        assert!(
+            html.contains("width:100%"),
+            "bar width must be capped at 100%: {html}"
+        );
     }
 
     #[test]
@@ -8265,9 +9587,13 @@ mod tests {
         // r_dollars_risked = (100 - 95) × 3 = $15
         let r_mult = if pos.r_dollars_risked > 1e-8 {
             pos.unrealised_pnl / pos.r_dollars_risked
-        } else { 0.0 };
-        assert!((r_mult - 1.0).abs() < 1e-10,
-            "unrealised=$15 / r_risk=$15 should be exactly 1R, got {r_mult}");
+        } else {
+            0.0
+        };
+        assert!(
+            (r_mult - 1.0).abs() < 1e-10,
+            "unrealised=$15 / r_risk=$15 should be exactly 1R, got {r_mult}"
+        );
     }
 
     #[test]
@@ -8276,11 +9602,11 @@ mod tests {
         // At -1R → 0%, at 0R → 16.7%, at 2R → 50%, at 5R → 100%
         let clamp = |r: f64| -> f64 { ((r + 1.0) / 6.0 * 100.0).clamp(0.0, 100.0) };
 
-        assert_eq!(clamp(-2.0), 0.0,   "-2R → bar at 0%");
-        assert_eq!(clamp(-1.0), 0.0,   "-1R → bar at 0%");
+        assert_eq!(clamp(-2.0), 0.0, "-2R → bar at 0%");
+        assert_eq!(clamp(-1.0), 0.0, "-1R → bar at 0%");
         assert!((clamp(0.0) - 16.67).abs() < 0.1, "0R → bar at ~16.7%");
-        assert!((clamp(2.0) - 50.0).abs() < 0.1,  "2R → bar at 50%");
-        assert_eq!(clamp(5.0), 100.0,  "5R → bar at 100%");
+        assert!((clamp(2.0) - 50.0).abs() < 0.1, "2R → bar at 50%");
+        assert_eq!(clamp(5.0), 100.0, "5R → bar at 100%");
         assert_eq!(clamp(10.0), 100.0, "10R → bar still clamped at 100%");
     }
 
@@ -8290,30 +9616,51 @@ mod tests {
     fn position_border_green_when_profitable() {
         let upnl = 50.0;
         let r_risk = 15.0;
-        let border = if upnl > 0.0 { "#238636" }
-                     else if upnl < -r_risk * 0.5 { "#da3633" }
-                     else { "#444c56" };
-        assert_eq!(border, "#238636", "profitable position should have green border");
+        let border = if upnl > 0.0 {
+            "#238636"
+        } else if upnl < -r_risk * 0.5 {
+            "#da3633"
+        } else {
+            "#444c56"
+        };
+        assert_eq!(
+            border, "#238636",
+            "profitable position should have green border"
+        );
     }
 
     #[test]
     fn position_border_red_when_loss_exceeds_half_r() {
-        let upnl  = -10.0;
+        let upnl = -10.0;
         let r_risk = 15.0; // half-R = -7.5, loss = -10 > -7.5
-        let border = if upnl > 0.0 { "#238636" }
-                     else if upnl < -r_risk * 0.5 { "#da3633" }
-                     else { "#444c56" };
-        assert_eq!(border, "#da3633", "loss > 0.5R should show red danger border");
+        let border = if upnl > 0.0 {
+            "#238636"
+        } else if upnl < -r_risk * 0.5 {
+            "#da3633"
+        } else {
+            "#444c56"
+        };
+        assert_eq!(
+            border, "#da3633",
+            "loss > 0.5R should show red danger border"
+        );
     }
 
     #[test]
     fn position_border_neutral_when_small_loss() {
-        let upnl  = -3.0;   // less than half of R
-        let r_risk = 15.0;  // half-R = -7.5 → loss -3 < -7.5 is false
-        let border = if upnl > 0.0 { "#238636" }
-                     else if upnl < -r_risk * 0.5 { "#da3633" }
-                     else { "#444c56" };
-        assert_eq!(border, "#444c56", "small loss < 0.5R should show neutral border");
+        let upnl = -3.0; // less than half of R
+        let r_risk = 15.0; // half-R = -7.5 → loss -3 < -7.5 is false
+        let border = if upnl > 0.0 {
+            "#238636"
+        } else if upnl < -r_risk * 0.5 {
+            "#da3633"
+        } else {
+            "#444c56"
+        };
+        assert_eq!(
+            border, "#444c56",
+            "small loss < 0.5R should show neutral border"
+        );
     }
 
     // ── Hold time formatting ──────────────────────────────────────────────────
@@ -8404,7 +9751,10 @@ mod tests {
         // Theoretical maximum simultaneous trades if every trade is at the per-trade heat floor:
         let theoretical_max = (heat_cap_pct / per_trade_heat_pct).floor() as usize;
         // Must be well above the old hard cap of 8.
-        assert!(theoretical_max >= 7, "heat budget should allow at least 7 positions");
+        assert!(
+            theoretical_max >= 7,
+            "heat budget should allow at least 7 positions"
+        );
         // The old hard cap constants must NOT be referenced anywhere.
         // (Compile-time check: MAX_POSITIONS and MAX_SAME_DIRECTION are deleted.)
     }

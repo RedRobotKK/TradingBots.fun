@@ -34,47 +34,47 @@ pub const CONF_EDGE: f64 = 0.08;
 /// Only pairs with r ≥ 0.55 are listed; everything else defaults to 0.35.
 static PAIRS: &[(&str, &str, f64)] = &[
     // BTC cluster
-    ("BTC",  "ETH",  0.85),
-    ("BTC",  "BNB",  0.76),
-    ("BTC",  "SOL",  0.79),
-    ("BTC",  "AVAX", 0.74),
-    ("BTC",  "MATIC",0.73),
-    ("BTC",  "LINK", 0.70),
-    ("BTC",  "DOT",  0.72),
-    ("BTC",  "ADA",  0.71),
-    ("BTC",  "ATOM", 0.69),
-    ("BTC",  "LTC",  0.78),
-    ("BTC",  "BCH",  0.75),
+    ("BTC", "ETH", 0.85),
+    ("BTC", "BNB", 0.76),
+    ("BTC", "SOL", 0.79),
+    ("BTC", "AVAX", 0.74),
+    ("BTC", "MATIC", 0.73),
+    ("BTC", "LINK", 0.70),
+    ("BTC", "DOT", 0.72),
+    ("BTC", "ADA", 0.71),
+    ("BTC", "ATOM", 0.69),
+    ("BTC", "LTC", 0.78),
+    ("BTC", "BCH", 0.75),
     // ETH cluster
-    ("ETH",  "BNB",  0.79),
-    ("ETH",  "SOL",  0.82),
-    ("ETH",  "AVAX", 0.78),
-    ("ETH",  "MATIC",0.77),
-    ("ETH",  "LINK", 0.74),
-    ("ETH",  "DOT",  0.75),
-    ("ETH",  "ADA",  0.73),
-    ("ETH",  "ATOM", 0.72),
-    ("ETH",  "ARB",  0.81),
-    ("ETH",  "OP",   0.80),
+    ("ETH", "BNB", 0.79),
+    ("ETH", "SOL", 0.82),
+    ("ETH", "AVAX", 0.78),
+    ("ETH", "MATIC", 0.77),
+    ("ETH", "LINK", 0.74),
+    ("ETH", "DOT", 0.75),
+    ("ETH", "ADA", 0.73),
+    ("ETH", "ATOM", 0.72),
+    ("ETH", "ARB", 0.81),
+    ("ETH", "OP", 0.80),
     // L1 / L2 cluster
-    ("SOL",  "AVAX", 0.76),
-    ("SOL",  "BNB",  0.73),
-    ("SOL",  "ADA",  0.71),
-    ("ARB",  "OP",   0.88),
-    ("ARB",  "MATIC",0.82),
-    ("OP",   "MATIC",0.81),
+    ("SOL", "AVAX", 0.76),
+    ("SOL", "BNB", 0.73),
+    ("SOL", "ADA", 0.71),
+    ("ARB", "OP", 0.88),
+    ("ARB", "MATIC", 0.82),
+    ("OP", "MATIC", 0.81),
     // Meme / high-beta
     ("DOGE", "SHIB", 0.83),
     ("DOGE", "PEPE", 0.74),
     ("SHIB", "PEPE", 0.77),
     // DeFi cluster
-    ("AAVE", "UNI",  0.76),
-    ("AAVE", "CRV",  0.72),
-    ("UNI",  "CRV",  0.74),
+    ("AAVE", "UNI", 0.76),
+    ("AAVE", "CRV", 0.72),
+    ("UNI", "CRV", 0.74),
     // BTC-correlated alts
-    ("XRP",  "BTC",  0.68),
-    ("LTC",  "ETH",  0.74),
-    ("BCH",  "ETH",  0.72),
+    ("XRP", "BTC", 0.68),
+    ("LTC", "ETH", 0.74),
+    ("BCH", "ETH", 0.72),
 ];
 
 // ─────────────────────────── Public API ──────────────────────────────────────
@@ -82,10 +82,7 @@ static PAIRS: &[(&str, &str, f64)] = &[
 /// Strip the common quote suffixes ("-USD", "-USDT", "-PERP", etc.) so that
 /// "BTC-USD" and "BTC" match the same row in the correlation table.
 fn base(symbol: &str) -> &str {
-    symbol
-        .split('-')
-        .next()
-        .unwrap_or(symbol)
+    symbol.split('-').next().unwrap_or(symbol)
 }
 
 /// Return the Pearson correlation between two symbols.
@@ -98,7 +95,8 @@ pub fn get_correlation(a: &str, b: &str) -> f64 {
     }
     // Normalise order: smaller string first for table lookup.
     let (lo, hi) = if a < b { (a, b) } else { (b, a) };
-    PAIRS.iter()
+    PAIRS
+        .iter()
         .find(|(pa, pb, _)| *pa == lo && *pb == hi)
         .map(|(_, _, r)| *r)
         .unwrap_or(0.35)
@@ -111,7 +109,11 @@ pub enum CorrBlock {
     Clear,
     /// Correlated position found and the confidence edge is insufficient.
     /// Contains (existing_symbol, correlation, existing_conf).
-    Blocked { existing: String, corr: f64, existing_conf: f64 },
+    Blocked {
+        existing: String,
+        corr: f64,
+        existing_conf: f64,
+    },
     /// Correlated position found but the new signal is strong enough to override.
     /// Log but allow.
     Override { existing: String, corr: f64 },
@@ -131,10 +133,10 @@ pub enum CorrBlock {
 /// (MIN_CONFIDENCE), which means the new signal just needs to beat 0.76 to
 /// override.
 pub fn correlation_block(
-    new_symbol:  &str,
-    new_side:    &str,
-    new_conf:    f64,
-    positions:   &[crate::web_dashboard::PaperPosition],
+    new_symbol: &str,
+    new_side: &str,
+    new_conf: f64,
+    positions: &[crate::web_dashboard::PaperPosition],
 ) -> CorrBlock {
     for pos in positions {
         if pos.side != new_side {
@@ -152,7 +154,7 @@ pub fn correlation_block(
             };
         }
         return CorrBlock::Blocked {
-            existing:      pos.symbol.clone(),
+            existing: pos.symbol.clone(),
             corr,
             existing_conf,
         };
@@ -181,7 +183,7 @@ mod tests {
     fn suffix_stripped() {
         assert_eq!(
             get_correlation("BTC-USD", "ETH-USD"),
-            get_correlation("BTC",     "ETH"),
+            get_correlation("BTC", "ETH"),
         );
     }
 

@@ -4,9 +4,9 @@
 //! live in `main.rs` (Kelly / heat model) and `decision.rs` (confidence-scaled
 //! leverage).  `should_trade()` is the final gate in non-paper mode.
 
+use crate::decision::Decision;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use crate::decision::Decision;
 
 // ─────────────────────────── Account health ───────────────────────────────────
 

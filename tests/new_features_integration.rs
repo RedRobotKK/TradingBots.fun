@@ -13,43 +13,50 @@ mod correlation_tests {
     use tradingbots_fun::correlation::{
         correlation_block, get_correlation, CorrBlock, CONF_EDGE, CORR_THRESHOLD,
     };
-    use tradingbots_fun::web_dashboard::PaperPosition;
     use tradingbots_fun::learner::SignalContribution;
+    use tradingbots_fun::web_dashboard::PaperPosition;
 
     fn make_pos(symbol: &str, side: &str, conf: f64) -> PaperPosition {
         PaperPosition {
-            symbol:           symbol.to_string(),
-            side:             side.to_string(),
-            entry_price:      100.0,
-            quantity:         1.0,
-            size_usd:         100.0,
-            stop_loss:        95.0,
-            take_profit:      110.0,
-            atr_at_entry:     2.0,
-            high_water_mark:  100.0,
-            low_water_mark:   100.0,
-            partial_closed:   false,
+            symbol: symbol.to_string(),
+            side: side.to_string(),
+            entry_price: 100.0,
+            quantity: 1.0,
+            size_usd: 100.0,
+            stop_loss: 95.0,
+            take_profit: 110.0,
+            atr_at_entry: 2.0,
+            high_water_mark: 100.0,
+            low_water_mark: 100.0,
+            partial_closed: false,
             r_dollars_risked: 5.0,
-            tranches_closed:  0,
-            dca_count:        0,
-            leverage:         1.0,
-            cycles_held:      0,
-            entry_time:       "00:00:00 UTC".to_string(),
-            unrealised_pnl:   0.0,
-            contrib:          SignalContribution::default(),
-            ai_action:        None,
-            ai_reason:        None,
+            tranches_closed: 0,
+            dca_count: 0,
+            leverage: 1.0,
+            cycles_held: 0,
+            entry_time: "00:00:00 UTC".to_string(),
+            unrealised_pnl: 0.0,
+            contrib: SignalContribution::default(),
+            ai_action: None,
+            ai_reason: None,
             entry_confidence: conf,
-            trade_budget_usd:   100.0,
-            dca_spent_usd:      0.0,
-            btc_ret_at_entry:   0.0,
+            trade_budget_usd: 100.0,
+            dca_spent_usd: 0.0,
+            btc_ret_at_entry: 0.0,
             initial_margin_usd: 100.0,
-            ob_sentiment:       String::new(),
-            ob_bid_wall_near:   false,
-            ob_ask_wall_near:   false,
-            ob_adverse_cycles:  0,
-            funded_from_pool:   false,
-            pool_stake_usd:     0.0,
+            ob_sentiment: String::new(),
+            ob_bid_wall_near: false,
+            ob_ask_wall_near: false,
+            ob_adverse_cycles: 0,
+            order_flow_confidence: 0.0,
+            order_flow_direction: String::new(),
+            funding_rate: 0.0,
+            funding_delta: 0.0,
+            onchain_strength: 0.0,
+            cex_premium_pct: 0.0,
+            cex_mode: String::new(),
+            funded_from_pool: false,
+            pool_stake_usd: 0.0,
         }
     }
 
@@ -62,7 +69,8 @@ mod correlation_tests {
         let result = correlation_block("ETH", "LONG", 0.83, &positions);
         assert!(
             matches!(result, CorrBlock::Blocked { .. }),
-            "Expected Blocked, got {:?}", result
+            "Expected Blocked, got {:?}",
+            result
         );
     }
 
@@ -74,7 +82,8 @@ mod correlation_tests {
         let result = correlation_block("ETH", "LONG", 0.90, &positions);
         assert!(
             matches!(result, CorrBlock::Override { .. }),
-            "Expected Override, got {:?}", result
+            "Expected Override, got {:?}",
+            result
         );
     }
 
@@ -83,7 +92,11 @@ mod correlation_tests {
         // BTC LONG vs ETH SHORT — correlation irrelevant for opposite directions.
         let positions = vec![make_pos("BTC", "LONG", 0.80)];
         let result = correlation_block("ETH", "SHORT", 0.70, &positions);
-        assert_eq!(result, CorrBlock::Clear, "Opposite sides should always clear");
+        assert_eq!(
+            result,
+            CorrBlock::Clear,
+            "Opposite sides should always clear"
+        );
     }
 
     #[test]
@@ -94,14 +107,20 @@ mod correlation_tests {
 
     #[test]
     fn arb_op_highest_corr_in_table() {
-        assert!(get_correlation("ARB", "OP") >= 0.85,
-            "ARB-OP should be the strongest pair in the table (≥0.85)");
+        assert!(
+            get_correlation("ARB", "OP") >= 0.85,
+            "ARB-OP should be the strongest pair in the table (≥0.85)"
+        );
     }
 
     #[test]
     fn doge_shib_meme_cluster_corr() {
         let r = get_correlation("DOGE", "SHIB");
-        assert!(r >= 0.80, "DOGE-SHIB should have high correlation (≥0.80), got {}", r);
+        assert!(
+            r >= 0.80,
+            "DOGE-SHIB should have high correlation (≥0.80), got {}",
+            r
+        );
     }
 
     #[test]
@@ -110,7 +129,8 @@ mod correlation_tests {
         let r = get_correlation("BTC", "PEPE"); // PEPE-BTC not in table
         assert!(
             (0.30..CORR_THRESHOLD).contains(&r),
-            "Unknown pair should return low correlation (< threshold), got {}", r
+            "Unknown pair should return low correlation (< threshold), got {}",
+            r
         );
     }
 
@@ -127,8 +147,11 @@ mod correlation_tests {
     #[test]
     fn same_symbol_is_self_correlation_one() {
         assert_eq!(get_correlation("SOL", "SOL"), 1.0);
-        assert_eq!(get_correlation("BTC-USD", "BTC"), 1.0,
-            "Same base symbol with different suffixes should be self-correlation");
+        assert_eq!(
+            get_correlation("BTC-USD", "BTC"),
+            1.0,
+            "Same base symbol with different suffixes should be self-correlation"
+        );
     }
 
     #[test]
@@ -143,8 +166,11 @@ mod correlation_tests {
         // → should not block same-direction trades.
         let positions = vec![make_pos("BTC", "LONG", 0.75)];
         let result = correlation_block("LINK", "LONG", 0.75, &positions);
-        assert_eq!(result, CorrBlock::Clear,
-            "BTC-LINK (corr=0.70) is below threshold — should not block");
+        assert_eq!(
+            result,
+            CorrBlock::Clear,
+            "BTC-LINK (corr=0.70) is below threshold — should not block"
+        );
     }
 }
 
@@ -167,8 +193,10 @@ mod notifier_tests {
         std::env::remove_var("TELEGRAM_CHAT_ID");
 
         let n = Notifier::from_env();
-        assert!(n.is_none(),
-            "Notifier should be None when no webhook env vars are set");
+        assert!(
+            n.is_none(),
+            "Notifier should be None when no webhook env vars are set"
+        );
     }
 
     #[test]
@@ -178,8 +206,10 @@ mod notifier_tests {
         let n = Notifier::from_env();
         std::env::remove_var("WEBHOOK_URL");
 
-        assert!(n.is_some(),
-            "Notifier should be Some when WEBHOOK_URL is set");
+        assert!(
+            n.is_some(),
+            "Notifier should be Some when WEBHOOK_URL is set"
+        );
     }
 
     #[test]
@@ -191,22 +221,26 @@ mod notifier_tests {
 
         let n = Notifier::from_env();
         std::env::remove_var("TELEGRAM_BOT_TOKEN");
-        assert!(n.is_none(),
-            "Notifier should be None when only TELEGRAM_BOT_TOKEN is set (chat_id missing)");
+        assert!(
+            n.is_none(),
+            "Notifier should be None when only TELEGRAM_BOT_TOKEN is set (chat_id missing)"
+        );
     }
 
     #[test]
     fn from_env_telegram_both_vars_sufficient() {
         std::env::remove_var("WEBHOOK_URL");
         std::env::set_var("TELEGRAM_BOT_TOKEN", "1234:ABCD");
-        std::env::set_var("TELEGRAM_CHAT_ID",   "-100123456");
+        std::env::set_var("TELEGRAM_CHAT_ID", "-100123456");
 
         let n = Notifier::from_env();
         std::env::remove_var("TELEGRAM_BOT_TOKEN");
         std::env::remove_var("TELEGRAM_CHAT_ID");
 
-        assert!(n.is_some(),
-            "Notifier should be Some when both Telegram vars are set");
+        assert!(
+            n.is_some(),
+            "Notifier should be Some when both Telegram vars are set"
+        );
     }
 }
 
@@ -222,9 +256,12 @@ mod onchain_tests {
         // Without COINGLASS_API_KEY, every symbol returns neutral (strength=0.0).
         std::env::remove_var("COINGLASS_API_KEY");
         let cache = OnchainCache::new();
-        let data  = cache.get("BTC").await;
-        assert_eq!(data.signal_strength(), 0.0,
-            "Should return neutral (0.0) when no API key configured");
+        let data = cache.get("BTC").await;
+        assert_eq!(
+            data.signal_strength(),
+            0.0,
+            "Should return neutral (0.0) when no API key configured"
+        );
     }
 
     #[tokio::test]
@@ -234,8 +271,11 @@ mod onchain_tests {
         let a = cache.get("BTC").await;
         let b = cache.get("BTC-USD").await;
         // Both should give the same neutral result (or same cached value).
-        assert_eq!(a.signal_strength(), b.signal_strength(),
-            "BTC and BTC-USD should resolve to the same cached entry");
+        assert_eq!(
+            a.signal_strength(),
+            b.signal_strength(),
+            "BTC and BTC-USD should resolve to the same cached entry"
+        );
     }
 
     #[test]
@@ -243,15 +283,17 @@ mod onchain_tests {
         // Explicitly verify the zero case is handled correctly.
         // signal_strength() of 0.0 means no adjustment to confidence.
         let adj = 0.0_f64;
-        assert!(adj.abs() <= 0.05,
-            "Zero on-chain strength should produce negligible confidence adjustment");
+        assert!(
+            adj.abs() <= 0.05,
+            "Zero on-chain strength should produce negligible confidence adjustment"
+        );
     }
 
     #[test]
     fn max_onchain_confidence_adjustment_is_bounded() {
         // The adjustment is strength × 0.04, so max is ±4%.
         // Verify this never can push confidence outside [0, 1].
-        let max_adj = 1.0_f64 * 0.04;  // max strength=1.0
+        let max_adj = 1.0_f64 * 0.04; // max strength=1.0
         let base_conf = 0.98_f64;
         let adjusted = (base_conf + max_adj).clamp(0.0, 1.0);
         assert_eq!(adjusted, 1.0, "Clamped confidence should stay at 1.0");
@@ -265,33 +307,35 @@ mod onchain_tests {
 // ─────────────────────────── 4. Trade journal ────────────────────────────────
 
 mod trade_journal_tests {
-    use tradingbots_fun::web_dashboard::{ClosedTrade};
+    use tradingbots_fun::web_dashboard::ClosedTrade;
 
     fn make_trade(symbol: &str) -> ClosedTrade {
         ClosedTrade {
-            symbol:     symbol.to_string(),
-            side:       "LONG".to_string(),
-            entry:      100.0,
-            exit:       105.0,
-            pnl:        5.0,
-            pnl_pct:    5.0,
-            reason:     "Signal".to_string(),
-            closed_at:  "00:00:00 UTC".to_string(),
+            symbol: symbol.to_string(),
+            side: "LONG".to_string(),
+            entry: 100.0,
+            exit: 105.0,
+            pnl: 5.0,
+            pnl_pct: 5.0,
+            reason: "Signal".to_string(),
+            closed_at: "00:00:00 UTC".to_string(),
             entry_time: "00:00:00 UTC".to_string(),
-            quantity:   1.0,
-            size_usd:   100.0,
-            leverage:   1.0,
-            fees_est:   0.075,
-            breakdown:  None,
-            note:       None,
+            quantity: 1.0,
+            size_usd: 100.0,
+            leverage: 1.0,
+            fees_est: 0.075,
+            breakdown: None,
+            note: None,
         }
     }
 
     #[test]
     fn closed_trade_default_note_is_none() {
         let trade = make_trade("BTC");
-        assert!(trade.note.is_none(),
-            "Newly created trade should have no operator note");
+        assert!(
+            trade.note.is_none(),
+            "Newly created trade should have no operator note"
+        );
     }
 
     #[test]
@@ -315,8 +359,11 @@ mod trade_journal_tests {
         let json = serde_json::to_string(&trade).expect("serialisation failed");
         let back: ClosedTrade = serde_json::from_str(&json).expect("deserialisation failed");
 
-        assert_eq!(back.note.as_deref(), Some("Re-entered too early post-DCA"),
-            "Note should survive JSON round-trip");
+        assert_eq!(
+            back.note.as_deref(),
+            Some("Re-entered too early post-DCA"),
+            "Note should survive JSON round-trip"
+        );
     }
 
     #[test]
@@ -328,10 +375,12 @@ mod trade_journal_tests {
             "entry_time":"00:00","quantity":1.0,"size_usd":100.0,
             "leverage":1.0,"fees_est":0.0
         }"#;
-        let trade: ClosedTrade = serde_json::from_str(json)
-            .expect("Should deserialise old snapshot without note field");
-        assert!(trade.note.is_none(),
-            "Old snapshot without note field should deserialise as None");
+        let trade: ClosedTrade =
+            serde_json::from_str(json).expect("Should deserialise old snapshot without note field");
+        assert!(
+            trade.note.is_none(),
+            "Old snapshot without note field should deserialise as None"
+        );
     }
 
     #[test]

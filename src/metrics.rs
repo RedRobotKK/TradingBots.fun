@@ -3,30 +3,30 @@
 //! Calculated on every cycle from the closed-trade history.  Results are
 //! surfaced on the dashboard and fed back into position sizing.
 
-use serde::{Deserialize, Serialize};
 use crate::web_dashboard::ClosedTrade;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PerformanceMetrics {
     // Risk-adjusted return ratios
-    pub sharpe:         f64,  // mean_ret / std_ret  (higher = better risk-adjusted)
-    pub sortino:        f64,  // mean_ret / downside_std  (ignores upside volatility)
+    pub sharpe: f64,  // mean_ret / std_ret  (higher = better risk-adjusted)
+    pub sortino: f64, // mean_ret / downside_std  (ignores upside volatility)
 
     // Expectancy & edge
-    pub expectancy:     f64,  // avg expected P&L per trade as % of position
-    pub profit_factor:  f64,  // gross profit / gross loss  (>1.5 = good)
-    pub avg_win_pct:    f64,
-    pub avg_loss_pct:   f64,
-    pub win_rate:       f64,
+    pub expectancy: f64,    // avg expected P&L per trade as % of position
+    pub profit_factor: f64, // gross profit / gross loss  (>1.5 = good)
+    pub avg_win_pct: f64,
+    pub avg_loss_pct: f64,
+    pub win_rate: f64,
 
     // Drawdown
-    pub max_drawdown:   f64,  // peak-to-trough cumulative P&L %
-    pub current_dd:     f64,  // drawdown from most recent peak
+    pub max_drawdown: f64, // peak-to-trough cumulative P&L %
+    pub current_dd: f64,   // drawdown from most recent peak
 
     // Summary counts
-    pub total_trades:   usize,
-    pub wins:           usize,
-    pub losses:         usize,
+    pub total_trades: usize,
+    pub wins: usize,
+    pub losses: usize,
 }
 
 impl PerformanceMetrics {
@@ -45,7 +45,7 @@ impl PerformanceMetrics {
 
         // Total std-dev (Sharpe denominator)
         let variance = returns.iter().map(|r| (r - mean_ret).powi(2)).sum::<f64>() / n as f64;
-        let std_dev  = variance.sqrt();
+        let std_dev = variance.sqrt();
 
         // Downside std-dev (Sortino denominator) – only uses negative returns
         let downside: Vec<f64> = returns.iter().filter(|&&r| r < 0.0).copied().collect();
@@ -56,27 +56,55 @@ impl PerformanceMetrics {
             dv.sqrt()
         };
 
-        let sharpe  = if std_dev > 1e-10   { mean_ret / std_dev }    else { 0.0 };
-        let sortino = if downside_dev > 1e-10 { mean_ret / downside_dev } else { 0.0 };
+        let sharpe = if std_dev > 1e-10 {
+            mean_ret / std_dev
+        } else {
+            0.0
+        };
+        let sortino = if downside_dev > 1e-10 {
+            mean_ret / downside_dev
+        } else {
+            0.0
+        };
 
         // Win/loss buckets
-        let win_pcts:  Vec<f64> = trades.iter().filter(|t| t.pnl > 0.0).map(|t| t.pnl_pct).collect();
-        let loss_pcts: Vec<f64> = trades.iter().filter(|t| t.pnl <= 0.0).map(|t| t.pnl_pct.abs()).collect();
+        let win_pcts: Vec<f64> = trades
+            .iter()
+            .filter(|t| t.pnl > 0.0)
+            .map(|t| t.pnl_pct)
+            .collect();
+        let loss_pcts: Vec<f64> = trades
+            .iter()
+            .filter(|t| t.pnl <= 0.0)
+            .map(|t| t.pnl_pct.abs())
+            .collect();
 
-        let wins   = win_pcts.len();
+        let wins = win_pcts.len();
         let losses = loss_pcts.len();
 
-        let win_rate     = wins as f64 / n as f64;
-        let avg_win_pct  = if wins   > 0 { win_pcts.iter().sum::<f64>()  / wins   as f64 } else { 0.0 };
-        let avg_loss_pct = if losses > 0 { loss_pcts.iter().sum::<f64>() / losses as f64 } else { 0.0 };
+        let win_rate = wins as f64 / n as f64;
+        let avg_win_pct = if wins > 0 {
+            win_pcts.iter().sum::<f64>() / wins as f64
+        } else {
+            0.0
+        };
+        let avg_loss_pct = if losses > 0 {
+            loss_pcts.iter().sum::<f64>() / losses as f64
+        } else {
+            0.0
+        };
 
         // Expectancy: per-trade expected return %
         let expectancy = win_rate * avg_win_pct - (1.0 - win_rate) * avg_loss_pct;
 
         // Profit factor: gross profit / gross loss
         let gross_profit: f64 = win_pcts.iter().sum();
-        let gross_loss:   f64 = loss_pcts.iter().sum();
-        let profit_factor = if gross_loss > 0.0 { gross_profit / gross_loss } else { f64::INFINITY };
+        let gross_loss: f64 = loss_pcts.iter().sum();
+        let profit_factor = if gross_loss > 0.0 {
+            gross_profit / gross_loss
+        } else {
+            f64::INFINITY
+        };
 
         // Max drawdown from cumulative P&L curve
         let mut cum = 0.0f64;
@@ -84,9 +112,13 @@ impl PerformanceMetrics {
         let mut max_dd = 0.0f64;
         for t in trades {
             cum += t.pnl_pct;
-            if cum > peak { peak = cum; }
+            if cum > peak {
+                peak = cum;
+            }
             let dd = peak - cum;
-            if dd > max_dd { max_dd = dd; }
+            if dd > max_dd {
+                max_dd = dd;
+            }
         }
         // Current drawdown (from last peak)
         let current_dd = (peak - cum).max(0.0);
@@ -118,9 +150,9 @@ impl PerformanceMetrics {
         if self.total_trades < 5 || self.avg_loss_pct < 0.001 {
             return -1.0; // sentinel: not enough history yet
         }
-        let b           = self.avg_win_pct / self.avg_loss_pct; // win-to-loss size ratio
-        let full_kelly  = self.win_rate - (1.0 - self.win_rate) / b;
-        let half_kelly  = full_kelly / 2.0; // half-Kelly for robustness
+        let b = self.avg_win_pct / self.avg_loss_pct; // win-to-loss size ratio
+        let full_kelly = self.win_rate - (1.0 - self.win_rate) / b;
+        let half_kelly = full_kelly / 2.0; // half-Kelly for robustness
         half_kelly.clamp(0.01, 0.15)
     }
 
@@ -139,21 +171,21 @@ impl PerformanceMetrics {
             return 0.35;
         }
         match self.sharpe {
-            s if s > 2.5  => 1.25,
-            s if s > 1.5  => 1.10,
-            s if s > 0.5  => 1.00,
-            s if s > 0.0  => 0.90,  // was 0.80 — less punishing for neutral Sharpe
-            s if s > -0.5 => 0.75,  // was 0.60 — floor raised
-            _             => 0.60,  // was 0.40 — never crush position size below 60%
+            s if s > 2.5 => 1.25,
+            s if s > 1.5 => 1.10,
+            s if s > 0.5 => 1.00,
+            s if s > 0.0 => 0.90, // was 0.80 — less punishing for neutral Sharpe
+            s if s > -0.5 => 0.75, // was 0.60 — floor raised
+            _ => 0.60,            // was 0.40 — never crush position size below 60%
         }
     }
 
     /// Colour class for dashboard display.
     pub fn sharpe_class(&self) -> &'static str {
         match self.sharpe {
-            s if s > 1.0  => "positive",
-            s if s > 0.0  => "neutral",
-            _             => "negative",
+            s if s > 1.0 => "positive",
+            s if s > 0.0 => "neutral",
+            _ => "negative",
         }
     }
 
@@ -177,7 +209,7 @@ impl PerformanceMetrics {
         let mut adjustment: f64 = 0.0;
 
         if self.profit_factor < 1.0 {
-            adjustment += 0.05;  // genuinely losing, not just early-phase
+            adjustment += 0.05; // genuinely losing, not just early-phase
         }
         if self.expectancy < 0.001 {
             adjustment += 0.03;
@@ -186,7 +218,7 @@ impl PerformanceMetrics {
             adjustment += 0.02;
         }
 
-        adjustment = adjustment.min(0.08);  // was 0.12
-        (min_confidence + adjustment).min(0.88)  // was 0.92
+        adjustment = adjustment.min(0.08); // was 0.12
+        (min_confidence + adjustment).min(0.88) // was 0.92
     }
 }

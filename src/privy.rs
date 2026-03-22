@@ -72,7 +72,7 @@ pub struct PrivyClaims {
 /// In-memory cache of Privy's JWKS — refreshed automatically after 1 hour.
 pub struct JwksCache {
     /// Raw JWKS JSON (re-parsed on each verification; tiny struct, fast parse).
-    pub raw_json:   String,
+    pub raw_json: String,
     /// Monotonic clock snapshot when the cache was last populated.
     pub fetched_at: Instant,
 }
@@ -101,10 +101,7 @@ pub async fn get_jwks(app_id: &str, cache: &SharedJwksCache) -> Result<String> {
     }
 
     // Slow path — fetch fresh JWKS from Privy's endpoint
-    let url = format!(
-        "https://auth.privy.io/api/v1/apps/{}/jwks.json",
-        app_id
-    );
+    let url = format!("https://auth.privy.io/api/v1/apps/{}/jwks.json", app_id);
     let raw = reqwest::get(&url)
         .await
         .map_err(|e| anyhow!("Privy JWKS fetch failed: {e}"))?
@@ -113,7 +110,7 @@ pub async fn get_jwks(app_id: &str, cache: &SharedJwksCache) -> Result<String> {
         .map_err(|e| anyhow!("Privy JWKS response read failed: {e}"))?;
 
     *cache.write().await = Some(JwksCache {
-        raw_json:   raw.clone(),
+        raw_json: raw.clone(),
         fetched_at: Instant::now(),
     });
     log::debug!("🔑 Privy JWKS cache refreshed for app {}", app_id);
@@ -132,25 +129,26 @@ pub async fn get_jwks(app_id: &str, cache: &SharedJwksCache) -> Result<String> {
 /// Returns `Err` if the JWT is malformed, has an invalid signature, is
 /// expired, or if the `kid` is not found in the JWKS.
 pub async fn verify_privy_jwt(
-    token:      &str,
-    app_id:     &str,
+    token: &str,
+    app_id: &str,
     jwks_cache: &SharedJwksCache,
 ) -> Result<String> {
     use jsonwebtoken::{decode, decode_header, jwk::JwkSet, Algorithm, DecodingKey, Validation};
 
     // Step 1 — peek at the header to obtain `kid` without verifying yet
-    let header = decode_header(token)
-        .map_err(|e| anyhow!("JWT header parse error: {e}"))?;
-    let kid = header.kid
+    let header = decode_header(token).map_err(|e| anyhow!("JWT header parse error: {e}"))?;
+    let kid = header
+        .kid
         .ok_or_else(|| anyhow!("JWT is missing 'kid' in header"))?;
 
     // Step 2 — fetch (or serve from cache) Privy's public JWKS
     let jwks_json = get_jwks(app_id, jwks_cache).await?;
-    let jwks: JwkSet = serde_json::from_str(&jwks_json)
-        .map_err(|e| anyhow!("JWKS JSON parse error: {e}"))?;
+    let jwks: JwkSet =
+        serde_json::from_str(&jwks_json).map_err(|e| anyhow!("JWKS JSON parse error: {e}"))?;
 
     // Step 3 — find the key that matches this token's `kid`
-    let jwk = jwks.find(&kid)
+    let jwk = jwks
+        .find(&kid)
         .ok_or_else(|| anyhow!("No matching JWK found for kid '{kid}'"))?;
 
     // Step 4 — build a DecodingKey from the JWK (jsonwebtoken handles EC P-256)
@@ -184,9 +182,9 @@ pub const SESSION_TTL_SECS: i64 = 7 * 24 * 3_600;
 ///
 /// The HMAC is computed over `"{tenant_id}:{exp_unix}"` with `secret` as key.
 pub fn create_session(tenant_id: &TenantId, secret: &str) -> String {
-    let exp     = Utc::now().timestamp() + SESSION_TTL_SECS;
+    let exp = Utc::now().timestamp() + SESSION_TTL_SECS;
     let payload = format!("{}:{}", tenant_id.as_str(), exp);
-    let sig     = hmac_hex(payload.as_bytes(), secret);
+    let sig = hmac_hex(payload.as_bytes(), secret);
     format!("{}:{}", payload, sig)
 }
 
@@ -195,11 +193,12 @@ pub fn create_session(tenant_id: &TenantId, secret: &str) -> String {
 /// Rejects cookies with invalid HMAC signatures or past expiry timestamps.
 pub fn verify_session(cookie_value: &str, secret: &str) -> Result<TenantId> {
     // The rightmost ':' separates `{payload}` from `{hmac_hex}`
-    let last_colon = cookie_value.rfind(':')
+    let last_colon = cookie_value
+        .rfind(':')
         .ok_or_else(|| anyhow!("Malformed session cookie (no colon separator)"))?;
 
     let payload = &cookie_value[..last_colon];
-    let sig     = &cookie_value[last_colon + 1..];
+    let sig = &cookie_value[last_colon + 1..];
 
     // Constant-time HMAC comparison
     let expected = hmac_hex(payload.as_bytes(), secret);
@@ -208,13 +207,15 @@ pub fn verify_session(cookie_value: &str, secret: &str) -> Result<TenantId> {
     }
 
     // Split payload `{tenant_id}:{exp_unix}` — use rfind to handle UUIDs with '-'
-    let second_colon = payload.rfind(':')
+    let second_colon = payload
+        .rfind(':')
         .ok_or_else(|| anyhow!("Malformed session payload (missing expiry)"))?;
 
     let tenant_id_str = &payload[..second_colon];
-    let exp_str       = &payload[second_colon + 1..];
+    let exp_str = &payload[second_colon + 1..];
 
-    let exp: i64 = exp_str.parse()
+    let exp: i64 = exp_str
+        .parse()
         .map_err(|_| anyhow!("Invalid expiry value in session cookie"))?;
 
     if Utc::now().timestamp() > exp {
@@ -263,7 +264,7 @@ pub fn clear_session_header() -> &'static str {
 /// ```
 pub fn require_tenant_id(
     headers: &axum::http::HeaderMap,
-    secret:  &str,
+    secret: &str,
 ) -> anyhow::Result<crate::tenant::TenantId> {
     let cookie_header = headers
         .get("cookie")
@@ -280,8 +281,8 @@ pub fn require_tenant_id(
 
 /// Compute `HMAC-SHA256(key=secret, data)` and return the lowercase hex string.
 fn hmac_hex(data: &[u8], secret: &str) -> String {
-    let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
-        .expect("HMAC accepts any key length");
+    let mut mac =
+        HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC accepts any key length");
     mac.update(data);
     hex::encode(mac.finalize().into_bytes())
 }
@@ -300,7 +301,7 @@ mod tests {
 
     #[test]
     fn session_roundtrip_simple_id() {
-        let tid    = TenantId::from_str("tenant-alice");
+        let tid = TenantId::from_str("tenant-alice");
         let cookie = create_session(&tid, SECRET);
         let result = verify_session(&cookie, SECRET);
         assert!(result.is_ok(), "roundtrip failed: {:?}", result);
@@ -309,7 +310,7 @@ mod tests {
 
     #[test]
     fn session_roundtrip_uuid_id() {
-        let tid    = TenantId::new();   // UUID v4 contains hyphens
+        let tid = TenantId::new(); // UUID v4 contains hyphens
         let cookie = create_session(&tid, SECRET);
         let result = verify_session(&cookie, SECRET);
         assert!(result.is_ok(), "UUID roundtrip failed: {:?}", result);
@@ -319,7 +320,7 @@ mod tests {
     #[test]
     fn session_roundtrip_privy_did() {
         // Privy DIDs look like "did:privy:clxxxxxxxxxxxxxxxxx"
-        let tid    = TenantId::from_str("did:privy:cltest1234567890");
+        let tid = TenantId::from_str("did:privy:cltest1234567890");
         let cookie = create_session(&tid, SECRET);
         // Privy DIDs contain ':' — make sure split logic still works
         let result = verify_session(&cookie, SECRET);
@@ -331,7 +332,7 @@ mod tests {
 
     #[test]
     fn wrong_secret_rejected() {
-        let tid    = TenantId::from_str("tenant-bob");
+        let tid = TenantId::from_str("tenant-bob");
         let cookie = create_session(&tid, "correct_secret_!!!!!!!!!!!!!!!!!!!!");
         assert!(
             verify_session(&cookie, "wrong___secret_!!!!!!!!!!!!!!!!!!!").is_err(),
@@ -341,8 +342,8 @@ mod tests {
 
     #[test]
     fn tampered_tenant_id_rejected() {
-        let tid      = TenantId::from_str("real-tenant");
-        let cookie   = create_session(&tid, SECRET);
+        let tid = TenantId::from_str("real-tenant");
+        let cookie = create_session(&tid, SECRET);
         // Attacker tries to swap in their own tenant id
         let tampered = cookie.replacen("real-tenant", "evil-tenant", 1);
         assert!(
@@ -355,10 +356,10 @@ mod tests {
     fn expired_session_rejected() {
         // Craft a session whose expiry is 1 second in the past
         let tenant_id = "expired-tenant";
-        let exp       = Utc::now().timestamp() - 1;
-        let payload   = format!("{}:{}", tenant_id, exp);
-        let sig       = super::hmac_hex(payload.as_bytes(), SECRET);
-        let cookie    = format!("{}:{}", payload, sig);
+        let exp = Utc::now().timestamp() - 1;
+        let payload = format!("{}:{}", tenant_id, exp);
+        let sig = super::hmac_hex(payload.as_bytes(), SECRET);
+        let cookie = format!("{}:{}", payload, sig);
         assert!(
             verify_session(&cookie, SECRET).is_err(),
             "expired session should be rejected"
@@ -367,9 +368,15 @@ mod tests {
 
     #[test]
     fn malformed_cookies_rejected() {
-        assert!(verify_session("",                  SECRET).is_err(), "empty string");
-        assert!(verify_session("no_colons_at_all",  SECRET).is_err(), "no colons");
-        assert!(verify_session("only:one_colon",    SECRET).is_err(), "no hmac segment");
+        assert!(verify_session("", SECRET).is_err(), "empty string");
+        assert!(
+            verify_session("no_colons_at_all", SECRET).is_err(),
+            "no colons"
+        );
+        assert!(
+            verify_session("only:one_colon", SECRET).is_err(),
+            "no hmac segment"
+        );
     }
 
     // ── Cookie extraction ────────────────────────────────────────────────────
@@ -382,13 +389,16 @@ mod tests {
 
     #[test]
     fn extract_sole_cookie() {
-        assert_eq!(extract_session_cookie("rr_session=just_this"), Some("just_this"));
+        assert_eq!(
+            extract_session_cookie("rr_session=just_this"),
+            Some("just_this")
+        );
     }
 
     #[test]
     fn extract_missing_returns_none() {
         assert_eq!(extract_session_cookie("foo=bar; baz=qux"), None);
-        assert_eq!(extract_session_cookie(""),                  None);
+        assert_eq!(extract_session_cookie(""), None);
     }
 
     #[test]

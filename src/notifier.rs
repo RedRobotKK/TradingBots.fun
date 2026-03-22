@@ -42,19 +42,19 @@ use serde_json::{json, Value};
 use std::time::Duration;
 
 // Discord embed colours
-const COLOR_GREEN:  u32 = 3_066_993;  // #2ECC71
-const COLOR_RED:    u32 = 15_158_332; // #E74C3C
+const COLOR_GREEN: u32 = 3_066_993; // #2ECC71
+const COLOR_RED: u32 = 15_158_332; // #E74C3C
 const COLOR_ORANGE: u32 = 15_105_570; // #E67E22
-const COLOR_GREY:   u32 = 9_807_270;  // #95A5A6
+const COLOR_GREY: u32 = 9_807_270; // #95A5A6
 
 // ─────────────────────────── Notifier ────────────────────────────────────────
 
 #[derive(Clone)]
 pub struct Notifier {
-    client:       Client,
-    webhook_url:  Option<String>,
-    tg_token:     Option<String>,
-    tg_chat_id:   Option<String>,
+    client: Client,
+    webhook_url: Option<String>,
+    tg_token: Option<String>,
+    tg_chat_id: Option<String>,
 }
 
 impl Notifier {
@@ -62,8 +62,8 @@ impl Notifier {
     /// is configured — callers treat `None` as "notifications disabled".
     pub fn from_env() -> Option<Self> {
         let webhook_url = std::env::var("WEBHOOK_URL").ok();
-        let tg_token    = std::env::var("TELEGRAM_BOT_TOKEN").ok();
-        let tg_chat_id  = std::env::var("TELEGRAM_CHAT_ID").ok();
+        let tg_token = std::env::var("TELEGRAM_BOT_TOKEN").ok();
+        let tg_chat_id = std::env::var("TELEGRAM_CHAT_ID").ok();
 
         if webhook_url.is_none() && (tg_token.is_none() || tg_chat_id.is_none()) {
             return None;
@@ -86,22 +86,26 @@ impl Notifier {
     #[allow(clippy::too_many_arguments)]
     pub async fn position_opened(
         &self,
-        symbol:     &str,
-        side:       &str,
-        entry:      f64,
-        size_usd:   f64,
+        symbol: &str,
+        side: &str,
+        entry: f64,
+        size_usd: f64,
         confidence: f64,
-        stop_loss:  f64,
-        leverage:   f64,
+        stop_loss: f64,
+        leverage: f64,
     ) {
-        let emoji  = if side == "LONG" { "📈" } else { "📉" };
-        let color  = if side == "LONG" { COLOR_GREEN } else { COLOR_RED };
-        let title  = format!("{} {} {} opened", emoji, side, symbol);
+        let emoji = if side == "LONG" { "📈" } else { "📉" };
+        let color = if side == "LONG" {
+            COLOR_GREEN
+        } else {
+            COLOR_RED
+        };
+        let title = format!("{} {} {} opened", emoji, side, symbol);
         let fields = vec![
-            field("Entry",      &format!("${:.4}", entry)),
-            field("Size",       &format!("${:.2}", size_usd)),
-            field("Leverage",   &format!("{:.1}×", leverage)),
-            field("Stop Loss",  &format!("${:.4}", stop_loss)),
+            field("Entry", &format!("${:.4}", entry)),
+            field("Size", &format!("${:.2}", size_usd)),
+            field("Leverage", &format!("{:.1}×", leverage)),
+            field("Stop Loss", &format!("${:.4}", stop_loss)),
             field("Confidence", &format!("{:.0}%", confidence * 100.0)),
         ];
         self.send(embed(&title, color, fields)).await;
@@ -110,20 +114,24 @@ impl Notifier {
     /// A position was fully or partially closed.
     pub async fn position_closed(
         &self,
-        symbol:   &str,
-        side:     &str,
-        pnl:      f64,
-        pnl_pct:  f64,
-        reason:   &str,
-        r_mult:   f64,
+        symbol: &str,
+        side: &str,
+        pnl: f64,
+        pnl_pct: f64,
+        reason: &str,
+        r_mult: f64,
     ) {
         let emoji = if pnl >= 0.0 { "✅" } else { "❌" };
         let color = if pnl >= 0.0 { COLOR_GREEN } else { COLOR_RED };
         let title = format!("{} {} {} closed — {}", emoji, side, symbol, reason);
-        let pnl_str = format!("{}{:.2} ({:+.1}%)",
-            if pnl >= 0.0 { "+" } else { "" }, pnl, pnl_pct);
+        let pnl_str = format!(
+            "{}{:.2} ({:+.1}%)",
+            if pnl >= 0.0 { "+" } else { "" },
+            pnl,
+            pnl_pct
+        );
         let fields = vec![
-            field("P&L",    &pnl_str),
+            field("P&L", &pnl_str),
             field("R-mult", &format!("{:.2}R", r_mult)),
             field("Reason", reason),
         ];
@@ -142,18 +150,12 @@ impl Notifier {
     }
 
     /// AI reviewer took an action on a position.
-    pub async fn ai_action(
-        &self,
-        symbol: &str,
-        action: &str,
-        reason: &str,
-        r_mult: f64,
-    ) {
+    pub async fn ai_action(&self, symbol: &str, action: &str, reason: &str, r_mult: f64) {
         let emoji = match action {
-            "close_now"   => "🤖❌",
-            "scale_up"    => "🤖📈",
-            "scale_down"  => "🤖📉",
-            _             => "🤖",
+            "close_now" => "🤖❌",
+            "scale_up" => "🤖📈",
+            "scale_down" => "🤖📉",
+            _ => "🤖",
         };
         let title = format!("{} AI {} on {}", emoji, action.replace('_', " "), symbol);
         let fields = vec![
@@ -188,7 +190,8 @@ impl Notifier {
 
     async fn post_telegram(&self, token: &str, chat_id: &str, text: &str) -> Result<()> {
         let url = format!("https://api.telegram.org/bot{}/sendMessage", token);
-        self.client.post(&url)
+        self.client
+            .post(&url)
             .json(&json!({ "chat_id": chat_id, "text": text, "parse_mode": "HTML" }))
             .send()
             .await?;
@@ -227,7 +230,7 @@ fn discord_embed_to_text(payload: &Value) -> String {
         .unwrap_or_default();
     let mut lines = vec![format!("<b>{}</b>", title)];
     for f in fields {
-        let name  = f["name"].as_str().unwrap_or("");
+        let name = f["name"].as_str().unwrap_or("");
         let value = f["value"].as_str().unwrap_or("");
         lines.push(format!("• <b>{}</b>: {}", name, value));
     }

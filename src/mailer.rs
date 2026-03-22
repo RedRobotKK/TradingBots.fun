@@ -36,9 +36,9 @@ const DEFAULT_FROM: &str = "TradingBots.fun <hello@tradingbots.fun>";
 /// Clone-cheap: the inner `reqwest::Client` already uses an `Arc` internally.
 #[derive(Clone)]
 pub struct Mailer {
-    client:  Client,
+    client: Client,
     api_key: String,
-    from:    String,
+    from: String,
 }
 
 impl Mailer {
@@ -47,9 +47,9 @@ impl Mailer {
     pub fn new(api_key: Option<&str>, from: Option<&str>) -> Option<Self> {
         let key = api_key?;
         Some(Self {
-            client:  Client::new(),
+            client: Client::new(),
             api_key: key.to_owned(),
-            from:    from.unwrap_or(DEFAULT_FROM).to_owned(),
+            from: from.unwrap_or(DEFAULT_FROM).to_owned(),
         })
     }
 
@@ -66,7 +66,8 @@ impl Mailer {
             "html":    html,
         });
 
-        let resp = self.client
+        let resp = self
+            .client
             .post(RESEND_API)
             .bearer_auth(&self.api_key)
             .json(&body)
@@ -76,7 +77,7 @@ impl Mailer {
 
         if !resp.status().is_success() {
             let status = resp.status();
-            let body   = resp.text().await.unwrap_or_default();
+            let body = resp.text().await.unwrap_or_default();
             anyhow::bail!("mailer: Resend returned {status}: {body}");
         }
 
@@ -93,9 +94,14 @@ impl Mailer {
     /// - `checkout_url`  — full URL to the $9.95 promo Stripe Checkout session
     ///   (e.g. `https://tradingbots.fun/billing/checkout?promo=1&tenant_id=…`)
     pub fn trial_expiry_html(display_name: &str, checkout_url: &str) -> String {
-        let name = if display_name.is_empty() { "Trader" } else { display_name };
+        let name = if display_name.is_empty() {
+            "Trader"
+        } else {
+            display_name
+        };
 
-        format!(r##"<!DOCTYPE html>
+        format!(
+            r##"<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -214,7 +220,7 @@ impl Mailer {
 </body>
 </html>
 "##,
-            name         = html_escape(name),
+            name = html_escape(name),
             checkout_url = checkout_url,
         )
     }
@@ -225,10 +231,10 @@ impl Mailer {
 /// Minimal HTML escaping for user-supplied strings rendered into email HTML.
 fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
-     .replace('<', "&lt;")
-     .replace('>', "&gt;")
-     .replace('"', "&quot;")
-     .replace('\'', "&#39;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

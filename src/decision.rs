@@ -38,35 +38,35 @@
 //! | Ranging  | 0.38      | 1.20      |
 //! | Neutral  | 0.42      | 1.25      |
 
+use crate::candlestick_patterns;
+use crate::chart_patterns;
+use crate::cross_exchange::CrossExchangeSignal;
+use crate::data::PriceData;
+use crate::funding::FundingData;
+use crate::indicators::{HtfIndicators, TechnicalIndicators};
+use crate::learner::{SignalContribution, SignalWeights};
+use crate::sentiment::SentimentData;
+use crate::signals::OrderFlowSignal;
 use anyhow::Result;
 use chrono::Timelike;
 use serde::{Deserialize, Serialize};
-use crate::data::PriceData;
-use crate::indicators::{TechnicalIndicators, HtfIndicators};
-use crate::signals::OrderFlowSignal;
-use crate::learner::{SignalWeights, SignalContribution};
-use crate::sentiment::SentimentData;
-use crate::funding::FundingData;
-use crate::cross_exchange::CrossExchangeSignal;
-use crate::candlestick_patterns;
-use crate::chart_patterns;
 
 // ─────────────────────────── Public types ────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Decision {
-    pub action:             String,  // "BUY" | "SELL" | "SKIP"
+    pub action: String, // "BUY" | "SELL" | "SKIP"
     /// When action == "SKIP", this holds the dominant lean ("BUY" or "SELL")
     /// so the signal watchlist can track near-misses in the right direction.
-    pub skipped_direction:  String,  // "BUY" | "SELL" | "NONE"
-    pub confidence:         f64,
-    pub position_size:      f64,
-    pub leverage:           f64,
-    pub entry_price:        f64,
-    pub stop_loss:          f64,
-    pub take_profit:        f64,
-    pub strategy:           String,
-    pub rationale:          String,
+    pub skipped_direction: String, // "BUY" | "SELL" | "NONE"
+    pub confidence: f64,
+    pub position_size: f64,
+    pub leverage: f64,
+    pub entry_price: f64,
+    pub stop_loss: f64,
+    pub take_profit: f64,
+    pub strategy: String,
+    pub rationale: String,
     pub signal_contribution: SignalContribution,
 }
 
@@ -85,8 +85,8 @@ impl Regime {
     fn label(self) -> &'static str {
         match self {
             Regime::Trending => "Trending",
-            Regime::Ranging  => "Ranging",
-            Regime::Neutral  => "Neutral",
+            Regime::Ranging => "Ranging",
+            Regime::Neutral => "Neutral",
         }
     }
     /// Entry score threshold — minimum winner score to consider a trade.
@@ -97,9 +97,9 @@ impl Regime {
     /// New values sit at ~70–80% of a realistic strong signal.
     fn threshold(self) -> f64 {
         match self {
-            Regime::Trending => 0.22,  // trend signal bundle at 70% of strong Trending score
-            Regime::Ranging  => 0.16,  // mean-reversion signals are smaller in absolute terms
-            Regime::Neutral  => 0.18,  // balanced but signals conflict → lower gate
+            Regime::Trending => 0.22, // trend signal bundle at 70% of strong Trending score
+            Regime::Ranging => 0.16,  // mean-reversion signals are smaller in absolute terms
+            Regime::Neutral => 0.18,  // balanced but signals conflict → lower gate
         }
     }
     /// Dominance ratio — winning side must exceed losing side by this factor.
@@ -107,16 +107,20 @@ impl Regime {
     fn dominance(self) -> f64 {
         match self {
             Regime::Trending => 1.25,
-            Regime::Ranging  => 1.20,
-            Regime::Neutral  => 1.22,
+            Regime::Ranging => 1.20,
+            Regime::Neutral => 1.22,
         }
     }
 }
 
 fn detect_regime(ind: &TechnicalIndicators) -> Regime {
-    if      ind.adx > 27.0 { Regime::Trending }
-    else if ind.adx < 19.0 { Regime::Ranging  }
-    else                    { Regime::Neutral  }
+    if ind.adx > 27.0 {
+        Regime::Trending
+    } else if ind.adx < 19.0 {
+        Regime::Ranging
+    } else {
+        Regime::Neutral
+    }
 }
 
 /// Confidence-scaled leverage, capped by market regime.
@@ -133,14 +137,19 @@ fn detect_regime(ind: &TechnicalIndicators) -> Regime {
 ///   0.90+     → regime max
 pub fn calc_leverage(confidence: f64, regime: Regime) -> f64 {
     let regime_cap: f64 = match regime {
-        Regime::Ranging  => 3.0,
-        Regime::Neutral  => 3.0,
+        Regime::Ranging => 3.0,
+        Regime::Neutral => 3.0,
         Regime::Trending => 5.0,
     };
-    let raw: f64 = if confidence < 0.70      { 2.0 }
-                   else if confidence < 0.82 { 3.0 }
-                   else if confidence < 0.90 { 4.0 }
-                   else                      { 5.0 };
+    let raw: f64 = if confidence < 0.70 {
+        2.0
+    } else if confidence < 0.82 {
+        3.0
+    } else if confidence < 0.90 {
+        4.0
+    } else {
+        5.0
+    };
     raw.min(regime_cap)
 }
 
@@ -184,25 +193,35 @@ impl BtcMarketContext {
     pub fn confidence_adjustment(&self, action: &str) -> f64 {
         // ── 24h BTC direction alignment ──────────────────────────────────────
         // Treat sub-±0.3 % moves as "flat" to avoid noise on tiny wiggles
-        let btc_bull = self.btc_return_24h >  0.3;
+        let btc_bull = self.btc_return_24h > 0.3;
         let btc_bear = self.btc_return_24h < -0.3;
         let big_move = self.btc_return_24h.abs() > 3.0;
 
-        let aligned = (action == "BUY"  && btc_bull) || (action == "SELL" && btc_bear);
-        let opposed  = (action == "BUY"  && btc_bear) || (action == "SELL" && btc_bull);
+        let aligned = (action == "BUY" && btc_bull) || (action == "SELL" && btc_bear);
+        let opposed = (action == "BUY" && btc_bear) || (action == "SELL" && btc_bull);
 
         let btc_adj = if self.dominance >= 55.0 {
             // HIGH dominance — BTC direction is a strong edge (Pearson 0.75)
-            if      aligned && big_move  {  0.08 }
-            else if aligned              {  0.05 }
-            else if opposed && big_move  { -0.12 }
-            else if opposed              { -0.08 }
-            else                         {  0.00 }
+            if aligned && big_move {
+                0.08
+            } else if aligned {
+                0.05
+            } else if opposed && big_move {
+                -0.12
+            } else if opposed {
+                -0.08
+            } else {
+                0.00
+            }
         } else if self.dominance >= 48.0 {
             // MEDIUM dominance — weaker correlation (Pearson 0.49)
-            if      aligned {  0.03 }
-            else if opposed { -0.04 }
-            else            {  0.00 }
+            if aligned {
+                0.03
+            } else if opposed {
+                -0.04
+            } else {
+                0.00
+            }
         } else {
             // LOW dominance / altseason (<48 %) — alts decouple from BTC
             0.00
@@ -213,8 +232,11 @@ impl BtcMarketContext {
         // Asset leading BTC by >2% may mean-revert back toward BTC performance.
         let lag = self.asset_return_4h - self.btc_return_4h;
         let rel_bonus: f64 = if self.dominance >= 55.0 && self.btc_return_4h.abs() > 0.5 {
-            if (action == "BUY" && lag < -2.0) || (action == "SELL" && lag > 2.0) { 0.04 }
-            else { 0.00 }
+            if (action == "BUY" && lag < -2.0) || (action == "SELL" && lag > 2.0) {
+                0.04
+            } else {
+                0.00
+            }
         } else {
             0.00
         };
@@ -234,17 +256,19 @@ impl BtcMarketContext {
 /// `cex_signal` is `None` when the cross-exchange monitor has no data for the symbol.
 #[allow(clippy::too_many_arguments)]
 pub fn make_decision(
-    candles:    &[PriceData],
-    ind:        &TechnicalIndicators,
-    of:         &OrderFlowSignal,
-    weights:    &SignalWeights,
-    sentiment:  Option<&SentimentData>,
-    funding:    Option<&FundingData>,
-    btc_ctx:    Option<&BtcMarketContext>,
-    htf:        Option<&HtfIndicators>,
+    candles: &[PriceData],
+    ind: &TechnicalIndicators,
+    of: &OrderFlowSignal,
+    weights: &SignalWeights,
+    sentiment: Option<&SentimentData>,
+    funding: Option<&FundingData>,
+    btc_ctx: Option<&BtcMarketContext>,
+    htf: Option<&HtfIndicators>,
     cex_signal: Option<&CrossExchangeSignal>,
 ) -> Result<Decision> {
-    let last  = candles.last().ok_or_else(|| anyhow::anyhow!("Empty candle slice"))?;
+    let last = candles
+        .last()
+        .ok_or_else(|| anyhow::anyhow!("Empty candle slice"))?;
     let close = last.close;
 
     // ── Regime detection with ATR expansion override ──────────────────────────
@@ -256,8 +280,11 @@ pub fn make_decision(
     let regime = {
         let base = detect_regime(ind);
         if ind.atr_expansion_ratio > 1.5 && matches!(base, Regime::Ranging | Regime::Neutral) {
-            log::debug!("ATR expansion {:.2}× — regime override {:?}→Trending",
-                        ind.atr_expansion_ratio, base);
+            log::debug!(
+                "ATR expansion {:.2}× — regime override {:?}→Trending",
+                ind.atr_expansion_ratio,
+                base
+            );
             Regime::Trending
         } else {
             base
@@ -271,45 +298,64 @@ pub fn make_decision(
     // as London/NY since crypto markets are 24/7 with strong Asia participation.
     let utc_hour = chrono::Utc::now().hour();
     let session_mult: f64 = match utc_hour {
-        8..=17  => 1.00,  // London+NY overlap — full signal quality
-        18..=21 => 1.03,  // NY close / early Asia — minimal elevation
-        _       => 1.05,  // Asia session — slight elevation, still very tradeable
+        8..=17 => 1.00,  // London+NY overlap — full signal quality
+        18..=21 => 1.03, // NY close / early Asia — minimal elevation
+        _ => 1.05,       // Asia session — slight elevation, still very tradeable
     };
     let session_label = match utc_hour {
-        8..=12  => "LON",
+        8..=12 => "LON",
         13..=17 => "NY",
         18..=21 => "NYc",
-        _       => "ASIA",
+        _ => "ASIA",
     };
 
     // ── Multi-timeframe RSI scale ──────────────────────────────────────────────
     // 4h RSI should be in the same "zone" as 1h RSI to confirm the signal.
     // Disagreement between timeframes = higher false-positive rate → scale down.
-    let rsi_mtf_scale: f64 = htf.map(|h| {
-        let r4h = h.rsi_4h;
-        let r1h = ind.rsi;
-        let both_oversold  = r1h < 45.0 && r4h < 50.0;
-        let both_overbought = r1h > 55.0 && r4h > 50.0;
-        let r4h_extreme    = !(35.0..=65.0).contains(&r4h);
-        if (both_oversold || both_overbought) && r4h_extreme { 1.30 }
-        else if both_oversold || both_overbought               { 1.10 }
-        else                                                   { 0.80 }
-    }).unwrap_or(1.0);
+    let rsi_mtf_scale: f64 = htf
+        .map(|h| {
+            let r4h = h.rsi_4h;
+            let r1h = ind.rsi;
+            let both_oversold = r1h < 45.0 && r4h < 50.0;
+            let both_overbought = r1h > 55.0 && r4h > 50.0;
+            let r4h_extreme = !(35.0..=65.0).contains(&r4h);
+            if (both_oversold || both_overbought) && r4h_extreme {
+                1.30
+            } else if both_oversold || both_overbought {
+                1.10
+            } else {
+                0.80
+            }
+        })
+        .unwrap_or(1.0);
 
     // ── Multi-timeframe Z-score scale ─────────────────────────────────────────
     // 4h Z-score confirms or contradicts the 1h mean-reversion signal.
-    let z_mtf_scale: f64 = htf.map(|h| {
-        let z4h = h.z_score_4h;
-        let z1h = ind.z_score;
-        let same_dir    = (z1h < 0.0 && z4h < -0.5) || (z1h > 0.0 && z4h > 0.5);
-        let z4h_extreme = z4h.abs() > 1.2;
-        if same_dir && z4h_extreme { 1.40 }  // both TFs agree at extremes — strong edge
-        else if same_dir            { 1.10 }  // same direction — mild boost
-        else if z4h.abs() < 0.4    { 0.85 }  // 4h near neutral — 1h extreme likely noise (was 0.70)
-        else                        { 0.90 }  // mild disagreement (was 0.85)
-    }).unwrap_or(1.0);
-    let mut bull    = 0.0f64;
-    let mut bear    = 0.0f64;
+    let z_mtf_scale: f64 = htf
+        .map(|h| {
+            let z4h = h.z_score_4h;
+            let z1h = ind.z_score;
+            let same_dir = (z1h < 0.0 && z4h < -0.5) || (z1h > 0.0 && z4h > 0.5);
+            let z4h_extreme = z4h.abs() > 1.2;
+            if same_dir && z4h_extreme {
+                1.40
+            }
+            // both TFs agree at extremes — strong edge
+            else if same_dir {
+                1.10
+            }
+            // same direction — mild boost
+            else if z4h.abs() < 0.4 {
+                0.85
+            }
+            // 4h near neutral — 1h extreme likely noise (was 0.70)
+            else {
+                0.90
+            } // mild disagreement (was 0.85)
+        })
+        .unwrap_or(1.0);
+    let mut bull = 0.0f64;
+    let mut bear = 0.0f64;
     let mut contrib = SignalContribution::default();
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -333,10 +379,10 @@ pub fn make_decision(
                 // Direction-aware: shake-out bounce only when EMA confirms uptrend.
                 // In a downtrend (EMA < -0.20%), RSI < 35 = bear continuation, not reversal.
                 if ind.ema_cross_pct > 0.20 {
-                    bull += rsi_w * 0.70;  // uptrend shake-out → reversal likely
+                    bull += rsi_w * 0.70; // uptrend shake-out → reversal likely
                     contrib.rsi_bullish = true;
                 } else if ind.ema_cross_pct < -0.20 {
-                    bear += rsi_w * 0.40;  // downtrend continuation → bear momentum
+                    bear += rsi_w * 0.40; // downtrend continuation → bear momentum
                     contrib.rsi_bullish = false;
                 } else {
                     contrib.rsi_bullish = ind.rsi < 50.0; // flat EMA — no contribution
@@ -352,7 +398,7 @@ pub fn make_decision(
         // Extremes (<30 / >70) are the PRIMARY signal source.
         Regime::Ranging | Regime::Neutral => {
             if ind.rsi < 28.0 {
-                bull += rsi_w;           // deeply oversold — strong reversal signal
+                bull += rsi_w; // deeply oversold — strong reversal signal
                 contrib.rsi_bullish = true;
             } else if ind.rsi > 72.0 {
                 bear += rsi_w;
@@ -388,7 +434,7 @@ pub fn make_decision(
             // Price below lower BB = breakdown strength (NOT oversold).
             Regime::Trending => {
                 if close > ind.bollinger_upper {
-                    bull += weights.bollinger * 0.90;  // above upper = uptrend strength
+                    bull += weights.bollinger * 0.90; // above upper = uptrend strength
                     contrib.bb_bullish = true;
                 } else if close < ind.bollinger_lower {
                     bear += weights.bollinger * 0.90;
@@ -408,7 +454,7 @@ pub fn make_decision(
             // Price ABOVE upper band = overbought, expect pullback.
             Regime::Ranging | Regime::Neutral => {
                 if close < ind.bollinger_lower {
-                    bull += weights.bollinger;  // below lower band = reversal long
+                    bull += weights.bollinger; // below lower band = reversal long
                     contrib.bb_bullish = true;
                 } else if close > ind.bollinger_upper {
                     bear += weights.bollinger;
@@ -438,9 +484,9 @@ pub fn make_decision(
     // Primary: histogram direction (is momentum building or fading?)
     // Secondary: MACD line position (above/below zero = trend direction)
     let macd_w = match regime {
-        Regime::Trending => weights.macd,         // full weight in trends
-        Regime::Ranging  => weights.macd * 0.65,  // reduced — MACD less reliable in chop
-        Regime::Neutral  => weights.macd * 0.85,
+        Regime::Trending => weights.macd,       // full weight in trends
+        Regime::Ranging => weights.macd * 0.65, // reduced — MACD less reliable in chop
+        Regime::Neutral => weights.macd * 0.85,
     };
 
     if ind.macd_histogram > 0.0 && ind.macd > 0.0 {
@@ -471,9 +517,9 @@ pub fn make_decision(
     //   Trending: PRIMARY signal — EMA cross is the main momentum filter
     //   Ranging:  SUPPRESSED — EMAs whipsaw in sideways markets
     let ema_w = match regime {
-        Regime::Trending => weights.ema_cross * 1.40,  // boosted — primary trend filter
-        Regime::Ranging  => weights.ema_cross * 0.40,  // suppressed — EMAs lie in ranges
-        Regime::Neutral  => weights.ema_cross,
+        Regime::Trending => weights.ema_cross * 1.40, // boosted — primary trend filter
+        Regime::Ranging => weights.ema_cross * 0.40,  // suppressed — EMAs lie in ranges
+        Regime::Neutral => weights.ema_cross,
     };
 
     // EMA gap filter: backtest showed "always-on" EMA direction is near-random noise.
@@ -482,14 +528,14 @@ pub fn make_decision(
     let ema_pct = ind.ema_cross_pct;
     if ema_pct > 0.5 {
         // Strong uptrend: fast EMA well above slow EMA
-        bull += ema_w;  // ema_w is already capped at weights.ema_cross * 1.40 in Trending
+        bull += ema_w; // ema_w is already capped at weights.ema_cross * 1.40 in Trending
         contrib.ema_cross_bullish = true;
     } else if ema_pct > 0.20 {
         // Moderate uptrend (was >0.0 — lowered floor to filter noise)
         bull += ema_w * 0.60;
         contrib.ema_cross_bullish = true;
     } else if ema_pct < -0.5 {
-        bear += ema_w;  // symmetric with bull path above
+        bear += ema_w; // symmetric with bull path above
         contrib.ema_cross_bullish = false;
     } else if ema_pct < -0.20 {
         // Moderate downtrend (was <0.0 — lowered floor to filter noise)
@@ -509,9 +555,9 @@ pub fn make_decision(
     // Extreme readings predict high-probability reversions.
     let z_w = {
         let regime_w = match regime {
-            Regime::Ranging  => weights.z_score * 1.40,  // PRIMARY in ranging
-            Regime::Trending => weights.z_score * 0.50,  // suppressed in trends
-            Regime::Neutral  => weights.z_score,
+            Regime::Ranging => weights.z_score * 1.40, // PRIMARY in ranging
+            Regime::Trending => weights.z_score * 0.50, // suppressed in trends
+            Regime::Neutral => weights.z_score,
         };
         regime_w * z_mtf_scale
     };
@@ -535,7 +581,11 @@ pub fn make_decision(
         contrib.z_score_present = true;
         contrib.z_score_bullish = false;
     } else if z.abs() > 0.8 {
-        if z < 0.0 { bull += z_w * 0.25; } else { bear += z_w * 0.25; }
+        if z < 0.0 {
+            bull += z_w * 0.25;
+        } else {
+            bear += z_w * 0.25;
+        }
         contrib.z_score_present = true;
         contrib.z_score_bullish = z < 0.0;
     }
@@ -555,9 +605,17 @@ pub fn make_decision(
     // ═════════════════════════════════════════════════════════════════════════
     // a) Whole-book direction
     match of.direction.as_str() {
-        "LONG"  => { bull += weights.order_flow * of.confidence * 0.60; contrib.of_bullish = true;  }
-        "SHORT" => { bear += weights.order_flow * of.confidence * 0.60; contrib.of_bullish = false; }
-        _       => { contrib.of_bullish = bull > bear; }
+        "LONG" => {
+            bull += weights.order_flow * of.confidence * 0.60;
+            contrib.of_bullish = true;
+        }
+        "SHORT" => {
+            bear += weights.order_flow * of.confidence * 0.60;
+            contrib.of_bullish = false;
+        }
+        _ => {
+            contrib.of_bullish = bull > bear;
+        }
     }
 
     // b) Near-price imbalance (within 0.5% of mid) — highest signal quality
@@ -574,10 +632,10 @@ pub fn make_decision(
     //    Wide spreads (>0.5%) reduce wall signal reliability (low liquidity).
     let wall_w = weights.order_flow * 0.40 * if of.spread_pct > 0.5 { 0.5 } else { 1.0 };
     if of.bid_wall_near {
-        bull += wall_w;  // big resting bids = price floor = bullish
+        bull += wall_w; // big resting bids = price floor = bullish
     }
     if of.ask_wall_near {
-        bear += wall_w;  // big resting asks = price ceiling = bearish
+        bear += wall_w; // big resting asks = price ceiling = bearish
     }
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -590,9 +648,9 @@ pub fn make_decision(
     //  is more obvious. Below that it is pure noise at 15-minute granularity.
     // ═════════════════════════════════════════════════════════════════════════
     let trend_w = match regime {
-        Regime::Trending => weights.trend * 0.80,  // partially replaced by EMA cross
-        Regime::Ranging  => weights.trend * 0.30,  // nearly irrelevant in range
-        Regime::Neutral  => weights.trend * 0.60,
+        Regime::Trending => weights.trend * 0.80, // partially replaced by EMA cross
+        Regime::Ranging => weights.trend * 0.30,  // nearly irrelevant in range
+        Regime::Neutral => weights.trend * 0.60,
     };
 
     if ind.trend > 4.0 {
@@ -622,8 +680,8 @@ pub fn make_decision(
     // VWAP bias — kept as named booleans for potential future use / logging.
     // Were previously used as a tie-breaker in the volume directional signal
     // (removed after backtest showed T-stat -3.53 on directional volume).
-    let _vwap_bull = ind.vwap_pct > 0.3;   // >0.3% above VWAP = bull bias
-    let _vwap_bear = ind.vwap_pct < -0.3;  // <0.3% below VWAP = bear bias
+    let _vwap_bull = ind.vwap_pct > 0.3; // >0.3% above VWAP = bull bias
+    let _vwap_bear = ind.vwap_pct < -0.3; // <0.3% below VWAP = bear bias
 
     // ═════════════════════════════════════════════════════════════════════════
     //  9. Volume conviction multiplier  (amplifier only — no directional signal)
@@ -641,11 +699,21 @@ pub fn make_decision(
     // Crypto markets routinely show VOL:0.1-0.3× outside peak hours; the old
     // 0.75 multiplier wiped 25% off ALL scores (including the already-small
     // real-world signal values) making the threshold unreachable.
-    let vol_mult = if vol_ratio > 2.0      { 1.20 }
-                   else if vol_ratio > 1.4 { 1.10 }
-                   else if vol_ratio < 0.4 { 0.87 }   // thin volume — mild caution (was 0.75)
-                   else if vol_ratio < 0.6 { 0.93 }   // below-avg volume (was 0.85)
-                   else                    { 1.00 };
+    let vol_mult = if vol_ratio > 2.0 {
+        1.20
+    } else if vol_ratio > 1.4 {
+        1.10
+    } else if vol_ratio < 0.4 {
+        0.87
+    }
+    // thin volume — mild caution (was 0.75)
+    else if vol_ratio < 0.6 {
+        0.93
+    }
+    // below-avg volume (was 0.85)
+    else {
+        1.00
+    };
 
     bull *= vol_mult;
     bear *= vol_mult;
@@ -699,9 +767,9 @@ pub fn make_decision(
         if strength.abs() > 0.0 {
             contrib.funding_present = true;
             let fund_w = match regime {
-                Regime::Trending => weights.funding_rate * 0.60,  // trends sustain high funding
-                Regime::Ranging  => weights.funding_rate * 1.20,  // crowded positions revert faster
-                Regime::Neutral  => weights.funding_rate,
+                Regime::Trending => weights.funding_rate * 0.60, // trends sustain high funding
+                Regime::Ranging => weights.funding_rate * 1.20,  // crowded positions revert faster
+                Regime::Neutral => weights.funding_rate,
             };
 
             // Funding rate delta boost: rapid rate movement is a more urgent signal.
@@ -713,13 +781,17 @@ pub fn make_decision(
             //   0.0005 = 0.05%  (moderate change — one whole tier)
             //   0.0002 = 0.02%  (mild change)
             let abs_delta = fund.funding_delta.abs();
-            let raw_delta_mult = if abs_delta > 0.0005 { 1.60 }
-                                 else if abs_delta > 0.0002 { 1.30 }
-                                 else                        { 1.00 };
+            let raw_delta_mult = if abs_delta > 0.0005 {
+                1.60
+            } else if abs_delta > 0.0002 {
+                1.30
+            } else {
+                1.00
+            };
             // Only apply boost when the delta CONFIRMS the current rate direction
             // (e.g. rate already positive AND rising — longs deepening their commitment)
             let delta_confirms = (fund.funding_delta > 0.0 && fund.funding_rate > 0.0)
-                              || (fund.funding_delta < 0.0 && fund.funding_rate < 0.0);
+                || (fund.funding_delta < 0.0 && fund.funding_rate < 0.0);
             let delta_mult = if delta_confirms { raw_delta_mult } else { 1.0 };
 
             if strength > 0.0 {
@@ -783,8 +855,12 @@ pub fn make_decision(
         if cex_bull > 0.0 || cex_bear > 0.0 {
             log::debug!(
                 "📡 CEX divergence {} {}{:.3}% (persist {}) → bull+{:.4} bear+{:.4}",
-                cex.symbol, if cex.hl_premium_pct > 0.0 { "+" } else { "" },
-                cex.hl_premium_pct, cex.persistence, cex_bull, cex_bear
+                cex.symbol,
+                if cex.hl_premium_pct > 0.0 { "+" } else { "" },
+                cex.hl_premium_pct,
+                cex.persistence,
+                cex_bull,
+                cex_bear
             );
         }
         bull += cex_bull;
@@ -797,15 +873,18 @@ pub fn make_decision(
     // session_mult raises the entry bar during low-quality trading hours
     // (Asian dead zone) to avoid acting on noise when institutional liquidity
     // is thin and follow-through is poor.
-    let threshold  = regime.threshold() * session_mult;
-    let dominance  = regime.dominance();
+    let threshold = regime.threshold() * session_mult;
+    let dominance = regime.dominance();
 
     let (action, raw_confidence) = if bull >= threshold && bull > bear * dominance {
-        ("BUY".to_string(),  (bull / (bull + bear + 1e-8)).min(1.0))
+        ("BUY".to_string(), (bull / (bull + bear + 1e-8)).min(1.0))
     } else if bear >= threshold && bear > bull * dominance {
         ("SELL".to_string(), (bear / (bull + bear + 1e-8)).min(1.0))
     } else {
-        ("SKIP".to_string(), f64::max(bull, bear) / (bull + bear + 1e-8))
+        (
+            "SKIP".to_string(),
+            f64::max(bull, bear) / (bull + bear + 1e-8),
+        )
     };
 
     // ═════════════════════════════════════════════════════════════════════════
@@ -831,9 +910,9 @@ pub fn make_decision(
     // Tighter stop in trending markets (momentum trades move faster);
     // wider stop in ranging markets (expected oscillation before reversal).
     let (stop_mult, tp_mult) = match regime {
-        Regime::Trending => (1.8, 3.6),   // 1.8×ATR stop, 3.6×ATR target = 2:1 R:R
-        Regime::Ranging  => (2.2, 3.3),   // 2.2×ATR stop, 3.3×ATR target = 1.5:1 R:R
-        Regime::Neutral  => (2.0, 3.2),   // balanced
+        Regime::Trending => (1.8, 3.6), // 1.8×ATR stop, 3.6×ATR target = 2:1 R:R
+        Regime::Ranging => (2.2, 3.3),  // 2.2×ATR stop, 3.3×ATR target = 1.5:1 R:R
+        Regime::Neutral => (2.0, 3.2),  // balanced
     };
 
     // Hard cap: stop-loss distance capped at 8% of entry price regardless of ATR.
@@ -842,7 +921,7 @@ pub fn make_decision(
     // the worst-case margin loss is 8% × leverage = 24% (at 3×), acceptable.
     const MAX_STOP_DIST_PCT: f64 = 0.08;
     let (stop_loss, take_profit) = match action.as_str() {
-        "BUY"  => {
+        "BUY" => {
             let raw_sl = close - atr * stop_mult;
             let sl = raw_sl.max(close * (1.0 - MAX_STOP_DIST_PCT));
             let tp = close + atr * tp_mult;
@@ -854,19 +933,23 @@ pub fn make_decision(
             let tp = close - atr * tp_mult;
             (sl, tp)
         }
-        _      => (close * 0.97, close * 1.03),
+        _ => (close * 0.97, close * 1.03),
     };
 
     // ── Rich rationale string (shown in Signal Feed) ──────────────────────────
-    let sent_tag = sentiment.map(|s| {
-        format!(" 🌙G:{:.0} B:{:.0}%", s.galaxy_score, s.bullish_percent)
-    }).unwrap_or_default();
+    let sent_tag = sentiment
+        .map(|s| format!(" 🌙G:{:.0} B:{:.0}%", s.galaxy_score, s.bullish_percent))
+        .unwrap_or_default();
 
     // Pattern tags — only append when patterns were actually detected
-    let csp_tag = csp.name.as_deref()
+    let csp_tag = csp
+        .name
+        .as_deref()
         .map(|n| format!(" 🕯{}", n))
         .unwrap_or_default();
-    let chp_tag = chp.name.as_deref()
+    let chp_tag = chp
+        .name
+        .as_deref()
         .map(|n| format!(" 📐{}", n))
         .unwrap_or_default();
 
@@ -881,37 +964,54 @@ pub fn make_decision(
                 String::new()
             };
             let phase_str = match current_cycle_phase() {
-                FundingCyclePhase::PreSettlement { hours_remaining } =>
-                    format!(" ⏰{:.0}m-to-settle", hours_remaining * 60.0),
-                FundingCyclePhase::PostSettlement { minutes_elapsed } =>
-                    format!(" 🔄+{:.0}m-post", minutes_elapsed),
-                FundingCyclePhase::MidCycle { hours_to_next } =>
-                    format!(" ({:.1}h-to-settle)", hours_to_next),
+                FundingCyclePhase::PreSettlement { hours_remaining } => {
+                    format!(" ⏰{:.0}m-to-settle", hours_remaining * 60.0)
+                }
+                FundingCyclePhase::PostSettlement { minutes_elapsed } => {
+                    format!(" 🔄+{:.0}m-post", minutes_elapsed)
+                }
+                FundingCyclePhase::MidCycle { hours_to_next } => {
+                    format!(" ({:.1}h-to-settle)", hours_to_next)
+                }
             };
-            format!(" 💰FR:{:+.3}%({}{}{})", f.funding_rate * 100.0, f.emoji(), delta_str, phase_str)
+            format!(
+                " 💰FR:{:+.3}%({}{}{})",
+                f.funding_rate * 100.0,
+                f.emoji(),
+                delta_str,
+                phase_str
+            )
         })
         .unwrap_or_default();
 
     // BTC dominance context tag — shown in rationale when context is active
-    let btc_tag = btc_ctx.map(|b| {
-        let adj_str = if btc_adj > 0.0 {
-            format!("+{:.0}%", btc_adj * 100.0)
-        } else if btc_adj < 0.0 {
-            format!("{:.0}%", btc_adj * 100.0)
-        } else {
-            String::new()
-        };
-        let rel_str = if b.asset_return_4h != 0.0 || b.btc_return_4h != 0.0 {
-            format!(" 4H:A{:+.1}%/B{:+.1}%", b.asset_return_4h, b.btc_return_4h)
-        } else {
-            String::new()
-        };
-        format!(" 🟠DOM:{:.0}% BTC:{:+.1}%{}{}",
-            b.dominance, b.btc_return_24h,
-            if adj_str.is_empty() { String::new() } else { format!("({})", adj_str) },
-            rel_str,
-        )
-    }).unwrap_or_default();
+    let btc_tag = btc_ctx
+        .map(|b| {
+            let adj_str = if btc_adj > 0.0 {
+                format!("+{:.0}%", btc_adj * 100.0)
+            } else if btc_adj < 0.0 {
+                format!("{:.0}%", btc_adj * 100.0)
+            } else {
+                String::new()
+            };
+            let rel_str = if b.asset_return_4h != 0.0 || b.btc_return_4h != 0.0 {
+                format!(" 4H:A{:+.1}%/B{:+.1}%", b.asset_return_4h, b.btc_return_4h)
+            } else {
+                String::new()
+            };
+            format!(
+                " 🟠DOM:{:.0}% BTC:{:+.1}%{}{}",
+                b.dominance,
+                b.btc_return_24h,
+                if adj_str.is_empty() {
+                    String::new()
+                } else {
+                    format!("({})", adj_str)
+                },
+                rel_str,
+            )
+        })
+        .unwrap_or_default();
 
     // ATR expansion tag — only shown when regime override occurred
     let atr_tag = if ind.atr_expansion_ratio > 1.5 {
@@ -921,17 +1021,24 @@ pub fn make_decision(
     };
 
     // MTF tag — only shown when 4h data is available
-    let mtf_tag = htf.map(|h| {
-        format!(" 4H:RSI{:.0}/Z{:.1}", h.rsi_4h, h.z_score_4h)
-    }).unwrap_or_default();
+    let mtf_tag = htf
+        .map(|h| format!(" 4H:RSI{:.0}/Z{:.1}", h.rsi_4h, h.z_score_4h))
+        .unwrap_or_default();
 
     // Cross-exchange divergence tag — only shown when anomaly is active
     // Cross-exchange tag shows mode (MOM = momentum, REV = mean-reversion) + magnitude + persistence.
     // Example: "🔴⟳CEX[REV]:-3.21%(2cy)" means HL is 3.2% below CEX for 2 cycles → BULL reversion.
     let cex_tag = cex_signal
         .filter(|s| s.active)
-        .map(|s| format!(" {}CEX[{}]:{:+.2}%({}cy)",
-            s.emoji(), s.mode_label(), s.hl_premium_pct, s.persistence))
+        .map(|s| {
+            format!(
+                " {}CEX[{}]:{:+.2}%({}cy)",
+                s.emoji(),
+                s.mode_label(),
+                s.hl_premium_pct,
+                s.persistence
+            )
+        })
         .unwrap_or_default();
 
     // Order-book tag — shows sentiment label + near-price imbalance + wall flags.
@@ -944,20 +1051,21 @@ pub fn make_decision(
             String::new()
         };
         let wall_str = match (of.bid_wall_near, of.ask_wall_near) {
-            (true,  false) => " 🧱bid".to_string(),
-            (false, true)  => " 🧱ask".to_string(),
-            (true,  true)  => " 🧱both".to_string(),
-            _              => String::new(),
+            (true, false) => " 🧱bid".to_string(),
+            (false, true) => " 🧱ask".to_string(),
+            (true, true) => " 🧱both".to_string(),
+            _ => String::new(),
         };
         // Only include tag if the book has something meaningful to say
         if of.sentiment != "NEUTRAL" || of.bid_wall_near || of.ask_wall_near {
-            format!(" 📖{}{}{}",
+            format!(
+                " 📖{}{}{}",
                 match of.sentiment.as_str() {
                     "STRONGLY_BULLISH" => "STR_BULL",
-                    "BULLISH"          => "BULL",
+                    "BULLISH" => "BULL",
                     "STRONGLY_BEARISH" => "STR_BEAR",
-                    "BEARISH"          => "BEAR",
-                    _                  => "NEUT",
+                    "BEARISH" => "BEAR",
+                    _ => "NEUT",
                 },
                 near_str,
                 wall_str,
@@ -995,14 +1103,18 @@ pub fn make_decision(
     // For SKIP decisions, capture the dominant lean so the watchlist can
     // track near-misses in the correct direction.
     let skipped_direction = if action == "SKIP" {
-        if bull >= bear { "BUY".to_string() } else { "SELL".to_string() }
+        if bull >= bear {
+            "BUY".to_string()
+        } else {
+            "SELL".to_string()
+        }
     } else {
         "NONE".to_string()
     };
 
     // Stamp entry context onto contrib so the learner can apply
     // regime-aware and confidence-scaled weight updates on close.
-    contrib.regime           = regime.label().to_string();
+    contrib.regime = regime.label().to_string();
     contrib.entry_confidence = confidence;
 
     Ok(Decision {
@@ -1010,11 +1122,11 @@ pub fn make_decision(
         skipped_direction,
         confidence,
         position_size: 0.0,
-        leverage:      calc_leverage(confidence, regime),
-        entry_price:   close,
+        leverage: calc_leverage(confidence, regime),
+        entry_price: close,
         stop_loss,
         take_profit,
-        strategy:      format!("{} (bull={:.3} bear={:.3})", regime.label(), bull, bear),
+        strategy: format!("{} (bull={:.3} bear={:.3})", regime.label(), bull, bear),
         rationale,
         signal_contribution: contrib,
     })
@@ -1028,67 +1140,74 @@ pub fn make_decision(
 mod tests {
     use super::*;
     use crate::indicators::TechnicalIndicators;
-    use crate::signals::OrderFlowSignal;
     use crate::learner::SignalWeights;
+    use crate::signals::OrderFlowSignal;
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
     fn flat_candles(price: f64, n: usize) -> Vec<crate::data::PriceData> {
-        (0..n).map(|i| crate::data::PriceData {
-            symbol:    "TEST".to_string(),
-            timestamp: i as i64 * 3_600_000,
-            open: price, high: price * 1.001, low: price * 0.999, close: price,
-            volume: 1000.0,
-        }).collect()
+        (0..n)
+            .map(|i| crate::data::PriceData {
+                symbol: "TEST".to_string(),
+                timestamp: i as i64 * 3_600_000,
+                open: price,
+                high: price * 1.001,
+                low: price * 0.999,
+                close: price,
+                volume: 1000.0,
+            })
+            .collect()
     }
 
     fn rising_candles(start: f64, step: f64, n: usize) -> Vec<crate::data::PriceData> {
-        (0..n).map(|i| {
-            let c = start + step * i as f64;
-            crate::data::PriceData {
-                symbol:    "TEST".to_string(),
-                timestamp: i as i64 * 3_600_000,
-                open:  c - step * 0.1,
-                high:  c + step * 0.2,
-                low:   c - step * 0.2,
-                close: c,
-                volume: 1000.0 + i as f64 * 10.0,
-            }
-        }).collect()
+        (0..n)
+            .map(|i| {
+                let c = start + step * i as f64;
+                crate::data::PriceData {
+                    symbol: "TEST".to_string(),
+                    timestamp: i as i64 * 3_600_000,
+                    open: c - step * 0.1,
+                    high: c + step * 0.2,
+                    low: c - step * 0.2,
+                    close: c,
+                    volume: 1000.0 + i as f64 * 10.0,
+                }
+            })
+            .collect()
     }
 
     /// A neutral `TechnicalIndicators` that produces a SKIP from `make_decision`.
     fn neutral_ind(price: f64) -> TechnicalIndicators {
         TechnicalIndicators {
-            rsi:              50.0,
-            bollinger_upper:  price * 1.02,
+            rsi: 50.0,
+            bollinger_upper: price * 1.02,
             bollinger_middle: price,
-            bollinger_lower:  price * 0.98,
-            bb_width_pct:     4.0,
-            macd:             0.0,
-            macd_signal:      0.0,
-            macd_histogram:   0.0,
-            atr:              price * 0.01,
-            trend:            0.0,
-            ema8:             price,
-            ema21:            price,
-            ema_cross_pct:    0.0,
-            adx:              22.0,  // Neutral regime
-            z_score:          0.0,
-            volume_ratio:     1.0,
-            vwap:             price,
-            vwap_pct:         0.0,
+            bollinger_lower: price * 0.98,
+            bb_width_pct: 4.0,
+            macd: 0.0,
+            macd_signal: 0.0,
+            macd_histogram: 0.0,
+            atr: price * 0.01,
+            trend: 0.0,
+            ema8: price,
+            ema21: price,
+            ema_cross_pct: 0.0,
+            adx: 22.0, // Neutral regime
+            z_score: 0.0,
+            volume_ratio: 1.0,
+            vwap: price,
+            vwap_pct: 0.0,
             atr_expansion_ratio: 1.0,
         }
     }
 
     fn neutral_of() -> OrderFlowSignal {
         OrderFlowSignal {
-            bid_volume:      100.0,
-            ask_volume:      100.0,
+            bid_volume: 100.0,
+            ask_volume: 100.0,
             imbalance_ratio: 1.0,
-            direction:       "NEUTRAL".to_string(),
-            confidence:      0.50,
+            direction: "NEUTRAL".to_string(),
+            confidence: 0.50,
             ..Default::default()
         }
     }
@@ -1119,8 +1238,12 @@ mod tests {
     #[test]
     fn regime_boundary_exactly_27_is_neutral() {
         let mut ind = neutral_ind(100.0);
-        ind.adx = 27.0;  // condition is > 27, so exactly 27 → Neutral
-        assert_eq!(detect_regime(&ind), Regime::Neutral, "ADX = 27 → Neutral (not > 27)");
+        ind.adx = 27.0; // condition is > 27, so exactly 27 → Neutral
+        assert_eq!(
+            detect_regime(&ind),
+            Regime::Neutral,
+            "ADX = 27 → Neutral (not > 27)"
+        );
     }
 
     // ── ATR expansion override ────────────────────────────────────────────────
@@ -1128,15 +1251,19 @@ mod tests {
     #[test]
     fn atr_expansion_overrides_ranging_to_trending() {
         let mut ind = neutral_ind(100.0);
-        ind.adx = 15.0;                   // Ranging by ADX
-        ind.atr_expansion_ratio = 2.0;    // strong breakout
-        // Override logic inside make_decision; verify through regime label in rationale
-        // We test the base detect_regime separately; for the override we call make_decision
+        ind.adx = 15.0; // Ranging by ADX
+        ind.atr_expansion_ratio = 2.0; // strong breakout
+                                       // Override logic inside make_decision; verify through regime label in rationale
+                                       // We test the base detect_regime separately; for the override we call make_decision
         assert_eq!(detect_regime(&ind), Regime::Ranging);
         // After override: matches!(Ranging | Neutral) → Trending
         let overridden = if ind.atr_expansion_ratio > 1.5
             && matches!(detect_regime(&ind), Regime::Ranging | Regime::Neutral)
-        { Regime::Trending } else { detect_regime(&ind) };
+        {
+            Regime::Trending
+        } else {
+            detect_regime(&ind)
+        };
         assert_eq!(overridden, Regime::Trending);
     }
 
@@ -1145,25 +1272,36 @@ mod tests {
         // REGRESSION: ATR override previously only fired for Ranging, NOT Neutral.
         // Now it fires for both.
         let mut ind = neutral_ind(100.0);
-        ind.adx = 22.0;                   // Neutral regime
-        ind.atr_expansion_ratio = 2.0;    // expanding volatility
+        ind.adx = 22.0; // Neutral regime
+        ind.atr_expansion_ratio = 2.0; // expanding volatility
         assert_eq!(detect_regime(&ind), Regime::Neutral);
         let overridden = if ind.atr_expansion_ratio > 1.5
             && matches!(detect_regime(&ind), Regime::Ranging | Regime::Neutral)
-        { Regime::Trending } else { detect_regime(&ind) };
-        assert_eq!(overridden, Regime::Trending,
-            "REGRESSION: Neutral + ATR expansion should override to Trending");
+        {
+            Regime::Trending
+        } else {
+            detect_regime(&ind)
+        };
+        assert_eq!(
+            overridden,
+            Regime::Trending,
+            "REGRESSION: Neutral + ATR expansion should override to Trending"
+        );
     }
 
     #[test]
     fn atr_expansion_does_not_override_already_trending() {
         let mut ind = neutral_ind(100.0);
-        ind.adx = 35.0;                   // already Trending
-        ind.atr_expansion_ratio = 3.0;    // extreme expansion
+        ind.adx = 35.0; // already Trending
+        ind.atr_expansion_ratio = 3.0; // extreme expansion
         assert_eq!(detect_regime(&ind), Regime::Trending);
         let overridden = if ind.atr_expansion_ratio > 1.5
             && matches!(detect_regime(&ind), Regime::Ranging | Regime::Neutral)
-        { Regime::Trending } else { detect_regime(&ind) };
+        {
+            Regime::Trending
+        } else {
+            detect_regime(&ind)
+        };
         // Should remain Trending (override doesn't match Trending)
         assert_eq!(overridden, Regime::Trending);
     }
@@ -1171,87 +1309,137 @@ mod tests {
     #[test]
     fn atr_expansion_below_threshold_no_override() {
         let mut ind = neutral_ind(100.0);
-        ind.adx = 15.0;                   // Ranging
-        ind.atr_expansion_ratio = 1.3;    // below 1.5 — no override
+        ind.adx = 15.0; // Ranging
+        ind.atr_expansion_ratio = 1.3; // below 1.5 — no override
         let overridden = if ind.atr_expansion_ratio > 1.5
             && matches!(detect_regime(&ind), Regime::Ranging | Regime::Neutral)
-        { Regime::Trending } else { detect_regime(&ind) };
-        assert_eq!(overridden, Regime::Ranging,
-            "expansion < 1.5 must not override the regime");
+        {
+            Regime::Trending
+        } else {
+            detect_regime(&ind)
+        };
+        assert_eq!(
+            overridden,
+            Regime::Ranging,
+            "expansion < 1.5 must not override the regime"
+        );
     }
 
     // ── Leverage calculation ──────────────────────────────────────────────────
 
     #[test]
     fn leverage_minimum_near_gate() {
-        assert!((calc_leverage(0.65, Regime::Trending) - 2.0).abs() < 1e-6,
-            "confidence 0.60–0.70 → 2.0× leverage");
+        assert!(
+            (calc_leverage(0.65, Regime::Trending) - 2.0).abs() < 1e-6,
+            "confidence 0.60–0.70 → 2.0× leverage"
+        );
     }
 
     #[test]
     fn leverage_trending_max_5x() {
-        assert!((calc_leverage(0.95, Regime::Trending) - 5.0).abs() < 1e-6,
-            "high confidence trending → 5.0× leverage");
+        assert!(
+            (calc_leverage(0.95, Regime::Trending) - 5.0).abs() < 1e-6,
+            "high confidence trending → 5.0× leverage"
+        );
     }
 
     #[test]
     fn leverage_ranging_capped_at_3x() {
         // Even at max confidence, Ranging caps at 3×
-        assert!((calc_leverage(0.95, Regime::Ranging) - 3.0).abs() < 1e-6,
-            "ranging regime caps leverage at 3.0×");
+        assert!(
+            (calc_leverage(0.95, Regime::Ranging) - 3.0).abs() < 1e-6,
+            "ranging regime caps leverage at 3.0×"
+        );
     }
 
     #[test]
     fn leverage_neutral_capped_at_3x() {
-        assert!((calc_leverage(0.95, Regime::Neutral) - 3.0).abs() < 1e-6,
-            "neutral regime caps leverage at 3.0×");
+        assert!(
+            (calc_leverage(0.95, Regime::Neutral) - 3.0).abs() < 1e-6,
+            "neutral regime caps leverage at 3.0×"
+        );
     }
 
     #[test]
     fn leverage_mid_confidence() {
-        assert!((calc_leverage(0.78, Regime::Trending) - 3.0).abs() < 1e-6,
-            "confidence 0.70–0.82 → 3.0× leverage");
-        assert!((calc_leverage(0.85, Regime::Trending) - 4.0).abs() < 1e-6,
-            "confidence 0.82–0.90 → 4.0× leverage");
+        assert!(
+            (calc_leverage(0.78, Regime::Trending) - 3.0).abs() < 1e-6,
+            "confidence 0.70–0.82 → 3.0× leverage"
+        );
+        assert!(
+            (calc_leverage(0.85, Regime::Trending) - 4.0).abs() < 1e-6,
+            "confidence 0.82–0.90 → 4.0× leverage"
+        );
     }
 
     // ── BTC Dominance context ─────────────────────────────────────────────────
 
     #[test]
     fn btc_high_dom_aligned_big_move_adds_008() {
-        let ctx = BtcMarketContext { dominance: 57.0, btc_return_24h: 4.0, btc_return_4h: 0.0, asset_return_4h: 0.0 };
+        let ctx = BtcMarketContext {
+            dominance: 57.0,
+            btc_return_24h: 4.0,
+            btc_return_4h: 0.0,
+            asset_return_4h: 0.0,
+        };
         let adj = ctx.confidence_adjustment("BUY");
-        assert!((adj - 0.08).abs() < 1e-9,
-            "high dominance + big aligned BTC move → +0.08, got {adj:.4}");
+        assert!(
+            (adj - 0.08).abs() < 1e-9,
+            "high dominance + big aligned BTC move → +0.08, got {adj:.4}"
+        );
     }
 
     #[test]
     fn btc_high_dom_opposed_big_move_minus_012() {
-        let ctx = BtcMarketContext { dominance: 57.0, btc_return_24h: 4.0, btc_return_4h: 0.0, asset_return_4h: 0.0 };
+        let ctx = BtcMarketContext {
+            dominance: 57.0,
+            btc_return_24h: 4.0,
+            btc_return_4h: 0.0,
+            asset_return_4h: 0.0,
+        };
         let adj = ctx.confidence_adjustment("SELL");
-        assert!((adj - (-0.12)).abs() < 1e-9,
-            "high dominance + big move + opposed → -0.12, got {adj:.4}");
+        assert!(
+            (adj - (-0.12)).abs() < 1e-9,
+            "high dominance + big move + opposed → -0.12, got {adj:.4}"
+        );
     }
 
     #[test]
     fn btc_low_dom_no_adjustment() {
-        let ctx = BtcMarketContext { dominance: 42.0, btc_return_24h: 5.0, btc_return_4h: 0.0, asset_return_4h: 0.0 };
+        let ctx = BtcMarketContext {
+            dominance: 42.0,
+            btc_return_24h: 5.0,
+            btc_return_4h: 0.0,
+            asset_return_4h: 0.0,
+        };
         let adj = ctx.confidence_adjustment("BUY");
         assert_eq!(adj, 0.0, "dominance < 48% → 0 adjustment (altseason)");
     }
 
     #[test]
     fn btc_medium_dom_aligned_adds_003() {
-        let ctx = BtcMarketContext { dominance: 51.0, btc_return_24h: 2.0, btc_return_4h: 0.0, asset_return_4h: 0.0 };
+        let ctx = BtcMarketContext {
+            dominance: 51.0,
+            btc_return_24h: 2.0,
+            btc_return_4h: 0.0,
+            asset_return_4h: 0.0,
+        };
         let adj = ctx.confidence_adjustment("BUY");
-        assert!((adj - 0.03).abs() < 1e-9,
-            "medium dominance + aligned → +0.03, got {adj:.4}");
+        assert!(
+            (adj - 0.03).abs() < 1e-9,
+            "medium dominance + aligned → +0.03, got {adj:.4}"
+        );
     }
 
     #[test]
     fn btc_flat_move_no_adjustment() {
         // btc_return 0.2% is below the 0.3% flat threshold
-        let ctx = BtcMarketContext { dominance: 58.0, btc_return_24h: 0.2, btc_return_4h: 0.0, asset_return_4h: 0.0 };
+        let ctx = BtcMarketContext {
+            dominance: 58.0,
+            btc_return_24h: 0.2,
+            btc_return_4h: 0.0,
+            asset_return_4h: 0.0,
+        };
         let adj = ctx.confidence_adjustment("BUY");
         assert_eq!(adj, 0.0, "BTC return < 0.3% is flat → 0 adjustment");
     }
@@ -1259,10 +1447,17 @@ mod tests {
     #[test]
     fn btc_relative_performance_lag_adds_004() {
         // Asset lagging BTC by >2% in high dominance → catch-up BUY bonus
-        let ctx = BtcMarketContext { dominance: 57.0, btc_return_24h: 0.0, btc_return_4h: 1.5, asset_return_4h: -1.0 };
+        let ctx = BtcMarketContext {
+            dominance: 57.0,
+            btc_return_24h: 0.0,
+            btc_return_4h: 1.5,
+            asset_return_4h: -1.0,
+        };
         let adj = ctx.confidence_adjustment("BUY");
-        assert!((adj - 0.04).abs() < 1e-9,
-            "relative underperformance → catch-up +0.04, got {adj:.4}");
+        assert!(
+            (adj - 0.04).abs() < 1e-9,
+            "relative underperformance → catch-up +0.04, got {adj:.4}"
+        );
     }
 
     // ── make_decision smoke tests ─────────────────────────────────────────────
@@ -1270,13 +1465,17 @@ mod tests {
     #[test]
     fn make_decision_with_neutral_signals_returns_skip() {
         let candles = flat_candles(100.0, 50);
-        let ind     = neutral_ind(100.0);
-        let of      = neutral_of();
+        let ind = neutral_ind(100.0);
+        let of = neutral_of();
         let weights = SignalWeights::default();
 
-        let dec = make_decision(&candles, &ind, &of, &weights, None, None, None, None, None).unwrap();
-        assert_eq!(dec.action, "SKIP",
-            "neutral indicators should produce SKIP, got {}", dec.action);
+        let dec =
+            make_decision(&candles, &ind, &of, &weights, None, None, None, None, None).unwrap();
+        assert_eq!(
+            dec.action, "SKIP",
+            "neutral indicators should produce SKIP, got {}",
+            dec.action
+        );
     }
 
     #[test]
@@ -1284,22 +1483,34 @@ mod tests {
         let candles = flat_candles(1000.0, 50);
         let mut ind = neutral_ind(1000.0);
         // Force a BUY: very oversold RSI in Ranging regime
-        ind.adx  = 15.0;  // Ranging
-        ind.rsi  = 20.0;  // deeply oversold → bull boost
+        ind.adx = 15.0; // Ranging
+        ind.rsi = 20.0; // deeply oversold → bull boost
         ind.z_score = -2.5;
-        let of = OrderFlowSignal { bid_volume: 300.0, ask_volume: 100.0,
-            imbalance_ratio: 3.0, direction: "LONG".to_string(), confidence: 0.95,
-            ..Default::default() };
+        let of = OrderFlowSignal {
+            bid_volume: 300.0,
+            ask_volume: 100.0,
+            imbalance_ratio: 3.0,
+            direction: "LONG".to_string(),
+            confidence: 0.95,
+            ..Default::default()
+        };
         let weights = SignalWeights::default();
 
-        let dec = make_decision(&candles, &ind, &of, &weights, None, None, None, None, None).unwrap();
+        let dec =
+            make_decision(&candles, &ind, &of, &weights, None, None, None, None, None).unwrap();
         if dec.action == "BUY" {
-            assert!(dec.stop_loss < dec.entry_price,
+            assert!(
+                dec.stop_loss < dec.entry_price,
                 "BUY stop_loss ({:.2}) should be below entry ({:.2})",
-                dec.stop_loss, dec.entry_price);
-            assert!(dec.take_profit > dec.entry_price,
+                dec.stop_loss,
+                dec.entry_price
+            );
+            assert!(
+                dec.take_profit > dec.entry_price,
                 "BUY take_profit ({:.2}) should be above entry ({:.2})",
-                dec.take_profit, dec.entry_price);
+                dec.take_profit,
+                dec.entry_price
+            );
         }
     }
 
@@ -1307,67 +1518,94 @@ mod tests {
     fn make_decision_stop_and_tp_correct_for_sell() {
         let candles = flat_candles(1000.0, 50);
         let mut ind = neutral_ind(1000.0);
-        ind.adx  = 15.0;  // Ranging
-        ind.rsi  = 80.0;  // overbought → bear boost
+        ind.adx = 15.0; // Ranging
+        ind.rsi = 80.0; // overbought → bear boost
         ind.z_score = 2.5;
-        let of = OrderFlowSignal { bid_volume: 100.0, ask_volume: 300.0,
-            imbalance_ratio: 0.33, direction: "SHORT".to_string(), confidence: 0.95,
-            ..Default::default() };
+        let of = OrderFlowSignal {
+            bid_volume: 100.0,
+            ask_volume: 300.0,
+            imbalance_ratio: 0.33,
+            direction: "SHORT".to_string(),
+            confidence: 0.95,
+            ..Default::default()
+        };
         let weights = SignalWeights::default();
 
-        let dec = make_decision(&candles, &ind, &of, &weights, None, None, None, None, None).unwrap();
+        let dec =
+            make_decision(&candles, &ind, &of, &weights, None, None, None, None, None).unwrap();
         if dec.action == "SELL" {
-            assert!(dec.stop_loss > dec.entry_price,
+            assert!(
+                dec.stop_loss > dec.entry_price,
                 "SELL stop_loss ({:.2}) should be above entry ({:.2})",
-                dec.stop_loss, dec.entry_price);
-            assert!(dec.take_profit < dec.entry_price,
+                dec.stop_loss,
+                dec.entry_price
+            );
+            assert!(
+                dec.take_profit < dec.entry_price,
                 "SELL take_profit ({:.2}) should be below entry ({:.2})",
-                dec.take_profit, dec.entry_price);
+                dec.take_profit,
+                dec.entry_price
+            );
         }
     }
 
     #[test]
     fn make_decision_empty_candles_returns_error() {
         let candles = vec![];
-        let ind     = neutral_ind(100.0);
-        let of      = neutral_of();
+        let ind = neutral_ind(100.0);
+        let of = neutral_of();
         let weights = SignalWeights::default();
-        assert!(make_decision(&candles, &ind, &of, &weights, None, None, None, None, None).is_err(),
-            "empty candle slice should return Err");
+        assert!(
+            make_decision(&candles, &ind, &of, &weights, None, None, None, None, None).is_err(),
+            "empty candle slice should return Err"
+        );
     }
 
     #[test]
     fn make_decision_confidence_always_in_0_to_1() {
         let candles = rising_candles(100.0, 0.5, 50);
         let ind = crate::indicators::calculate_all(&candles).unwrap();
-        let of  = neutral_of();
+        let of = neutral_of();
         let weights = SignalWeights::default();
-        let dec = make_decision(&candles, &ind, &of, &weights, None, None, None, None, None).unwrap();
-        assert!(dec.confidence >= 0.0 && dec.confidence <= 1.0,
-            "confidence out of [0,1]: {}", dec.confidence);
+        let dec =
+            make_decision(&candles, &ind, &of, &weights, None, None, None, None, None).unwrap();
+        assert!(
+            dec.confidence >= 0.0 && dec.confidence <= 1.0,
+            "confidence out of [0,1]: {}",
+            dec.confidence
+        );
     }
 
     #[test]
     fn make_decision_leverage_within_regime_bounds() {
         let candles = flat_candles(100.0, 50);
         let ind = neutral_ind(100.0);
-        let of  = neutral_of();
+        let of = neutral_of();
         let weights = SignalWeights::default();
-        let dec = make_decision(&candles, &ind, &of, &weights, None, None, None, None, None).unwrap();
-        assert!(dec.leverage >= 1.0 && dec.leverage <= 5.0,
-            "leverage out of valid range [1.0, 5.0]: {}", dec.leverage);
+        let dec =
+            make_decision(&candles, &ind, &of, &weights, None, None, None, None, None).unwrap();
+        assert!(
+            dec.leverage >= 1.0 && dec.leverage <= 5.0,
+            "leverage out of valid range [1.0, 5.0]: {}",
+            dec.leverage
+        );
     }
 
     #[test]
     fn make_decision_rationale_contains_regime_label() {
         let candles = flat_candles(100.0, 50);
         let ind = neutral_ind(100.0);
-        let of  = neutral_of();
+        let of = neutral_of();
         let weights = SignalWeights::default();
-        let dec = make_decision(&candles, &ind, &of, &weights, None, None, None, None, None).unwrap();
+        let dec =
+            make_decision(&candles, &ind, &of, &weights, None, None, None, None, None).unwrap();
         let has_regime = dec.rationale.contains("Trending")
             || dec.rationale.contains("Ranging")
             || dec.rationale.contains("Neutral");
-        assert!(has_regime, "rationale should contain regime label: {}", dec.rationale);
+        assert!(
+            has_regime,
+            "rationale should contain regime label: {}",
+            dec.rationale
+        );
     }
 }

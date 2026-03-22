@@ -44,7 +44,7 @@ use std::path::{Path, PathBuf};
 use crate::web_dashboard::ClosedTrade;
 
 /// Fee rate applied to each leg: maker(0.02%) + builder(0.01%) + buffer.
-const FEE_RATE_PER_LEG: f64 = 0.00075;  // 0.075 % × 2 legs = 0.15 % round-trip
+const FEE_RATE_PER_LEG: f64 = 0.00075; // 0.075 % × 2 legs = 0.15 % round-trip
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -64,8 +64,7 @@ fn ledger_path(year: i32) -> PathBuf {
 }
 
 /// CSV header row.
-const HEADER: &str =
-    "date,time_utc,symbol,side,entry_price,exit_price,quantity,size_usd,leverage,\
+const HEADER: &str = "date,time_utc,symbol,side,entry_price,exit_price,quantity,size_usd,leverage,\
      notional_usd,gross_pnl,fees_est,net_pnl,pnl_pct,reason,entry_time\n";
 
 /// Append a closed trade to the annual CSV ledger.
@@ -74,17 +73,28 @@ const HEADER: &str =
 /// atomicity — each call opens, appends one line, and closes immediately.
 pub fn append(trade: &ClosedTrade) {
     // Determine year from closed_at (ISO-8601 prefix)
-    let year: i32 = trade.closed_at
-        .split('-').next()
+    let year: i32 = trade
+        .closed_at
+        .split('-')
+        .next()
         .and_then(|y| y.parse().ok())
-        .unwrap_or_else(|| chrono::Utc::now().format("%Y").to_string().parse().unwrap_or(2025));
+        .unwrap_or_else(|| {
+            chrono::Utc::now()
+                .format("%Y")
+                .to_string()
+                .parse()
+                .unwrap_or(2025)
+        });
 
     let path = ledger_path(year);
     let is_new = !path.exists();
 
     let mut file = match OpenOptions::new().create(true).append(true).open(&path) {
-        Ok(f)  => f,
-        Err(e) => { log::error!("Ledger open failed: {}", e); return; }
+        Ok(f) => f,
+        Err(e) => {
+            log::error!("Ledger open failed: {}", e);
+            return;
+        }
     };
 
     if is_new {
@@ -95,10 +105,17 @@ pub fn append(trade: &ClosedTrade) {
     }
 
     let notional = trade.size_usd * trade.leverage.max(1.0);
-    let fees     = if trade.fees_est > 0.0 { trade.fees_est }
-                   else { estimate_fees(trade.size_usd, trade.leverage.max(1.0)) };
-    let net_pnl  = trade.pnl - fees;
-    let pnl_pct  = if trade.size_usd > 1e-8 { net_pnl / trade.size_usd * 100.0 } else { trade.pnl_pct };
+    let fees = if trade.fees_est > 0.0 {
+        trade.fees_est
+    } else {
+        estimate_fees(trade.size_usd, trade.leverage.max(1.0))
+    };
+    let net_pnl = trade.pnl - fees;
+    let pnl_pct = if trade.size_usd > 1e-8 {
+        net_pnl / trade.size_usd * 100.0
+    } else {
+        trade.pnl_pct
+    };
 
     // date and time from closed_at (strip time-zone suffix for readability)
     let closed_clean = trade.closed_at.replace('T', " ").replace('Z', "");
@@ -136,7 +153,12 @@ pub fn append(trade: &ClosedTrade) {
     if let Err(e) = file.write_all(row.as_bytes()) {
         log::error!("Ledger row write failed: {}", e);
     } else {
-        log::debug!("📒 Ledger: {} {} {}", trade.symbol, trade.side, trade.closed_at);
+        log::debug!(
+            "📒 Ledger: {} {} {}",
+            trade.symbol,
+            trade.side,
+            trade.closed_at
+        );
     }
 }
 
@@ -147,10 +169,16 @@ pub fn read_all() -> (String, usize) {
     let mut row_count = 0usize;
 
     // Scan for trades_YYYY.csv files in the working directory
-    let current_year = chrono::Utc::now().format("%Y").to_string().parse::<i32>().unwrap_or(2025);
+    let current_year = chrono::Utc::now()
+        .format("%Y")
+        .to_string()
+        .parse::<i32>()
+        .unwrap_or(2025);
     for year in 2024..=(current_year + 1) {
         let path = ledger_path(year);
-        if !path.exists() { continue; }
+        if !path.exists() {
+            continue;
+        }
         match std::fs::read_to_string(&path) {
             Ok(content) => {
                 // Skip header line for all but the first file
@@ -174,36 +202,51 @@ pub fn read_all() -> (String, usize) {
 pub fn yearly_summary() -> Vec<(String, f64, f64, f64, usize, usize, usize)> {
     use std::collections::BTreeMap;
 
-    let current_year = chrono::Utc::now().format("%Y").to_string().parse::<i32>().unwrap_or(2025);
+    let current_year = chrono::Utc::now()
+        .format("%Y")
+        .to_string()
+        .parse::<i32>()
+        .unwrap_or(2025);
     // year → (gross, fees, net, count, wins, losses)
     let mut map: BTreeMap<String, (f64, f64, f64, usize, usize, usize)> = BTreeMap::new();
 
     for year in 2024..=(current_year + 1) {
         let path = ledger_path(year);
-        if !path.exists() { continue; }
+        if !path.exists() {
+            continue;
+        }
         let content = match std::fs::read_to_string(&path) {
-            Ok(c) => c, Err(_) => continue,
+            Ok(c) => c,
+            Err(_) => continue,
         };
         for line in content.lines().skip(1) {
-            if line.is_empty() { continue; }
+            if line.is_empty() {
+                continue;
+            }
             let cols: Vec<&str> = line.split(',').collect();
-            if cols.len() < 15 { continue; }
+            if cols.len() < 15 {
+                continue;
+            }
             let gross: f64 = cols[10].parse().unwrap_or(0.0);
-            let fees:  f64 = cols[11].parse().unwrap_or(0.0);
-            let net:   f64 = cols[12].parse().unwrap_or(0.0);
-            let year_key   = cols[0].get(..4).unwrap_or("????").to_string();
+            let fees: f64 = cols[11].parse().unwrap_or(0.0);
+            let net: f64 = cols[12].parse().unwrap_or(0.0);
+            let year_key = cols[0].get(..4).unwrap_or("????").to_string();
             let entry = map.entry(year_key).or_default();
             entry.0 += gross;
             entry.1 += fees;
             entry.2 += net;
             entry.3 += 1;
-            if net >= 0.0 { entry.4 += 1; } else { entry.5 += 1; }
+            if net >= 0.0 {
+                entry.4 += 1;
+            } else {
+                entry.5 += 1;
+            }
         }
     }
 
     map.into_iter()
-       .map(|(y, (g, f, n, c, w, l))| (y, g, f, n, c, w, l))
-       .collect()
+        .map(|(y, (g, f, n, c, w, l))| (y, g, f, n, c, w, l))
+        .collect()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -217,21 +260,21 @@ mod tests {
 
     fn sample_trade(pnl: f64, year: &str) -> ClosedTrade {
         ClosedTrade {
-            symbol:     "SOL".to_string(),
-            side:       "LONG".to_string(),
-            entry:      100.0,
-            exit:       if pnl > 0.0 { 110.0 } else { 90.0 },
+            symbol: "SOL".to_string(),
+            side: "LONG".to_string(),
+            entry: 100.0,
+            exit: if pnl > 0.0 { 110.0 } else { 90.0 },
             pnl,
-            pnl_pct:    pnl,
-            reason:     "TakeProfit".to_string(),
-            closed_at:  format!("{}-06-15T12:00:00Z", year),
+            pnl_pct: pnl,
+            reason: "TakeProfit".to_string(),
+            closed_at: format!("{}-06-15T12:00:00Z", year),
             entry_time: format!("{}-06-14T12:00:00Z", year),
-            quantity:   1.0,
-            size_usd:   100.0,
-            leverage:   2.0,
-            fees_est:   0.0,
-            breakdown:  None,
-            note:       None,
+            quantity: 1.0,
+            size_usd: 100.0,
+            leverage: 2.0,
+            fees_est: 0.0,
+            breakdown: None,
+            note: None,
         }
     }
 
@@ -270,11 +313,10 @@ mod tests {
         append(&t2);
         let path = ledger_path(2098);
         let content = std::fs::read_to_string(&path).unwrap();
-        let header_count = content.lines()
-            .filter(|l| l.starts_with("date,"))
-            .count();
+        let header_count = content.lines().filter(|l| l.starts_with("date,")).count();
         assert_eq!(header_count, 1, "Should have exactly one header");
-        let data_rows = content.lines()
+        let data_rows = content
+            .lines()
             .filter(|l| !l.starts_with("date,") && !l.is_empty())
             .count();
         assert_eq!(data_rows, 2, "Should have 2 data rows");

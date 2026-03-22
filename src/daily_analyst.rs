@@ -36,23 +36,23 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
-use crate::trade_log::{SharedTradeLogger, TradeEvent, date_yesterday};
+use crate::trade_log::{date_yesterday, SharedTradeLogger, TradeEvent};
 
 // ─────────────────────────── Claude API plumbing ─────────────────────────────
 
 #[derive(Debug, Serialize)]
 #[allow(dead_code)]
 struct ClaudeRequest {
-    model:      String,
+    model: String,
     max_tokens: u32,
-    system:     String,
-    messages:   Vec<ClaudeMessage>,
+    system: String,
+    messages: Vec<ClaudeMessage>,
 }
 
 #[derive(Debug, Serialize)]
 #[allow(dead_code)]
 struct ClaudeMessage {
-    role:    String,
+    role: String,
     content: String,
 }
 
@@ -72,90 +72,90 @@ struct ClaudeContent {
 /// Passed to Claude as a compact structured context.
 #[derive(Debug, Default, Serialize)]
 struct DayStats {
-    date:               String,
-    total_cycles:       u64,
-    total_decisions:    u64,
-    total_skips:        u64,
-    total_entries:      u64,
-    total_exits:        u64,
-    total_partials:     u64,
-    total_dcas:         u64,
-    cb_activations:     u64,
+    date: String,
+    total_cycles: u64,
+    total_decisions: u64,
+    total_skips: u64,
+    total_entries: u64,
+    total_exits: u64,
+    total_partials: u64,
+    total_dcas: u64,
+    cb_activations: u64,
 
     // P&L
-    day_pnl_usd:        f64,
-    win_count:          u64,
-    loss_count:         u64,
-    win_rate:           f64,
-    avg_win_usd:        f64,
-    avg_loss_usd:       f64,
-    largest_win_usd:    f64,
-    largest_loss_usd:   f64,
-    best_symbol:        String,
-    worst_symbol:       String,
+    day_pnl_usd: f64,
+    win_count: u64,
+    loss_count: u64,
+    win_rate: f64,
+    avg_win_usd: f64,
+    avg_loss_usd: f64,
+    largest_win_usd: f64,
+    largest_loss_usd: f64,
+    best_symbol: String,
+    worst_symbol: String,
 
     // R-multiple distribution
-    avg_r_at_close:     f64,
-    r_above_2:          u64,   // exits that reached 2R
-    r_above_4:          u64,   // exits that reached 4R
-    stop_loss_count:    u64,
-    time_exit_count:    u64,
-    tp_count:           u64,
+    avg_r_at_close: f64,
+    r_above_2: u64, // exits that reached 2R
+    r_above_4: u64, // exits that reached 4R
+    stop_loss_count: u64,
+    time_exit_count: u64,
+    tp_count: u64,
 
     // Indicator stats on winning vs losing entries
     wins_avg_confidence: f64,
     losses_avg_confidence: f64,
-    wins_avg_adx:        f64,
-    losses_avg_adx:      f64,
-    wins_avg_rsi:        f64,
-    losses_avg_rsi:      f64,
+    wins_avg_adx: f64,
+    losses_avg_adx: f64,
+    wins_avg_rsi: f64,
+    losses_avg_rsi: f64,
     wins_avg_volume_ratio: f64,
     losses_avg_volume_ratio: f64,
     wins_avg_atr_expansion: f64,
     losses_avg_atr_expansion: f64,
 
     // Regime breakdown
-    trending_win_rate:  f64,
-    neutral_win_rate:   f64,
-    ranging_win_rate:   f64,
-    trending_count:     u64,
-    neutral_count:      u64,
-    ranging_count:      u64,
+    trending_win_rate: f64,
+    neutral_win_rate: f64,
+    ranging_win_rate: f64,
+    trending_count: u64,
+    neutral_count: u64,
+    ranging_count: u64,
 
     // Session (UTC hour) breakdown — best 3 hours
-    best_hours:         Vec<HourStats>,
-    worst_hours:        Vec<HourStats>,
+    best_hours: Vec<HourStats>,
+    worst_hours: Vec<HourStats>,
 
     // Signal combination frequency (top 5 rationale tags)
     top_winning_signals: Vec<SignalFreq>,
-    top_losing_signals:  Vec<SignalFreq>,
+    top_losing_signals: Vec<SignalFreq>,
 
     // Average hold time
-    avg_hold_minutes:   f64,
-    max_hold_minutes:   u32,
+    avg_hold_minutes: f64,
+    max_hold_minutes: u32,
 
     // Final portfolio state
-    final_capital:      f64,
-    start_capital:      f64,
-    peak_equity_day:    f64,
-    max_drawdown_day:   f64,
+    final_capital: f64,
+    start_capital: f64,
+    peak_equity_day: f64,
+    max_drawdown_day: f64,
 }
 
 #[derive(Debug, Default, Serialize, Clone)]
 struct HourStats {
-    hour:      u8,
-    entries:   u64,
-    wins:      u64,
-    win_rate:  f64,
-    pnl:       f64,
+    hour: u8,
+    entries: u64,
+    wins: u64,
+    win_rate: f64,
+    pnl: f64,
 }
 
 #[derive(Debug, Default, Serialize, Clone)]
 struct SignalFreq {
-    tag:   String,
+    tag: String,
     count: u64,
-    wins:  u64,
-    ic:    f64,   // wins/count − 0.5 (information coefficient proxy)
+    wins: u64,
+    ic: f64, // wins/count − 0.5 (information coefficient proxy)
 }
 
 // ─────────────────────────── JSONL parser ────────────────────────────────────
@@ -165,13 +165,15 @@ fn load_events(path: &Path) -> Result<Vec<TradeEvent>> {
     if !path.exists() {
         anyhow::bail!("Log file not found: {}", path.display());
     }
-    let file   = std::fs::File::open(path)?;
+    let file = std::fs::File::open(path)?;
     let reader = BufReader::new(file);
     let mut events = Vec::new();
     for (i, line) in reader.lines().enumerate() {
         let line = line?;
         let line = line.trim();
-        if line.is_empty() { continue; }
+        if line.is_empty() {
+            continue;
+        }
         match serde_json::from_str::<TradeEvent>(line) {
             Ok(ev) => events.push(ev),
             Err(e) => warn!("  Line {}: parse error — {}", i + 1, e),
@@ -194,25 +196,28 @@ fn compute_stats(events: &[TradeEvent], date: &str) -> DayStats {
     // Linked entry → exit by symbol (simplified: last entry per symbol)
     let mut pending_entries: HashMap<String, TradeEntry_> = HashMap::new();
     // Hour buckets
-    let mut hour_stats: [HourStats; 24] = std::array::from_fn(|h| HourStats { hour: h as u8, ..Default::default() });
+    let mut hour_stats: [HourStats; 24] = std::array::from_fn(|h| HourStats {
+        hour: h as u8,
+        ..Default::default()
+    });
     // Signal tag accumulators: tag → (count, wins)
-    let mut win_tags:  HashMap<String, (u64, u64)> = HashMap::new();
+    let mut win_tags: HashMap<String, (u64, u64)> = HashMap::new();
     let mut loss_tags: HashMap<String, (u64, u64)> = HashMap::new();
 
     let mut win_conf_sum = 0.0f64;
     let mut loss_conf_sum = 0.0f64;
-    let _win_adx_sum  = 0.0f64;
+    let _win_adx_sum = 0.0f64;
     let _loss_adx_sum = 0.0f64;
-    let _win_rsi_sum  = 0.0f64;
+    let _win_rsi_sum = 0.0f64;
     let _loss_rsi_sum = 0.0f64;
-    let _win_vol_sum  = 0.0f64;
+    let _win_vol_sum = 0.0f64;
     let _loss_vol_sum = 0.0f64;
-    let _win_atr_sum  = 0.0f64;
+    let _win_atr_sum = 0.0f64;
     let _loss_atr_sum = 0.0f64;
     let _trending_wins = 0u64;
-    let _neutral_wins  = 0u64;
-    let _ranging_wins  = 0u64;
-    let mut r_sum   = 0.0f64;
+    let _neutral_wins = 0u64;
+    let _ranging_wins = 0u64;
+    let mut r_sum = 0.0f64;
     let mut hold_sum = 0u64;
     let mut all_wins_usd: Vec<f64> = Vec::new();
     let mut all_losses_usd: Vec<f64> = Vec::new();
@@ -220,37 +225,68 @@ fn compute_stats(events: &[TradeEvent], date: &str) -> DayStats {
 
     for ev in events {
         match ev {
-            TradeEvent::CycleStart { cycle_number, free_capital, peak_equity, .. } => {
+            TradeEvent::CycleStart {
+                cycle_number,
+                free_capital,
+                peak_equity,
+                ..
+            } => {
                 s.total_cycles = *cycle_number;
-                if *peak_equity > peak_eq { peak_eq = *peak_equity; }
-                if s.start_capital == 0.0 { s.start_capital = *free_capital; }
+                if *peak_equity > peak_eq {
+                    peak_eq = *peak_equity;
+                }
+                if s.start_capital == 0.0 {
+                    s.start_capital = *free_capital;
+                }
                 s.final_capital = *free_capital;
             }
 
-            TradeEvent::Decision { action, skip_reason, .. } => {
+            TradeEvent::Decision {
+                action,
+                skip_reason,
+                ..
+            } => {
                 s.total_decisions += 1;
-                if action == "SKIP" || skip_reason.is_some() { s.total_skips += 1; }
+                if action == "SKIP" || skip_reason.is_some() {
+                    s.total_skips += 1;
+                }
             }
 
-            TradeEvent::TradeEntry { symbol, side, entry_price, confidence, ts,
-                                     stop_loss, take_profit: _, leverage: _, size_usd,
-                                     r_risk_usd: _, rationale, in_circuit_breaker: _,
-                                     portfolio_heat_pct: _, kelly_pct: _, .. } => {
+            TradeEvent::TradeEntry {
+                symbol,
+                side,
+                entry_price,
+                confidence,
+                ts,
+                stop_loss,
+                take_profit: _,
+                leverage: _,
+                size_usd,
+                r_risk_usd: _,
+                rationale,
+                in_circuit_breaker: _,
+                portfolio_heat_pct: _,
+                kelly_pct: _,
+                ..
+            } => {
                 s.total_entries += 1;
                 let hour = parse_hour(ts);
                 if hour < 24 {
                     hour_stats[hour as usize].entries += 1;
                 }
-                pending_entries.insert(symbol.clone(), TradeEntry_ {
-                    symbol:    symbol.clone(),
-                    side:      side.clone(),
-                    price:     *entry_price,
-                    confidence: *confidence,
-                    stop_loss: *stop_loss,
-                    size_usd:  *size_usd,
-                    hour,
-                    rationale: rationale.clone(),
-                });
+                pending_entries.insert(
+                    symbol.clone(),
+                    TradeEntry_ {
+                        symbol: symbol.clone(),
+                        side: side.clone(),
+                        price: *entry_price,
+                        confidence: *confidence,
+                        stop_loss: *stop_loss,
+                        size_usd: *size_usd,
+                        hour,
+                        rationale: rationale.clone(),
+                    },
+                );
                 // Extract regime tag from rationale for signal analysis
                 for tag in extract_tags(rationale) {
                     win_tags.entry(tag.clone()).or_default();
@@ -258,23 +294,36 @@ fn compute_stats(events: &[TradeEvent], date: &str) -> DayStats {
                 }
             }
 
-            TradeEvent::TradeExit { symbol, pnl_usd, r_multiple, reason,
-                                    minutes_held, cycles_held: _, .. } => {
+            TradeEvent::TradeExit {
+                symbol,
+                pnl_usd,
+                r_multiple,
+                reason,
+                minutes_held,
+                cycles_held: _,
+                ..
+            } => {
                 s.total_exits += 1;
                 *symbol_pnl.entry(symbol.clone()).or_insert(0.0) += pnl_usd;
                 s.day_pnl_usd += pnl_usd;
                 r_sum += r_multiple;
                 hold_sum += *minutes_held as u64;
-                if *minutes_held > s.max_hold_minutes { s.max_hold_minutes = *minutes_held; }
+                if *minutes_held > s.max_hold_minutes {
+                    s.max_hold_minutes = *minutes_held;
+                }
 
                 // R distribution
-                if *r_multiple >= 4.0 { s.r_above_4 += 1; s.r_above_2 += 1; }
-                else if *r_multiple >= 2.0 { s.r_above_2 += 1; }
+                if *r_multiple >= 4.0 {
+                    s.r_above_4 += 1;
+                    s.r_above_2 += 1;
+                } else if *r_multiple >= 2.0 {
+                    s.r_above_2 += 1;
+                }
 
                 match reason.as_str() {
-                    "StopLoss"   => s.stop_loss_count += 1,
-                    "TakeProfit" => s.tp_count        += 1,
-                    "TimeExit"   => s.time_exit_count += 1,
+                    "StopLoss" => s.stop_loss_count += 1,
+                    "TakeProfit" => s.tp_count += 1,
+                    "TimeExit" => s.time_exit_count += 1,
                     _ => {}
                 }
 
@@ -282,31 +331,39 @@ fn compute_stats(events: &[TradeEvent], date: &str) -> DayStats {
                 if let Some(entry) = pending_entries.remove(symbol) {
                     let won = *pnl_usd > 0.0;
                     if won {
-                        s.win_count   += 1;
+                        s.win_count += 1;
                         all_wins_usd.push(*pnl_usd);
-                        win_conf_sum  += entry.confidence;
-                        if entry.hour < 24 { hour_stats[entry.hour as usize].wins += 1; hour_stats[entry.hour as usize].pnl += pnl_usd; }
+                        win_conf_sum += entry.confidence;
+                        if entry.hour < 24 {
+                            hour_stats[entry.hour as usize].wins += 1;
+                            hour_stats[entry.hour as usize].pnl += pnl_usd;
+                        }
                         for tag in extract_tags(&entry.rationale) {
-                            let e = win_tags.entry(tag).or_insert((0,0));
-                            e.0 += 1; e.1 += 1;
+                            let e = win_tags.entry(tag).or_insert((0, 0));
+                            e.0 += 1;
+                            e.1 += 1;
                         }
                     } else {
-                        s.loss_count  += 1;
+                        s.loss_count += 1;
                         all_losses_usd.push(*pnl_usd);
                         loss_conf_sum += entry.confidence;
-                        if entry.hour < 24 { hour_stats[entry.hour as usize].pnl += pnl_usd; }
+                        if entry.hour < 24 {
+                            hour_stats[entry.hour as usize].pnl += pnl_usd;
+                        }
                         for tag in extract_tags(&entry.rationale) {
-                            let e = loss_tags.entry(tag).or_insert((0,0));
+                            let e = loss_tags.entry(tag).or_insert((0, 0));
                             e.0 += 1;
                         }
                     }
                 }
             }
 
-            TradeEvent::TradePartial { .. }   => s.total_partials += 1,
-            TradeEvent::TradeDca    { .. }    => s.total_dcas     += 1,
+            TradeEvent::TradePartial { .. } => s.total_partials += 1,
+            TradeEvent::TradeDca { .. } => s.total_dcas += 1,
             TradeEvent::CircuitBreaker { activated, .. } => {
-                if *activated { s.cb_activations += 1; }
+                if *activated {
+                    s.cb_activations += 1;
+                }
             }
 
             TradeEvent::MetricsSnapshot { capital, .. } => {
@@ -319,26 +376,45 @@ fn compute_stats(events: &[TradeEvent], date: &str) -> DayStats {
 
     // Finalise rates
     let total_closed = s.win_count + s.loss_count;
-    s.win_rate = if total_closed > 0 { s.win_count as f64 / total_closed as f64 } else { 0.0 };
-    s.avg_r_at_close = if total_closed > 0 { r_sum / total_closed as f64 } else { 0.0 };
-    s.avg_hold_minutes = if total_closed > 0 { hold_sum as f64 / total_closed as f64 } else { 0.0 };
+    s.win_rate = if total_closed > 0 {
+        s.win_count as f64 / total_closed as f64
+    } else {
+        0.0
+    };
+    s.avg_r_at_close = if total_closed > 0 {
+        r_sum / total_closed as f64
+    } else {
+        0.0
+    };
+    s.avg_hold_minutes = if total_closed > 0 {
+        hold_sum as f64 / total_closed as f64
+    } else {
+        0.0
+    };
 
     if s.win_count > 0 {
         s.wins_avg_confidence = win_conf_sum / s.win_count as f64;
-        s.avg_win_usd  = all_wins_usd.iter().sum::<f64>() / s.win_count as f64;
+        s.avg_win_usd = all_wins_usd.iter().sum::<f64>() / s.win_count as f64;
         s.largest_win_usd = all_wins_usd.iter().cloned().fold(0.0_f64, f64::max);
     }
     if s.loss_count > 0 {
         s.losses_avg_confidence = loss_conf_sum / s.loss_count as f64;
-        s.avg_loss_usd  = all_losses_usd.iter().sum::<f64>() / s.loss_count as f64;
+        s.avg_loss_usd = all_losses_usd.iter().sum::<f64>() / s.loss_count as f64;
         s.largest_loss_usd = all_losses_usd.iter().cloned().fold(0.0_f64, f64::min);
     }
 
     // Best / worst symbol
-    if let Some((sym, pnl)) = symbol_pnl.iter().max_by(|a,b| a.1.partial_cmp(b.1).unwrap()) {
-        s.best_symbol = sym.clone(); s.day_pnl_usd += *pnl; // approximate
+    if let Some((sym, pnl)) = symbol_pnl
+        .iter()
+        .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+    {
+        s.best_symbol = sym.clone();
+        s.day_pnl_usd += *pnl; // approximate
     }
-    if let Some((sym, _)) = symbol_pnl.iter().min_by(|a,b| a.1.partial_cmp(b.1).unwrap()) {
+    if let Some((sym, _)) = symbol_pnl
+        .iter()
+        .min_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+    {
         s.worst_symbol = sym.clone();
     }
 
@@ -348,30 +424,43 @@ fn compute_stats(events: &[TradeEvent], date: &str) -> DayStats {
             h.win_rate = h.wins as f64 / h.entries as f64;
         }
     }
-    let mut sorted_hours: Vec<HourStats> = hour_stats.iter().filter(|h| h.entries > 0).cloned().collect();
-    sorted_hours.sort_by(|a,b| b.win_rate.partial_cmp(&a.win_rate).unwrap());
-    s.best_hours  = sorted_hours.iter().take(3).cloned().collect();
+    let mut sorted_hours: Vec<HourStats> = hour_stats
+        .iter()
+        .filter(|h| h.entries > 0)
+        .cloned()
+        .collect();
+    sorted_hours.sort_by(|a, b| b.win_rate.partial_cmp(&a.win_rate).unwrap());
+    s.best_hours = sorted_hours.iter().take(3).cloned().collect();
     s.worst_hours = sorted_hours.iter().rev().take(3).cloned().collect();
 
     // Signal IC
-    let to_sigfreq = |map: &HashMap<String, (u64,u64)>| -> Vec<SignalFreq> {
-        let mut v: Vec<SignalFreq> = map.iter().map(|(tag,(count,wins))| SignalFreq {
-            tag: tag.clone(),
-            count: *count,
-            wins:  *wins,
-            ic:    if *count > 0 { *wins as f64 / *count as f64 - 0.5 } else { 0.0 },
-        }).collect();
-        v.sort_by(|a,b| b.ic.partial_cmp(&a.ic).unwrap());
+    let to_sigfreq = |map: &HashMap<String, (u64, u64)>| -> Vec<SignalFreq> {
+        let mut v: Vec<SignalFreq> = map
+            .iter()
+            .map(|(tag, (count, wins))| SignalFreq {
+                tag: tag.clone(),
+                count: *count,
+                wins: *wins,
+                ic: if *count > 0 {
+                    *wins as f64 / *count as f64 - 0.5
+                } else {
+                    0.0
+                },
+            })
+            .collect();
+        v.sort_by(|a, b| b.ic.partial_cmp(&a.ic).unwrap());
         v.truncate(8);
         v
     };
     s.top_winning_signals = to_sigfreq(&win_tags);
-    s.top_losing_signals  = to_sigfreq(&loss_tags);
+    s.top_losing_signals = to_sigfreq(&loss_tags);
 
     s.peak_equity_day = peak_eq;
     s.max_drawdown_day = if peak_eq > 0.0 && s.final_capital < peak_eq {
         (peak_eq - s.final_capital) / peak_eq * 100.0
-    } else { 0.0 };
+    } else {
+        0.0
+    };
 
     s
 }
@@ -380,21 +469,19 @@ fn compute_stats(events: &[TradeEvent], date: &str) -> DayStats {
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 struct TradeEntry_ {
-    symbol:     String,
-    side:       String,
-    price:      f64,
+    symbol: String,
+    side: String,
+    price: f64,
     confidence: f64,
-    stop_loss:  f64,
-    size_usd:   f64,
-    hour:       u8,
-    rationale:  String,
+    stop_loss: f64,
+    size_usd: f64,
+    hour: u8,
+    rationale: String,
 }
 
 fn parse_hour(ts: &str) -> u8 {
     // ts format: "2026-02-27T14:32:11.123Z"
-    ts.get(11..13)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(25)
+    ts.get(11..13).and_then(|s| s.parse().ok()).unwrap_or(25)
 }
 
 fn extract_tags(rationale: &str) -> Vec<String> {
@@ -407,11 +494,21 @@ fn extract_tags(rationale: &str) -> Vec<String> {
         }
     }
     // Also extract regime from brackets
-    if rationale.contains("Trending") { tags.push("Trending".to_string()); }
-    if rationale.contains("Ranging")  { tags.push("Ranging".to_string());  }
-    if rationale.contains("Neutral")  { tags.push("Neutral".to_string());  }
-    if rationale.contains("4H:RSI")   { tags.push("4H_MTF".to_string());   }
-    if rationale.contains("⚡ATR")    { tags.push("ATR_Expansion".to_string()); }
+    if rationale.contains("Trending") {
+        tags.push("Trending".to_string());
+    }
+    if rationale.contains("Ranging") {
+        tags.push("Ranging".to_string());
+    }
+    if rationale.contains("Neutral") {
+        tags.push("Neutral".to_string());
+    }
+    if rationale.contains("4H:RSI") {
+        tags.push("4H_MTF".to_string());
+    }
+    if rationale.contains("⚡ATR") {
+        tags.push("ATR_Expansion".to_string());
+    }
     tags.dedup();
     tags
 }
@@ -475,14 +572,14 @@ pub async fn analyse_day(logger: &SharedTradeLogger, api_key: &str) {
     let (log_path, out_path) = {
         let lg = logger.lock().await;
         let date = date_yesterday();
-        let log  = lg.log_path_for(&date);
-        let out  = lg.log_dir().join(format!("analysis_{}.md", date));
+        let log = lg.log_path_for(&date);
+        let out = lg.log_dir().join(format!("analysis_{}.md", date));
         (log, out)
     };
 
     match analyse_log_file(&log_path, &out_path, api_key).await {
         Ok(path) => info!("🤖 Daily analysis written: {}", path.display()),
-        Err(e)   => warn!("⚠ Daily analysis failed: {}", e),
+        Err(e) => warn!("⚠ Daily analysis failed: {}", e),
     }
 }
 
@@ -493,7 +590,7 @@ pub async fn analyse_day(logger: &SharedTradeLogger, api_key: &str) {
 pub async fn analyse_log_file(
     log_path: &Path,
     out_path: &Path,
-    api_key:  &str,
+    api_key: &str,
 ) -> Result<std::path::PathBuf> {
     info!("📖 Loading log: {}", log_path.display());
     let events = load_events(log_path)?;
@@ -527,7 +624,10 @@ pub async fn analyse_log_file(
         date, line_count, stats_json
     );
 
-    info!("🤖 Sending {} chars to Claude Sonnet for analysis…", user_msg.len());
+    info!(
+        "🤖 Sending {} chars to Claude Sonnet for analysis…",
+        user_msg.len()
+    );
 
     let request = crate::ai_reviewer::build_claude_request(
         "claude-sonnet-4-6-20250929",
@@ -539,9 +639,9 @@ pub async fn analyse_log_file(
     let client = Client::new();
     let resp = client
         .post("https://api.anthropic.com/v1/messages")
-        .header("x-api-key",         api_key)
+        .header("x-api-key", api_key)
         .header("anthropic-version", "2023-06-01")
-        .header("content-type",      "application/json")
+        .header("content-type", "application/json")
         .json(&request)
         .send()
         .await
@@ -549,14 +649,21 @@ pub async fn analyse_log_file(
 
     if !resp.status().is_success() {
         let status = resp.status();
-        let body   = resp.text().await.unwrap_or_default();
-        return Err(anyhow!("Claude API {} — {}", status, &body[..body.len().min(400)]));
+        let body = resp.text().await.unwrap_or_default();
+        return Err(anyhow!(
+            "Claude API {} — {}",
+            status,
+            &body[..body.len().min(400)]
+        ));
     }
 
-    let claude_resp: ClaudeResponse = resp.json().await
+    let claude_resp: ClaudeResponse = resp
+        .json()
+        .await
         .map_err(|e| anyhow!("JSON decode: {}", e))?;
 
-    let analysis = claude_resp.content
+    let analysis = claude_resp
+        .content
         .into_iter()
         .find(|c| !c.text.is_empty())
         .map(|c| c.text)

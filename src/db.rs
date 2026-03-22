@@ -46,8 +46,9 @@
 //! Set `OLLAMA_BASE_URL=http://<ollama-droplet-ip>:11434`.
 
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use std::sync::Arc;
 
@@ -58,40 +59,40 @@ use std::sync::Arc;
 /// One point in the TVL graph — returned by `get_aum_history()`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AumPoint {
-    pub recorded_at:       DateTime<Utc>,
-    pub total_aum:         f64,
+    pub recorded_at: DateTime<Utc>,
+    pub total_aum: f64,
     pub deposited_capital: f64,
-    pub total_pnl:         f64,
-    pub pnl_pct:           f64,
-    pub active_tenants:    i32,
-    pub open_positions:    i32,
+    pub total_pnl: f64,
+    pub pnl_pct: f64,
+    pub active_tenants: i32,
+    pub open_positions: i32,
 }
 
 /// Data written at the end of each trading cycle by `insert_aum_snapshot()`.
 #[derive(Debug, Clone)]
 pub struct AumSnapshot {
-    pub total_aum:            f64,
-    pub deposited_capital:    f64,
-    pub total_pnl:            f64,
-    pub pnl_pct:              f64,
-    pub active_tenant_count:  i32,
-    pub total_tenant_count:   i32,
-    pub open_position_count:  i32,
-    pub total_trades_today:   i32,
-    pub win_rate_today:       Option<f64>,
+    pub total_aum: f64,
+    pub deposited_capital: f64,
+    pub total_pnl: f64,
+    pub pnl_pct: f64,
+    pub active_tenant_count: i32,
+    pub total_tenant_count: i32,
+    pub open_position_count: i32,
+    pub total_trades_today: i32,
+    pub win_rate_today: Option<f64>,
 }
 
 /// Most-recent AUM row — for the admin headline numbers.
 #[derive(Debug, Clone, Serialize)]
 pub struct AumSummary {
-    pub total_aum:         f64,
+    pub total_aum: f64,
     pub deposited_capital: f64,
-    pub total_pnl:         f64,
-    pub pnl_pct:           f64,
-    pub active_tenants:    i32,
-    pub total_tenants:     i32,
-    pub open_positions:    i32,
-    pub recorded_at:       DateTime<Utc>,
+    pub total_pnl: f64,
+    pub pnl_pct: f64,
+    pub active_tenants: i32,
+    pub total_tenants: i32,
+    pub open_positions: i32,
+    pub recorded_at: DateTime<Utc>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -115,11 +116,11 @@ impl Database {
     pub async fn connect(url: &str) -> Result<Self> {
         log::info!("🗄  Connecting to PostgreSQL…");
         let pool = PgPoolOptions::new()
-            .max_connections(20)  // 12 Axum handlers + 6 background tasks + 2 trading writers
-            .min_connections(3)   // keep warm — avoids first-query latency
+            .max_connections(20) // 12 Axum handlers + 6 background tasks + 2 trading writers
+            .min_connections(3) // keep warm — avoids first-query latency
             .acquire_timeout(std::time::Duration::from_secs(30)) // was 8s — long enough to queue not fail-fast
-            .idle_timeout(std::time::Duration::from_secs(600))   // recycle idle connections every 10 min
-            .max_lifetime(std::time::Duration::from_secs(1800))  // retire connections after 30 min
+            .idle_timeout(std::time::Duration::from_secs(600)) // recycle idle connections every 10 min
+            .max_lifetime(std::time::Duration::from_secs(1800)) // retire connections after 30 min
             .connect(url)
             .await
             .with_context(|| format!("Cannot connect to PostgreSQL: {url}"))?;
@@ -151,25 +152,21 @@ impl Database {
     }
 
     /// Expose the raw pool for advanced callers (tests, raw queries).
-    pub fn pool(&self) -> &PgPool { &self.pool }
+    pub fn pool(&self) -> &PgPool {
+        &self.pool
+    }
 
     // ── Equity snapshots ────────────────────────────────────────────────────────
 
     /// Record one equity snapshot for a tenant.
     /// Called every 30 s per tenant from the trading loop.
-    pub async fn insert_equity_snapshot(
-        &self,
-        tenant_id: &str,
-        equity:    f64,
-    ) -> Result<()> {
-        sqlx::query(
-            "INSERT INTO equity_snapshots (tenant_id, equity) VALUES ($1::uuid, $2)"
-        )
-        .bind(tenant_id)
-        .bind(equity)
-        .execute(&self.pool)
-        .await
-        .with_context(|| format!("insert_equity_snapshot: tenant={tenant_id}"))?;
+    pub async fn insert_equity_snapshot(&self, tenant_id: &str, equity: f64) -> Result<()> {
+        sqlx::query("INSERT INTO equity_snapshots (tenant_id, equity) VALUES ($1::uuid, $2)")
+            .bind(tenant_id)
+            .bind(equity)
+            .execute(&self.pool)
+            .await
+            .with_context(|| format!("insert_equity_snapshot: tenant={tenant_id}"))?;
         Ok(())
     }
 
@@ -178,9 +175,12 @@ impl Database {
     pub async fn get_equity_history(
         &self,
         tenant_id: &str,
-        limit:     i64,
+        limit: i64,
     ) -> Result<Vec<(DateTime<Utc>, f64)>> {
-        struct Row { recorded_at: DateTime<Utc>, equity: Option<f64> }
+        struct Row {
+            recorded_at: DateTime<Utc>,
+            equity: Option<f64>,
+        }
 
         let tid = uuid::Uuid::parse_str(tenant_id)
             .with_context(|| format!("invalid tenant_id UUID: {tenant_id}"))?;
@@ -205,7 +205,7 @@ impl Database {
             .into_iter()
             .filter_map(|r| Some((r.recorded_at, r.equity?)))
             .collect();
-        pts.reverse();  // ascending time order
+        pts.reverse(); // ascending time order
         Ok(pts)
     }
 
@@ -219,7 +219,7 @@ impl Database {
                 total_aum, deposited_capital, total_pnl, pnl_pct,
                 active_tenant_count, total_tenant_count,
                 open_position_count, total_trades_today, win_rate_today
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)"#
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)"#,
         )
         .bind(s.total_aum)
         .bind(s.deposited_capital)
@@ -240,13 +240,13 @@ impl Database {
     /// `days=90` for landing page; `days=3650` for all-time admin view.
     pub async fn get_aum_history(&self, days: i32) -> Result<Vec<AumPoint>> {
         struct Row {
-            recorded_at:       DateTime<Utc>,
-            total_aum:         Option<f64>,
+            recorded_at: DateTime<Utc>,
+            total_aum: Option<f64>,
             deposited_capital: Option<f64>,
-            total_pnl:         Option<f64>,
-            pnl_pct:           Option<f64>,
-            active_tenants:    i32,
-            open_positions:    i32,
+            total_pnl: Option<f64>,
+            pnl_pct: Option<f64>,
+            active_tenants: i32,
+            open_positions: i32,
         }
 
         let rows = sqlx::query_as!(
@@ -270,29 +270,32 @@ impl Database {
         .await
         .context("get_aum_history failed")?;
 
-        Ok(rows.into_iter().filter_map(|r| {
-            Some(AumPoint {
-                recorded_at:       r.recorded_at,
-                total_aum:         r.total_aum?,
-                deposited_capital: r.deposited_capital?,
-                total_pnl:         r.total_pnl?,
-                pnl_pct:           r.pnl_pct?,
-                active_tenants:    r.active_tenants,
-                open_positions:    r.open_positions,
+        Ok(rows
+            .into_iter()
+            .filter_map(|r| {
+                Some(AumPoint {
+                    recorded_at: r.recorded_at,
+                    total_aum: r.total_aum?,
+                    deposited_capital: r.deposited_capital?,
+                    total_pnl: r.total_pnl?,
+                    pnl_pct: r.pnl_pct?,
+                    active_tenants: r.active_tenants,
+                    open_positions: r.open_positions,
+                })
             })
-        }).collect())
+            .collect())
     }
 
     /// Most recent AUM row for headline display.
     pub async fn get_latest_aum(&self) -> Result<Option<AumSummary>> {
         struct Row {
-            recorded_at:         DateTime<Utc>,
-            total_aum:           Option<f64>,
-            deposited_capital:   Option<f64>,
-            total_pnl:           Option<f64>,
-            pnl_pct:             Option<f64>,
+            recorded_at: DateTime<Utc>,
+            total_aum: Option<f64>,
+            deposited_capital: Option<f64>,
+            total_pnl: Option<f64>,
+            pnl_pct: Option<f64>,
             active_tenant_count: i32,
-            total_tenant_count:  i32,
+            total_tenant_count: i32,
             open_position_count: i32,
         }
 
@@ -316,16 +319,18 @@ impl Database {
         .await
         .context("get_latest_aum failed")?;
 
-        Ok(row.and_then(|r| Some(AumSummary {
-            total_aum:         r.total_aum?,
-            deposited_capital: r.deposited_capital?,
-            total_pnl:         r.total_pnl?,
-            pnl_pct:           r.pnl_pct?,
-            active_tenants:    r.active_tenant_count,
-            total_tenants:     r.total_tenant_count,
-            open_positions:    r.open_position_count,
-            recorded_at:       r.recorded_at,
-        })))
+        Ok(row.and_then(|r| {
+            Some(AumSummary {
+                total_aum: r.total_aum?,
+                deposited_capital: r.deposited_capital?,
+                total_pnl: r.total_pnl?,
+                pnl_pct: r.pnl_pct?,
+                active_tenants: r.active_tenant_count,
+                total_tenants: r.total_tenant_count,
+                open_positions: r.open_position_count,
+                recorded_at: r.recorded_at,
+            })
+        }))
     }
 
     // ── Closed trades ───────────────────────────────────────────────────────────
@@ -335,19 +340,19 @@ impl Database {
     #[allow(clippy::too_many_arguments)]
     pub async fn insert_closed_trade(
         &self,
-        tenant_id:    &str,
-        symbol:       &str,
-        side:         &str,
-        entry_price:  f64,
-        exit_price:   f64,
-        size_usd:     f64,
-        pnl_usd:      f64,
-        pnl_pct:      f64,
-        r_multiple:   f64,
-        fees_usd:     f64,
-        opened_at:    Option<DateTime<Utc>>,
+        tenant_id: &str,
+        symbol: &str,
+        side: &str,
+        entry_price: f64,
+        exit_price: f64,
+        size_usd: f64,
+        pnl_usd: f64,
+        pnl_pct: f64,
+        r_multiple: f64,
+        fees_usd: f64,
+        opened_at: Option<DateTime<Utc>>,
         close_reason: &str,
-        signal_json:  Option<serde_json::Value>,
+        signal_json: Option<serde_json::Value>,
     ) -> Result<()> {
         sqlx::query(
             r#"INSERT INTO closed_trades (
@@ -360,12 +365,21 @@ impl Database {
                 $4, $5, $6,
                 $7, $8, $9, $10,
                 $11, $12, $13
-            )"#
+            )"#,
         )
-        .bind(tenant_id).bind(symbol).bind(side)
-        .bind(entry_price).bind(exit_price).bind(size_usd)
-        .bind(pnl_usd).bind(pnl_pct).bind(r_multiple).bind(fees_usd)
-        .bind(opened_at).bind(close_reason).bind(signal_json)
+        .bind(tenant_id)
+        .bind(symbol)
+        .bind(side)
+        .bind(entry_price)
+        .bind(exit_price)
+        .bind(size_usd)
+        .bind(pnl_usd)
+        .bind(pnl_pct)
+        .bind(r_multiple)
+        .bind(fees_usd)
+        .bind(opened_at)
+        .bind(close_reason)
+        .bind(signal_json)
         .execute(&self.pool)
         .await
         .with_context(|| format!("insert_closed_trade: tenant={tenant_id} {symbol}"))?;
@@ -377,11 +391,11 @@ impl Database {
     /// Upsert a tenant (called at startup and on Privy login).
     pub async fn upsert_tenant(
         &self,
-        id:              &str,
-        privy_did:       Option<&str>,
-        wallet_address:  Option<&str>,
-        display_name:    Option<&str>,
-        tier:            &str,
+        id: &str,
+        privy_did: Option<&str>,
+        wallet_address: Option<&str>,
+        display_name: Option<&str>,
+        tier: &str,
         initial_capital: f64,
     ) -> Result<()> {
         sqlx::query(
@@ -408,14 +422,14 @@ impl Database {
     pub async fn upsert_signal_weights(
         &self,
         tenant_id: &str,
-        weights:   &serde_json::Value,
+        weights: &serde_json::Value,
     ) -> Result<()> {
         sqlx::query(
             r#"INSERT INTO signal_weights (tenant_id, weights, updated_at)
                VALUES ($1::uuid, $2, now())
                ON CONFLICT (tenant_id) DO UPDATE SET
                    weights    = EXCLUDED.weights,
-                   updated_at = now()"#
+                   updated_at = now()"#,
         )
         .bind(tenant_id)
         .bind(weights)
@@ -426,10 +440,7 @@ impl Database {
     }
 
     /// Load signal weights for a tenant (called at startup to restore learning).
-    pub async fn load_signal_weights(
-        &self,
-        tenant_id: &str,
-    ) -> Result<Option<serde_json::Value>> {
+    pub async fn load_signal_weights(&self, tenant_id: &str) -> Result<Option<serde_json::Value>> {
         let tid = uuid::Uuid::parse_str(tenant_id)
             .with_context(|| format!("invalid tenant_id UUID: {tenant_id}"))?;
 
@@ -450,9 +461,7 @@ impl Database {
     ///
     /// Returns `(id_str, email, display_name)` triples.  Rows with no email
     /// address are excluded — we cannot email someone with no address.
-    pub async fn fetch_expired_trial_tenants(
-        &self,
-    ) -> Result<Vec<(String, String, String)>> {
+    pub async fn fetch_expired_trial_tenants(&self) -> Result<Vec<(String, String, String)>> {
         let rows = sqlx::query!(
             r#"
             SELECT
@@ -472,7 +481,8 @@ impl Database {
         .await
         .context("fetch_expired_trial_tenants")?;
 
-        Ok(rows.into_iter()
+        Ok(rows
+            .into_iter()
             .map(|r| (r.id, r.email, r.display_name))
             .collect())
     }
@@ -585,11 +595,11 @@ impl AiProvider {
             .to_lowercase()
             .as_str()
         {
-            "openai"      => AiProvider::OpenAi,
-            "xai"         => AiProvider::Xai,
-            "openrouter"  => AiProvider::OpenRouter,
-            "ollama"      => AiProvider::Ollama,
-            _             => AiProvider::Claude, // default: Anthropic Claude
+            "openai" => AiProvider::OpenAi,
+            "xai" => AiProvider::Xai,
+            "openrouter" => AiProvider::OpenRouter,
+            "ollama" => AiProvider::Ollama,
+            _ => AiProvider::Claude, // default: Anthropic Claude
         }
     }
 }
@@ -610,9 +620,9 @@ impl AiProvider {
 ///   **separate dedicated droplet** — never the trading-bot VPS (memory contention)
 #[allow(dead_code)] // used when AI_PROVIDER is set; call sites ship with AI integration
 pub async fn query_ai(prompt: &str) -> Result<String> {
-    let provider  = AiProvider::from_env();
-    let api_key   = std::env::var("AI_API_KEY").unwrap_or_default();
-    let client    = reqwest::Client::builder()
+    let provider = AiProvider::from_env();
+    let api_key = std::env::var("AI_API_KEY").unwrap_or_default();
+    let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(120))
         .build()
         .context("Failed to build HTTP client for AI provider")?;
@@ -620,8 +630,8 @@ pub async fn query_ai(prompt: &str) -> Result<String> {
     match provider {
         // ── Claude (Anthropic Messages API) ──────────────────────────────────
         AiProvider::Claude => {
-            let model = std::env::var("AI_MODEL")
-                .unwrap_or_else(|_| "claude-haiku-4-5-20251001".into());
+            let model =
+                std::env::var("AI_MODEL").unwrap_or_else(|_| "claude-haiku-4-5-20251001".into());
             let resp = client
                 .post("https://api.anthropic.com/v1/messages")
                 .header("x-api-key", &api_key)
@@ -635,21 +645,28 @@ pub async fn query_ai(prompt: &str) -> Result<String> {
                 .send()
                 .await
                 .context("Claude API request failed")?;
-            let json: serde_json::Value = resp.json().await
+            let json: serde_json::Value = resp
+                .json()
+                .await
                 .context("Claude API response parse failed")?;
-            Ok(json["content"][0]["text"].as_str().unwrap_or("").to_string())
+            Ok(json["content"][0]["text"]
+                .as_str()
+                .unwrap_or("")
+                .to_string())
         }
 
         // ── OpenAI (or OpenAI-compatible: xAI, OpenRouter) ────────────────
         AiProvider::OpenAi | AiProvider::Xai | AiProvider::OpenRouter => {
             let (endpoint, default_model) = match provider {
-                AiProvider::OpenAi      => ("https://api.openai.com/v1/chat/completions",      "gpt-4o-mini"),
-                AiProvider::Xai         => ("https://api.x.ai/v1/chat/completions",             "grok-2"),
-                AiProvider::OpenRouter  => ("https://openrouter.ai/api/v1/chat/completions",    "openai/gpt-4o-mini"),
-                _                       => unreachable!(),
+                AiProvider::OpenAi => ("https://api.openai.com/v1/chat/completions", "gpt-4o-mini"),
+                AiProvider::Xai => ("https://api.x.ai/v1/chat/completions", "grok-2"),
+                AiProvider::OpenRouter => (
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    "openai/gpt-4o-mini",
+                ),
+                _ => unreachable!(),
             };
-            let model = std::env::var("AI_MODEL")
-                .unwrap_or_else(|_| default_model.into());
+            let model = std::env::var("AI_MODEL").unwrap_or_else(|_| default_model.into());
             let resp = client
                 .post(endpoint)
                 .header("Authorization", format!("Bearer {api_key}"))
@@ -662,7 +679,9 @@ pub async fn query_ai(prompt: &str) -> Result<String> {
                 .send()
                 .await
                 .context("OpenAI-compatible API request failed")?;
-            let json: serde_json::Value = resp.json().await
+            let json: serde_json::Value = resp
+                .json()
+                .await
                 .context("OpenAI-compatible API response parse failed")?;
             Ok(json["choices"][0]["message"]["content"]
                 .as_str()
@@ -677,8 +696,7 @@ pub async fn query_ai(prompt: &str) -> Result<String> {
         AiProvider::Ollama => {
             let base_url = std::env::var("OLLAMA_BASE_URL")
                 .unwrap_or_else(|_| "http://localhost:11434".into());
-            let model = std::env::var("AI_MODEL")
-                .unwrap_or_else(|_| "llama3.2".into());
+            let model = std::env::var("AI_MODEL").unwrap_or_else(|_| "llama3.2".into());
 
             if base_url.contains("localhost") || base_url.contains("127.0.0.1") {
                 tracing::warn!(
@@ -698,8 +716,8 @@ pub async fn query_ai(prompt: &str) -> Result<String> {
                 .send()
                 .await
                 .context("Ollama POST failed — is the Ollama droplet running?")?;
-            let json: serde_json::Value = resp.json().await
-                .context("Ollama response parse failed")?;
+            let json: serde_json::Value =
+                resp.json().await.context("Ollama response parse failed")?;
             Ok(json["response"].as_str().unwrap_or("").to_string())
         }
     }

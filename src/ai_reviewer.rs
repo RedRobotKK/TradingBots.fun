@@ -23,8 +23,14 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-use crate::web_dashboard::PaperPosition;
+use crate::ai_helpers::{
+    cross_exchange_snapshot, order_flow_snapshot, signal_alignment_pct, signal_breakdown,
+    signal_direction,
+};
+use crate::funding::{current_cycle_phase, describe_cycle_phase};
+use crate::learner::SignalContribution;
 use crate::metrics::PerformanceMetrics;
+use crate::web_dashboard::PaperPosition;
 
 // ─────────────────────────────── Safety constants ────────────────────────────
 
@@ -47,12 +53,15 @@ const VALID_ACTIONS: &[&str] = &["scale_up", "hold", "scale_down", "close_now"];
 /// (e.g. "---", "\n##", "system:", "user:", "assistant:").
 fn sanitize_for_prompt(s: &str) -> String {
     // Replace newlines / CR / tabs with a single space
-    let cleaned: String = s.chars().map(|c| match c {
-        '\n' | '\r' | '\t' => ' ',
-        // Remove null bytes and other control characters
-        c if (c as u32) < 32 => ' ',
-        c => c,
-    }).collect();
+    let cleaned: String = s
+        .chars()
+        .map(|c| match c {
+            '\n' | '\r' | '\t' => ' ',
+            // Remove null bytes and other control characters
+            c if (c as u32) < 32 => ' ',
+            c => c,
+        })
+        .collect();
 
     // Collapse multiple spaces
     let cleaned = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -75,14 +84,15 @@ fn sanitize_for_prompt(s: &str) -> String {
 /// Returns `Err` if the recommendation is structurally invalid (unknown action,
 /// symbol not in open positions, etc.) so it can be safely discarded.
 fn validate_recommendation(
-    rec:          &AiRecommendation,
+    rec: &AiRecommendation,
     open_symbols: &HashSet<String>,
 ) -> Result<AiRecommendation> {
     // 1. Symbol must be an actually-open position (no hallucinated tickers)
     let sym = rec.symbol.trim().to_uppercase();
     if !open_symbols.contains(&sym) {
         return Err(anyhow!(
-            "AI recommended action on '{}' which is not an open position — discarded", sym
+            "AI recommended action on '{}' which is not an open position — discarded",
+            sym
         ));
     }
 
@@ -90,16 +100,18 @@ fn validate_recommendation(
     let action = rec.action.trim().to_lowercase();
     if !VALID_ACTIONS.contains(&action.as_str()) {
         return Err(anyhow!(
-            "AI returned unknown action '{}' for {} — discarded", action, sym
+            "AI returned unknown action '{}' for {} — discarded",
+            action,
+            sym
         ));
     }
 
     // 3. Factor must be within sane bounds per action
     let factor = match action.as_str() {
-        "scale_up"   => rec.factor.clamp(1.0, 3.0),
+        "scale_up" => rec.factor.clamp(1.0, 3.0),
         "scale_down" => rec.factor.clamp(0.25, 0.75),
-        "close_now"  => 0.0,
-        _            => 1.0, // hold
+        "close_now" => 0.0,
+        _ => 1.0, // hold
     };
 
     // 4. Reason must be non-empty and not suspiciously long
@@ -111,10 +123,17 @@ fn validate_recommendation(
 
     // 5. Reason must not contain prompt-injection markers
     let reason_lower = reason.to_lowercase();
-    for marker in &["system:", "user:", "assistant:", "ignore previous", "disregard"] {
+    for marker in &[
+        "system:",
+        "user:",
+        "assistant:",
+        "ignore previous",
+        "disregard",
+    ] {
         if reason_lower.contains(marker) {
             return Err(anyhow!(
-                "Possible prompt injection detected in reason for {} — discarded", sym
+                "Possible prompt injection detected in reason for {} — discarded",
+                sym
             ));
         }
     }
@@ -147,20 +166,50 @@ fn validate_review(review: AiReview, open_symbols: &HashSet<String>) -> AiReview
         analysis
     };
 
-    let recommendations = review.recommendations
+    let recommendations = review
+        .recommendations
         .into_iter()
-        .filter_map(|rec| {
-            match validate_recommendation(&rec, open_symbols) {
-                Ok(validated) => Some(validated),
-                Err(e) => {
-                    warn!("🛡 AI recommendation rejected: {}", e);
-                    None
-                }
+        .filter_map(|rec| match validate_recommendation(&rec, open_symbols) {
+            Ok(validated) => Some(validated),
+            Err(e) => {
+                warn!("🛡 AI recommendation rejected: {}", e);
+                None
             }
         })
         .collect();
 
-    AiReview { analysis, recommendations }
+    AiReview {
+        analysis,
+        recommendations,
+        usage: review.usage,
+    }
+}
+
+pub(crate) fn format_signal_summary(contrib: &SignalContribution) -> String {
+    let mut pieces = vec![
+        format!("RSI{}", signal_direction(contrib.rsi_bullish)),
+        format!("OF{}", signal_direction(contrib.of_bullish)),
+    ];
+    if contrib.sentiment_present {
+        pieces.push(format!(
+            "Sent{}",
+            signal_direction(contrib.sentiment_bullish)
+        ));
+    }
+    if contrib.funding_present {
+        pieces.push(format!("Fund{}", signal_direction(contrib.funding_bullish)));
+    }
+    if contrib.z_score_present {
+        pieces.push(format!("Z{}", signal_direction(contrib.z_score_bullish)));
+    }
+    if contrib.volume_present {
+        pieces.push(format!("Vol{}", signal_direction(contrib.volume_bullish)));
+    }
+    if pieces.is_empty() {
+        "Signals unknown".to_string()
+    } else {
+        pieces.join(" | ")
+    }
 }
 
 // ─────────────────────────────── Claude API types ────────────────────────────
@@ -169,31 +218,31 @@ fn validate_review(review: AiReview, open_symbols: &HashSet<String>) -> AiReview
 /// `pub` so `daily_analyst` can build requests with a different model/prompt.
 #[derive(Debug, Serialize)]
 pub struct ClaudeRequest {
-    pub model:      String,
+    pub model: String,
     pub max_tokens: u32,
-    pub system:     String,
-    pub messages:   Vec<ClaudeMessage>,
+    pub system: String,
+    pub messages: Vec<ClaudeMessage>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct ClaudeMessage {
-    pub role:    String,
+    pub role: String,
     pub content: String,
 }
 
 /// Convenience constructor — single user-turn request.
 pub fn build_claude_request(
-    model:      &str,
+    model: &str,
     max_tokens: u32,
-    system:     &str,
-    user_msg:   &str,
+    system: &str,
+    user_msg: &str,
 ) -> ClaudeRequest {
     ClaudeRequest {
-        model:      model.to_string(),
+        model: model.to_string(),
         max_tokens,
-        system:     system.to_string(),
-        messages:   vec![ClaudeMessage {
-            role:    "user".to_string(),
+        system: system.to_string(),
+        messages: vec![ClaudeMessage {
+            role: "user".to_string(),
             content: user_msg.to_string(),
         }],
     }
@@ -202,11 +251,36 @@ pub fn build_claude_request(
 #[derive(Debug, Deserialize)]
 struct ClaudeResponse {
     content: Vec<ClaudeContent>,
+    usage: Option<ClaudeUsage>,
 }
 
 #[derive(Debug, Deserialize)]
 struct ClaudeContent {
     text: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ClaudeUsage {
+    prompt_tokens: Option<u32>,
+    completion_tokens: Option<u32>,
+    total_tokens: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaudeTokenUsage {
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+    pub total_tokens: u32,
+}
+
+impl ClaudeTokenUsage {
+    fn from_response(usage: &ClaudeUsage) -> Option<Self> {
+        Some(Self {
+            prompt_tokens: usage.prompt_tokens?,
+            completion_tokens: usage.completion_tokens?,
+            total_tokens: usage.total_tokens?,
+        })
+    }
 }
 
 // ─────────────────────────────── Public types ────────────────────────────────
@@ -229,48 +303,50 @@ pub struct AiRecommendation {
 /// Full review returned by `review_positions()`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiReview {
-    pub analysis:        String,
+    pub analysis: String,
     pub recommendations: Vec<AiRecommendation>,
+    #[serde(default)]
+    pub usage: Option<ClaudeTokenUsage>,
 }
 
 // ─────────────────────────────── Context snapshot ────────────────────────────
 
 #[derive(Debug, Serialize)]
 struct PositionContext {
-    symbol:              String,
-    side:                String,
-    entry_price:         f64,
-    current_price:       f64,
+    symbol: String,
+    side: String,
+    entry_price: f64,
+    current_price: f64,
 
     // ── R-multiple tracking ──────────────────────────────────────────────
     /// Current unrealised R-multiple (positive = winning, negative = losing).
-    r_multiple:          f64,
+    r_multiple: f64,
     /// Best R-multiple this position has ever achieved (from HWM/LWM).
     /// Key for pattern detection: if peak_r was strong but r_multiple is now
     /// negative, this trade reversed — potential false breakout.
-    peak_r_multiple:     f64,
+    peak_r_multiple: f64,
     /// How much of the peak profit was given back: peak_r − r_multiple.
     /// > 0.15R giveback on a young trade (< 60 min) = failed breakout signal.
-    r_giveback:          f64,
+    r_giveback: f64,
 
-    unrealised_pnl_usd:  f64,
-    margin_usd:          f64,
-    leverage:            f64,
-    notional_usd:        f64,
-    hold_time_minutes:   u64,
+    unrealised_pnl_usd: f64,
+    margin_usd: f64,
+    leverage: f64,
+    notional_usd: f64,
+    hold_time_minutes: u64,
 
     // ── DCA state ────────────────────────────────────────────────────────
-    dca_count:           u8,
+    dca_count: u8,
     /// Remaining DCA add-ons available (0 = exhausted — no rescue left).
     /// IMPORTANT: if dca_remaining > 0 AND r > -0.85R, the strategy will
     /// attempt a DCA on the next strong same-direction signal.
     /// Do NOT recommend close_now on a position where DCA is still available
     /// and the loss is moderate (−0.15R to −0.85R) — let DCA try first.
-    dca_remaining:       u8,
+    dca_remaining: u8,
 
-    stop_loss:           f64,
-    take_profit:         f64,
-    tranches_closed:     u8,
+    stop_loss: f64,
+    take_profit: f64,
+    tranches_closed: u8,
 
     // ── Funding cycle context ────────────────────────────────────────────
     /// Current 8-hour funding settlement phase.
@@ -280,7 +356,7 @@ struct PositionContext {
     /// "post_settlement" = within 30 min AFTER settlement
     ///   → rate just reset; price may briefly reverse before repositioning
     /// "mid_cycle" = no structural cycle pressure
-    funding_cycle:       String,
+    funding_cycle: String,
     /// Hours until the next 8-hour funding settlement (0.00–8.00).
     hours_to_settlement: f64,
 
@@ -289,10 +365,27 @@ struct PositionContext {
     /// Classic false-breakout — the trade briefly showed promise then reversed
     /// hard. The bot will auto-close this on the next cycle regardless, but
     /// you should also call close_now to flag it clearly.
-    false_breakout:      bool,
+    false_breakout: bool,
     /// TRUE when: hold > 60 min, |r_multiple| < 0.10, dca_count ≥ 1.
     /// Dead-money position — DCA went nowhere, capital better deployed elsewhere.
-    momentum_stall:      bool,
+    momentum_stall: bool,
+    /// Entry confidence recorded on the position (0–1).  Higher means more conviction.
+    entry_confidence: f64,
+    order_flow_direction: String,
+    order_flow_confidence: f64,
+    order_flow_snapshot: String,
+    ob_sentiment: String,
+    ob_adverse_cycles: u32,
+    funding_rate: f64,
+    funding_delta: f64,
+    onchain_strength: f64,
+    cex_premium_pct: f64,
+    cex_mode: String,
+    cross_exchange_snapshot: String,
+    signal_breakdown: String,
+    signal_alignment_pct: f64,
+    /// Compact summary of which signals were bullish/bearish at entry.
+    signal_summary: String,
 }
 
 // ─────────────────────────────── Main function ───────────────────────────────
@@ -304,17 +397,18 @@ struct PositionContext {
 /// propagated, so a transient API issue never crashes the trading loop).
 pub async fn review_positions(
     positions: &[PaperPosition],
-    metrics:   &PerformanceMetrics,
-    capital:   f64,
-    api_key:   &str,
+    metrics: &PerformanceMetrics,
+    capital: f64,
+    api_key: &str,
 ) -> AiReview {
     match review_inner(positions, metrics, capital, api_key).await {
         Ok(review) => review,
         Err(e) => {
             warn!("🤖 AI review skipped: {}", e);
             AiReview {
-                analysis:        format!("Review unavailable: {}", e),
+                analysis: format!("Review unavailable: {}", e),
                 recommendations: vec![],
+                usage: None,
             }
         }
     }
@@ -322,14 +416,15 @@ pub async fn review_positions(
 
 async fn review_inner(
     positions: &[PaperPosition],
-    metrics:   &PerformanceMetrics,
-    capital:   f64,
-    api_key:   &str,
+    metrics: &PerformanceMetrics,
+    capital: f64,
+    api_key: &str,
 ) -> Result<AiReview> {
     if positions.is_empty() {
         return Ok(AiReview {
-            analysis:        "No open positions.".to_string(),
+            analysis: "No open positions.".to_string(),
             recommendations: vec![],
+            usage: None,
         });
     }
 
@@ -341,83 +436,101 @@ async fn review_inner(
         .collect();
 
     // ── Funding cycle phase (one call, shared across all positions) ──────
-    use crate::funding::{current_cycle_phase, FundingCyclePhase};
     let cycle_phase = current_cycle_phase();
-    let (cycle_label, hours_to_settle) = match &cycle_phase {
-        FundingCyclePhase::PreSettlement { hours_remaining } =>
-            (format!("pre_settlement_{:.0}m", hours_remaining * 60.0), *hours_remaining),
-        FundingCyclePhase::PostSettlement { minutes_elapsed } =>
-            (format!("post_settlement_{:.0}m_ago", minutes_elapsed), 0.0),
-        FundingCyclePhase::MidCycle { hours_to_next } =>
-            (format!("mid_cycle_{:.1}h_remaining", hours_to_next), *hours_to_next),
-    };
+    let (cycle_label, hours_to_settle) = describe_cycle_phase(&cycle_phase);
 
     // ── Build position context (sanitise all string fields) ──────────────
-    let ctx: Vec<PositionContext> = positions.iter().map(|p| {
-        let r_mult = if p.r_dollars_risked > 1e-8 {
-            p.unrealised_pnl / p.r_dollars_risked
-        } else {
-            0.0
-        };
-
-        // Peak R-multiple from the position's high/low water marks
-        let peak_r = if p.r_dollars_risked > 1e-8 {
-            if p.side == "LONG" {
-                (p.high_water_mark - p.entry_price) * p.quantity / p.r_dollars_risked
+    let ctx: Vec<PositionContext> = positions
+        .iter()
+        .map(|p| {
+            let r_mult = if p.r_dollars_risked > 1e-8 {
+                p.unrealised_pnl / p.r_dollars_risked
             } else {
-                (p.entry_price - p.low_water_mark) * p.quantity / p.r_dollars_risked
+                0.0
+            };
+
+            // Peak R-multiple from the position's high/low water marks
+            let peak_r = if p.r_dollars_risked > 1e-8 {
+                if p.side == "LONG" {
+                    (p.high_water_mark - p.entry_price) * p.quantity / p.r_dollars_risked
+                } else {
+                    (p.entry_price - p.low_water_mark) * p.quantity / p.r_dollars_risked
+                }
+            } else {
+                0.0
+            };
+            let giveback = (peak_r - r_mult).max(0.0); // only positive — how much we gave back
+
+            // Pattern flags (mirrors the logic in the position management loop)
+            let hold_min = p.cycles_held / 2;
+            let false_breakout = peak_r >= 0.10
+                && r_mult < -0.05
+                && (15..60).contains(&hold_min)
+                && p.dca_count == 0;
+            let momentum_stall = hold_min >= 60 && r_mult.abs() < 0.10 && p.dca_count >= 1;
+
+            // Approximate current price from PnL (works for both LONG and SHORT)
+            let cur_price = if p.quantity > 1e-10 {
+                let price_delta = p.unrealised_pnl / p.quantity;
+                if p.side == "LONG" {
+                    p.entry_price + price_delta
+                } else {
+                    p.entry_price - price_delta
+                }
+            } else {
+                p.entry_price
+            };
+
+            let order_flow_snapshot = order_flow_snapshot(p);
+            let signal_breakdown_desc = signal_breakdown(&p.contrib);
+            let signal_alignment_pct_val = signal_alignment_pct(&p.contrib) * 100.0;
+            let cross_exchange_desc = cross_exchange_snapshot(p);
+
+            PositionContext {
+                // Sanitise string fields — prevents prompt injection via crafted
+                // symbol names or other position metadata.
+                symbol: sanitize_for_prompt(&p.symbol),
+                side: sanitize_for_prompt(&p.side),
+                entry_price: p.entry_price,
+                current_price: cur_price,
+                r_multiple: (r_mult * 100.0).round() / 100.0,
+                peak_r_multiple: (peak_r * 100.0).round() / 100.0,
+                r_giveback: (giveback * 100.0).round() / 100.0,
+                unrealised_pnl_usd: (p.unrealised_pnl * 100.0).round() / 100.0,
+                margin_usd: (p.size_usd * 100.0).round() / 100.0,
+                leverage: p.leverage,
+                notional_usd: (p.size_usd * p.leverage * 100.0).round() / 100.0,
+                hold_time_minutes: hold_min,
+                dca_count: p.dca_count,
+                dca_remaining: 2u8.saturating_sub(p.dca_count),
+                stop_loss: p.stop_loss,
+                take_profit: p.take_profit,
+                tranches_closed: p.tranches_closed,
+                funding_cycle: cycle_label.clone(),
+                hours_to_settlement: (hours_to_settle * 100.0).round() / 100.0,
+                false_breakout,
+                momentum_stall,
+                entry_confidence: p.entry_confidence,
+                order_flow_direction: sanitize_for_prompt(&p.order_flow_direction),
+                order_flow_confidence: p.order_flow_confidence,
+                order_flow_snapshot: order_flow_snapshot.clone(),
+                ob_sentiment: sanitize_for_prompt(&p.ob_sentiment),
+                ob_adverse_cycles: p.ob_adverse_cycles,
+                funding_rate: p.funding_rate,
+                funding_delta: p.funding_delta,
+                onchain_strength: p.onchain_strength,
+                cex_premium_pct: p.cex_premium_pct,
+                cex_mode: sanitize_for_prompt(&p.cex_mode),
+                cross_exchange_snapshot: sanitize_for_prompt(&cross_exchange_desc),
+                signal_breakdown: signal_breakdown_desc.clone(),
+                signal_alignment_pct: signal_alignment_pct_val,
+                signal_summary: format_signal_summary(&p.contrib),
             }
-        } else { 0.0 };
-        let giveback = (peak_r - r_mult).max(0.0); // only positive — how much we gave back
+        })
+        .collect();
 
-        // Pattern flags (mirrors the logic in the position management loop)
-        let hold_min   = p.cycles_held / 2;
-        let false_breakout = peak_r >= 0.10
-            && r_mult < -0.05
-            && (15..60).contains(&hold_min)
-            && p.dca_count == 0;
-        let momentum_stall = hold_min >= 60
-            && r_mult.abs() < 0.10
-            && p.dca_count >= 1;
-
-        // Approximate current price from PnL (works for both LONG and SHORT)
-        let cur_price = if p.quantity > 1e-10 {
-            let price_delta = p.unrealised_pnl / p.quantity;
-            if p.side == "LONG" { p.entry_price + price_delta }
-            else                 { p.entry_price - price_delta }
-        } else {
-            p.entry_price
-        };
-
-        PositionContext {
-            // Sanitise string fields — prevents prompt injection via crafted
-            // symbol names or other position metadata.
-            symbol:              sanitize_for_prompt(&p.symbol),
-            side:                sanitize_for_prompt(&p.side),
-            entry_price:         p.entry_price,
-            current_price:       cur_price,
-            r_multiple:          (r_mult   * 100.0).round() / 100.0,
-            peak_r_multiple:     (peak_r   * 100.0).round() / 100.0,
-            r_giveback:          (giveback * 100.0).round() / 100.0,
-            unrealised_pnl_usd:  (p.unrealised_pnl * 100.0).round() / 100.0,
-            margin_usd:          (p.size_usd * 100.0).round() / 100.0,
-            leverage:            p.leverage,
-            notional_usd:        (p.size_usd * p.leverage * 100.0).round() / 100.0,
-            hold_time_minutes:   hold_min,
-            dca_count:           p.dca_count,
-            dca_remaining:       2u8.saturating_sub(p.dca_count),
-            stop_loss:           p.stop_loss,
-            take_profit:         p.take_profit,
-            tranches_closed:     p.tranches_closed,
-            funding_cycle:       cycle_label.clone(),
-            hours_to_settlement: (hours_to_settle * 100.0).round() / 100.0,
-            false_breakout,
-            momentum_stall,
-        }
-    }).collect();
-
-    let pos_json = serde_json::to_string_pretty(&ctx)
-        .map_err(|e| anyhow!("Serialisation error: {}", e))?;
+    let pos_json =
+        serde_json::to_string_pretty(&ctx).map_err(|e| anyhow!("Serialisation error: {}", e))?;
 
     let portfolio_summary = format!(
         "Free capital: ${:.2} | Win rate: {:.1}% | Expectancy: {:.2}% | Sharpe: {:.2} | Max DD: {:.1}% | Profit factor: {:.2}",
@@ -429,35 +542,81 @@ async fn review_inner(
         metrics.profit_factor,
     );
 
+    let metrics_summary =
+        format!(
+        "Trades: {}/{} (W/L) | Avg win: {:.2}% | Avg loss: {:.2}% | Sortino: {:.2} | Kelly: {:.1}%",
+        metrics.wins, metrics.losses, metrics.avg_win_pct, metrics.avg_loss_pct,
+        metrics.sortino, metrics.kelly_fraction() * 100.0,
+    );
+
+    let signal_context = positions
+        .iter()
+        .zip(ctx.iter())
+        .map(|(p, c)| {
+            format!(
+                "- {}: {} [Conf {:.0}%]\n  Flow: {} | Funding: {:+.2}% (Δ{:+.2}%) · {} · {:.1}h\n  On-chain: {:+.2} | CEX: {}\n  Signals: {} | Alignment: {:+.0}%",
+                p.symbol,
+                c.signal_summary,
+                c.entry_confidence * 100.0,
+                c.order_flow_snapshot,
+                c.funding_rate * 100.0,
+                c.funding_delta * 100.0,
+                c.funding_cycle,
+                c.hours_to_settlement,
+                c.onchain_strength,
+                c.cross_exchange_snapshot,
+                c.signal_breakdown,
+                c.signal_alignment_pct,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
     // Summarise any pre-flagged patterns so Claude sees them at the top
-    let pattern_alerts: Vec<String> = positions.iter().zip(ctx.iter()).filter_map(|(p, c)| {
-        if c.false_breakout {
-            Some(format!("⚠ {} FALSE BREAKOUT: peaked {:.2}R, now {:.2}R, {:.0}min old",
-                p.symbol, c.peak_r_multiple, c.r_multiple, c.hold_time_minutes as f64))
-        } else if c.momentum_stall {
-            Some(format!("⚠ {} MOMENTUM STALL: DCA×{}, stuck at {:.2}R, {:.0}min",
-                p.symbol, c.dca_count, c.r_multiple, c.hold_time_minutes as f64))
-        } else if c.dca_remaining == 0 && c.r_multiple < -0.05 {
-            Some(format!("⚠ {} DCA EXHAUSTED: {:.0}× used, {:.2}R — no rescue left",
-                p.symbol, c.dca_count as f64, c.r_multiple))
-        } else {
-            None
-        }
-    }).collect();
+    let pattern_alerts: Vec<String> = positions
+        .iter()
+        .zip(ctx.iter())
+        .filter_map(|(p, c)| {
+            if c.false_breakout {
+                Some(format!(
+                    "⚠ {} FALSE BREAKOUT: peaked {:.2}R, now {:.2}R, {:.0}min old",
+                    p.symbol, c.peak_r_multiple, c.r_multiple, c.hold_time_minutes as f64
+                ))
+            } else if c.momentum_stall {
+                Some(format!(
+                    "⚠ {} MOMENTUM STALL: DCA×{}, stuck at {:.2}R, {:.0}min",
+                    p.symbol, c.dca_count, c.r_multiple, c.hold_time_minutes as f64
+                ))
+            } else if c.dca_remaining == 0 && c.r_multiple < -0.05 {
+                Some(format!(
+                    "⚠ {} DCA EXHAUSTED: {:.0}× used, {:.2}R — no rescue left",
+                    p.symbol, c.dca_count as f64, c.r_multiple
+                ))
+            } else {
+                None
+            }
+        })
+        .collect();
 
     let alerts_section = if pattern_alerts.is_empty() {
         String::new()
     } else {
-        format!("\n\nPATTERN ALERTS (act on these first):\n{}", pattern_alerts.join("\n"))
+        format!(
+            "\n\nPATTERN ALERTS (act on these first):\n{}",
+            pattern_alerts.join("\n")
+        )
     };
 
+    let signal_section = if signal_context.is_empty() {
+        String::from("None")
+    } else {
+        signal_context
+    };
     let user_msg = format!(
-        "Portfolio snapshot:\n{}{}\n\nOpen positions (JSON):\n{}\n\n\
+        "Portfolio snapshot:\n{}{}\n{}\nSignal context (includes order flow, funding drift, on-chain netflow, and CEX divergence):\n{}\n\nOpen positions (JSON):\n{}\n\n\
          Review each position. Prioritise any PATTERN ALERTS above. \
          Be concise — one clear recommendation per position.",
-        portfolio_summary,
-        alerts_section,
-        pos_json,
+        portfolio_summary, alerts_section, metrics_summary, signal_section, pos_json,
     );
 
     // ── System prompt ────────────────────────────────────────────────────
@@ -557,11 +716,11 @@ Focus your recommendations on exits and losers, not on the upside — the partia
 
     // ── API call ─────────────────────────────────────────────────────────
     let request = ClaudeRequest {
-        model:      "claude-haiku-4-5-20251001".to_string(),
-        max_tokens: 1024,  // enough for 8 positions with reasons; hard cap
-        system:     system_prompt.to_string(),
-        messages:   vec![ClaudeMessage {
-            role:    "user".to_string(),
+        model: "claude-haiku-4-5-20251001".to_string(),
+        max_tokens: 1024, // enough for 8 positions with reasons; hard cap
+        system: system_prompt.to_string(),
+        messages: vec![ClaudeMessage {
+            role: "user".to_string(),
             content: user_msg,
         }],
     };
@@ -573,9 +732,9 @@ Focus your recommendations on exits and losers, not on the upside — the partia
 
     let resp = client
         .post("https://api.anthropic.com/v1/messages")
-        .header("x-api-key",          api_key)
-        .header("anthropic-version",  "2023-06-01")
-        .header("content-type",       "application/json")
+        .header("x-api-key", api_key)
+        .header("anthropic-version", "2023-06-01")
+        .header("content-type", "application/json")
         .json(&request)
         .send()
         .await
@@ -583,14 +742,26 @@ Focus your recommendations on exits and losers, not on the upside — the partia
 
     if !resp.status().is_success() {
         let status = resp.status();
-        let body   = resp.text().await.unwrap_or_default();
-        return Err(anyhow!("Claude API {} — {}", status, &body[..body.len().min(200)]));
+        let body = resp.text().await.unwrap_or_default();
+        return Err(anyhow!(
+            "Claude API {} — {}",
+            status,
+            &body[..body.len().min(200)]
+        ));
     }
 
-    let claude_resp: ClaudeResponse = resp.json().await
+    let claude_resp: ClaudeResponse = resp
+        .json()
+        .await
         .map_err(|e| anyhow!("JSON decode error: {}", e))?;
 
-    let text = claude_resp.content
+    let usage = claude_resp
+        .usage
+        .as_ref()
+        .and_then(ClaudeTokenUsage::from_response);
+
+    let text = claude_resp
+        .content
         .into_iter()
         .find(|c| !c.text.is_empty())
         .map(|c| c.text)
@@ -607,14 +778,21 @@ Focus your recommendations on exits and losers, not on the upside — the partia
     }
 
     // Strip any markdown fences Claude might add despite instructions
-    let json_str = text.trim()
+    let json_str = text
+        .trim()
         .trim_start_matches("```json")
         .trim_start_matches("```")
         .trim_end_matches("```")
         .trim();
 
-    let review: AiReview = serde_json::from_str(json_str)
-        .map_err(|e| anyhow!("Parse error: {} — raw response: {}", e, &json_str[..json_str.len().min(300)]))?;
+    let mut review: AiReview = serde_json::from_str(json_str).map_err(|e| {
+        anyhow!(
+            "Parse error: {} — raw response: {}",
+            e,
+            &json_str[..json_str.len().min(300)]
+        )
+    })?;
+    review.usage = usage;
 
     // ── Output validation ─────────────────────────────────────────────────
     // Validates actions, factors, symbols, and scans for injection markers.
@@ -624,13 +802,15 @@ Focus your recommendations on exits and losers, not on the upside — the partia
     info!("🤖 AI Review: {}", review.analysis);
     for rec in &review.recommendations {
         let icon = match rec.action.as_str() {
-            "scale_up"   => "📈",
+            "scale_up" => "📈",
             "scale_down" => "📉",
-            "close_now"  => "🛑",
-            _            => "⏸",
+            "close_now" => "🛑",
+            _ => "⏸",
         };
-        info!("  {} {} → {} ×{:.2}  — {}",
-            icon, rec.symbol, rec.action, rec.factor, rec.reason);
+        info!(
+            "  {} {} → {} ×{:.2}  — {}",
+            icon, rec.symbol, rec.action, rec.factor, rec.reason
+        );
     }
 
     Ok(review)

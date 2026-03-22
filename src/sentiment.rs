@@ -22,24 +22,24 @@ use tokio::sync::{Mutex, RwLock};
 
 // Refresh interval: 5 minutes (LunarCrush free tier is generous but not real-time)
 const CACHE_TTL: Duration = Duration::from_secs(300);
-const BASE_URL:  &str     = "https://lunarcrush.com/api4/public";
+const BASE_URL: &str = "https://lunarcrush.com/api4/public";
 
 // ─────────────────────────── Public types ────────────────────────────────────
 
 /// Per-coin sentiment snapshot, populated from LunarCrush v4.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SentimentData {
-    pub symbol:           String,
+    pub symbol: String,
     /// Overall social health 0-100 (higher = more reliable signal)
-    pub galaxy_score:     f64,
+    pub galaxy_score: f64,
     /// Social rank vs peers — lower is better (1 = most discussed)
-    pub alt_rank:         u32,
+    pub alt_rank: u32,
     /// Percentage of posts classified as bullish (0-100)
-    pub bullish_percent:  f64,
+    pub bullish_percent: f64,
     /// Percentage of posts classified as bearish (0-100)
-    pub bearish_percent:  f64,
+    pub bearish_percent: f64,
     /// Total social post volume in the last 24 h
-    pub social_volume:    f64,
+    pub social_volume: f64,
     /// % of total crypto social volume this coin occupies
     pub social_dominance: f64,
 }
@@ -64,9 +64,13 @@ impl SentimentData {
     /// Emoji for dashboard: 🟢 bull / 🟡 neutral / 🔴 bear.
     #[allow(dead_code)]
     pub fn emoji(&self) -> &'static str {
-        if self.bullish_percent >= 65.0      { "🟢" }
-        else if self.bullish_percent >= 45.0 { "🟡" }
-        else                                 { "🔴" }
+        if self.bullish_percent >= 65.0 {
+            "🟢"
+        } else if self.bullish_percent >= 45.0 {
+            "🟡"
+        } else {
+            "🔴"
+        }
     }
 }
 
@@ -81,11 +85,11 @@ struct CoinsListResponse {
 /// across LunarCrush API versions (e.g. alt_rank as int *or* float).
 #[derive(Deserialize)]
 struct CoinItem {
-    symbol:           String,
-    galaxy_score:     Option<f64>,
+    symbol: String,
+    galaxy_score: Option<f64>,
     /// API sometimes returns int, sometimes float — accept both via f64.
-    alt_rank:         Option<f64>,
-    social_volume:    Option<f64>,
+    alt_rank: Option<f64>,
+    social_volume: Option<f64>,
     social_dominance: Option<f64>,
 
     // v4 may return either a 1-5 sentiment score or explicit bull/bear %s.
@@ -100,22 +104,22 @@ struct CoinItem {
     #[serde(rename = "percent_bearish")]
     percent_bearish: Option<f64>,
     /// 1-5 scale: 1 = very bearish, 5 = very bullish (fallback).
-    sentiment:         Option<f64>,
+    sentiment: Option<f64>,
 }
 
 // ─────────────────────────── Cache ───────────────────────────────────────────
 
 struct CacheInner {
-    data:       HashMap<String, SentimentData>,
+    data: HashMap<String, SentimentData>,
     last_fetch: Option<Instant>,
 }
 
 /// Thread-safe, lazily-refreshed sentiment cache.
 /// Clone the `Arc` freely — one instance per bot.
 pub struct SentimentCache {
-    client:         Client,
-    api_key:        String,
-    inner:          RwLock<CacheInner>,
+    client: Client,
+    api_key: String,
+    inner: RwLock<CacheInner>,
     /// Prevents concurrent refresh attempts (thundering-herd protection).
     ///
     /// Without this, all 18 candidate symbols calling `get()` simultaneously
@@ -124,7 +128,7 @@ pub struct SentimentCache {
     ///
     /// Pattern: acquire → double-check TTL → fetch if still stale → release.
     /// Tasks waiting on the lock see a fresh cache after the leader updates it.
-    refresh_lock:   Mutex<()>,
+    refresh_lock: Mutex<()>,
 }
 
 pub type SharedSentiment = Arc<SentimentCache>;
@@ -132,13 +136,13 @@ pub type SharedSentiment = Arc<SentimentCache>;
 impl SentimentCache {
     pub fn new(api_key: String) -> SharedSentiment {
         Arc::new(SentimentCache {
-            client:  Client::builder()
+            client: Client::builder()
                 .timeout(Duration::from_secs(10))
                 .build()
                 .unwrap_or_default(),
             api_key,
             inner: RwLock::new(CacheInner {
-                data:       HashMap::new(),
+                data: HashMap::new(),
                 last_fetch: None,
             }),
             refresh_lock: Mutex::new(()),
@@ -187,8 +191,8 @@ impl SentimentCache {
         match self.fetch_all().await {
             Ok(map) => {
                 let result = map.get(key).cloned();
-                let mut w  = self.inner.write().await;
-                w.data       = map;
+                let mut w = self.inner.write().await;
+                w.data = map;
                 w.last_fetch = Some(Instant::now());
                 result
             }
@@ -198,7 +202,7 @@ impl SentimentCache {
                 // prevents all 18 concurrent waiters from immediately re-attempting
                 // after the lock is released.
                 {
-                    let mut w  = self.inner.write().await;
+                    let mut w = self.inner.write().await;
                     w.last_fetch = Some(Instant::now());
                 }
                 self.inner.read().await.data.get(key).cloned()
@@ -217,14 +221,14 @@ impl SentimentCache {
         match self.fetch_all().await {
             Ok(map) => {
                 log::info!("🌙 LunarCrush: pre-warmed {} coins", map.len());
-                let mut w   = self.inner.write().await;
-                w.data       = map;
+                let mut w = self.inner.write().await;
+                w.data = map;
                 w.last_fetch = Some(Instant::now());
             }
             Err(e) => {
                 log::warn!("🌙 LunarCrush warm-up failed: {} — setting backoff", e);
                 // Set last_fetch on failure so the first cycle doesn't immediately retry.
-                let mut w  = self.inner.write().await;
+                let mut w = self.inner.write().await;
                 w.last_fetch = Some(Instant::now());
             }
         }
@@ -241,14 +245,21 @@ impl SentimentCache {
     async fn fetch_all(&self) -> Result<HashMap<String, SentimentData>> {
         // Fetch top 200 coins sorted by galaxy_score (covers all major alts).
         // The default limit is only 10 which misses most trading symbols.
-        let url = format!("{}/coins/list/v2?limit=200&sort=galaxy_score&desc=1", BASE_URL);
+        let url = format!(
+            "{}/coins/list/v2?limit=200&sort=galaxy_score&desc=1",
+            BASE_URL
+        );
 
-        let raw = self.client
+        let raw = self
+            .client
             .get(&url)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .send()
             .await
-            .map_err(|e| { log::warn!("🌙 LunarCrush HTTP error: {}", e); e })?;
+            .map_err(|e| {
+                log::warn!("🌙 LunarCrush HTTP error: {}", e);
+                e
+            })?;
 
         let status = raw.status();
         if !status.is_success() {
@@ -257,26 +268,33 @@ impl SentimentCache {
         }
 
         // Read raw text first so we can log it on parse failure.
-        let text = raw.text().await
+        let text = raw
+            .text()
+            .await
             .map_err(|e| anyhow::anyhow!("LunarCrush read error: {}", e))?;
 
-        log::debug!("🌙 LunarCrush raw response (first 200): {}", &text[..text.len().min(200)]);
+        log::debug!(
+            "🌙 LunarCrush raw response (first 200): {}",
+            &text[..text.len().min(200)]
+        );
 
         // Parse loosely — unknown fields are silently ignored by serde.
-        let resp: CoinsListResponse = serde_json::from_str(&text)
-            .map_err(|e| {
-                log::warn!("🌙 LunarCrush JSON parse error: {} — response: {}", e,
-                    &text[..text.len().min(300)]);
-                e
-            })?;
+        let resp: CoinsListResponse = serde_json::from_str(&text).map_err(|e| {
+            log::warn!(
+                "🌙 LunarCrush JSON parse error: {} — response: {}",
+                e,
+                &text[..text.len().min(300)]
+            );
+            e
+        })?;
 
         let mut map = HashMap::with_capacity(resp.data.len());
 
         for item in resp.data {
-            let galaxy_score     = item.galaxy_score.unwrap_or(50.0);
+            let galaxy_score = item.galaxy_score.unwrap_or(50.0);
             // alt_rank is f64 in struct to accept both int and float from API
-            let alt_rank         = item.alt_rank.map(|r| r as u32).unwrap_or(9999);
-            let social_volume    = item.social_volume.unwrap_or(0.0);
+            let alt_rank = item.alt_rank.map(|r| r as u32).unwrap_or(9999);
+            let social_volume = item.social_volume.unwrap_or(0.0);
             let social_dominance = item.social_dominance.unwrap_or(0.0);
 
             // Priority order for bull/bear %:
@@ -297,20 +315,25 @@ impl SentimentCache {
                     (50.0, 50.0)
                 };
 
-            map.insert(item.symbol.to_uppercase(), SentimentData {
-                symbol:           item.symbol.to_uppercase(),
-                galaxy_score,
-                alt_rank,
-                bullish_percent,
-                bearish_percent,
-                social_volume,
-                social_dominance,
-            });
+            map.insert(
+                item.symbol.to_uppercase(),
+                SentimentData {
+                    symbol: item.symbol.to_uppercase(),
+                    galaxy_score,
+                    alt_rank,
+                    bullish_percent,
+                    bearish_percent,
+                    social_volume,
+                    social_dominance,
+                },
+            );
         }
 
-        log::info!("🌙 LunarCrush: fetched {} coins (sample BTC bull={:.0}%)",
+        log::info!(
+            "🌙 LunarCrush: fetched {} coins (sample BTC bull={:.0}%)",
             map.len(),
-            map.get("BTC").map(|d| d.bullish_percent).unwrap_or(-1.0));
+            map.get("BTC").map(|d| d.bullish_percent).unwrap_or(-1.0)
+        );
         Ok(map)
     }
 }
@@ -325,12 +348,12 @@ mod tests {
 
     fn make_sent(bullish: f64, bearish: f64, galaxy: f64) -> SentimentData {
         SentimentData {
-            symbol:           "TEST".to_string(),
-            galaxy_score:     galaxy,
-            alt_rank:         10,
-            bullish_percent:  bullish,
-            bearish_percent:  bearish,
-            social_volume:    1000.0,
+            symbol: "TEST".to_string(),
+            galaxy_score: galaxy,
+            alt_rank: 10,
+            bullish_percent: bullish,
+            bearish_percent: bearish,
+            social_volume: 1000.0,
             social_dominance: 5.0,
         }
     }
@@ -371,7 +394,7 @@ mod tests {
 
     #[test]
     fn quality_clamped_to_0_1() {
-        assert!((make_sent(50.0, 50.0, 0.0).quality()   - 0.0).abs() < 1e-9);
+        assert!((make_sent(50.0, 50.0, 0.0).quality() - 0.0).abs() < 1e-9);
         assert!((make_sent(50.0, 50.0, 100.0).quality() - 1.0).abs() < 1e-9);
         // Values outside 0-100 should be clamped
         assert!((make_sent(50.0, 50.0, 150.0).quality() - 1.0).abs() < 1e-9);
@@ -379,10 +402,10 @@ mod tests {
 
     #[test]
     fn emoji_thresholds() {
-        assert_eq!(make_sent(65.0, 35.0, 80.0).emoji(), "🟢");   // exactly 65 = green
-        assert_eq!(make_sent(64.9, 35.1, 80.0).emoji(), "🟡");   // just below 65 = yellow
-        assert_eq!(make_sent(45.0, 55.0, 80.0).emoji(), "🟡");   // exactly 45 = yellow
-        assert_eq!(make_sent(44.9, 55.1, 80.0).emoji(), "🔴");   // just below 45 = red
+        assert_eq!(make_sent(65.0, 35.0, 80.0).emoji(), "🟢"); // exactly 65 = green
+        assert_eq!(make_sent(64.9, 35.1, 80.0).emoji(), "🟡"); // just below 65 = yellow
+        assert_eq!(make_sent(45.0, 55.0, 80.0).emoji(), "🟡"); // exactly 45 = yellow
+        assert_eq!(make_sent(44.9, 55.1, 80.0).emoji(), "🔴"); // just below 45 = red
     }
 
     // ── normalise_symbol (k-prefix) ───────────────────────────────────────────
@@ -396,9 +419,9 @@ mod tests {
 
     #[test]
     fn normalise_leaves_normal_symbols_unchanged() {
-        assert_eq!(SentimentCache::normalise_symbol("BTC"),  "BTC");
-        assert_eq!(SentimentCache::normalise_symbol("ETH"),  "ETH");
-        assert_eq!(SentimentCache::normalise_symbol("SOL"),  "SOL");
+        assert_eq!(SentimentCache::normalise_symbol("BTC"), "BTC");
+        assert_eq!(SentimentCache::normalise_symbol("ETH"), "ETH");
+        assert_eq!(SentimentCache::normalise_symbol("SOL"), "SOL");
         assert_eq!(SentimentCache::normalise_symbol("AVAX"), "AVAX");
     }
 
@@ -474,8 +497,10 @@ mod tests {
         let cases = [(1.0_f64, 0.0_f64), (3.0, 50.0), (5.0, 100.0)];
         for (s, expected_bull) in cases {
             let bull = ((s - 1.0) / 4.0 * 100.0).clamp(0.0, 100.0);
-            assert!((bull - expected_bull).abs() < 1e-9,
-                "sentiment={s} → expected {expected_bull}% bull, got {bull}%");
+            assert!(
+                (bull - expected_bull).abs() < 1e-9,
+                "sentiment={s} → expected {expected_bull}% bull, got {bull}%"
+            );
         }
     }
 }

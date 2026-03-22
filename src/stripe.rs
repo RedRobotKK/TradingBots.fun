@@ -57,8 +57,11 @@ pub fn verify_signature(payload: &[u8], sig_header: &str, secret: &str) -> Resul
 
     for part in sig_header.split(',') {
         if let Some(t) = part.strip_prefix("t=") {
-            timestamp = Some(t.trim().parse::<i64>()
-                .map_err(|_| anyhow!("Invalid timestamp in Stripe-Signature"))?);
+            timestamp = Some(
+                t.trim()
+                    .parse::<i64>()
+                    .map_err(|_| anyhow!("Invalid timestamp in Stripe-Signature"))?,
+            );
         } else if let Some(v) = part.strip_prefix("v1=") {
             signatures.push(v.trim().to_string());
         }
@@ -72,7 +75,9 @@ pub fn verify_signature(payload: &[u8], sig_header: &str, secret: &str) -> Resul
     // Reject replays older than 5 minutes
     let now = chrono::Utc::now().timestamp();
     if (now - ts).abs() > 300 {
-        return Err(anyhow!("Stripe webhook timestamp too old (possible replay)"));
+        return Err(anyhow!(
+            "Stripe webhook timestamp too old (possible replay)"
+        ));
     }
 
     // Compute expected HMAC
@@ -98,7 +103,7 @@ pub fn verify_signature(payload: &[u8], sig_header: &str, secret: &str) -> Resul
 pub struct StripeEvent {
     #[serde(rename = "type")]
     pub event_type: String,
-    pub data:       StripeEventData,
+    pub data: StripeEventData,
 }
 
 #[derive(Deserialize, Debug)]
@@ -114,29 +119,30 @@ pub struct StripeEventData {
 ///
 /// Embeds `tenant_id` in metadata so the webhook can look up the tenant.
 pub async fn create_checkout_session(
-    api_key:   &str,
-    price_id:  &str,
+    api_key: &str,
+    price_id: &str,
     tenant_id: &str,
     success_url: &str,
-    cancel_url:  &str,
+    cancel_url: &str,
 ) -> Result<String> {
     let client = reqwest::Client::new();
 
     let mut params = HashMap::new();
-    params.insert("mode",                            "subscription");
-    params.insert("line_items[0][price]",            price_id);
-    params.insert("line_items[0][quantity]",         "1");
-    params.insert("success_url",                     success_url);
-    params.insert("cancel_url",                      cancel_url);
-    params.insert("metadata[tenant_id]",             tenant_id);
+    params.insert("mode", "subscription");
+    params.insert("line_items[0][price]", price_id);
+    params.insert("line_items[0][quantity]", "1");
+    params.insert("success_url", success_url);
+    params.insert("cancel_url", cancel_url);
+    params.insert("metadata[tenant_id]", tenant_id);
     // Allow promotion codes so users can redeem discount coupons
-    params.insert("allow_promotion_codes",           "true");
+    params.insert("allow_promotion_codes", "true");
 
     let resp = client
         .post("https://api.stripe.com/v1/checkout/sessions")
         .basic_auth(api_key, Some(""))
         .form(&params)
-        .send().await
+        .send()
+        .await
         .map_err(|e| anyhow!("Stripe API request failed: {}", e))?;
 
     if !resp.status().is_success() {
@@ -144,10 +150,13 @@ pub async fn create_checkout_session(
         return Err(anyhow!("Stripe API error: {}", body));
     }
 
-    let json: serde_json::Value = resp.json().await
+    let json: serde_json::Value = resp
+        .json()
+        .await
         .map_err(|e| anyhow!("Stripe response parse: {}", e))?;
 
-    json["url"].as_str()
+    json["url"]
+        .as_str()
         .map(|s| s.to_string())
         .ok_or_else(|| anyhow!("Stripe response missing session URL"))
 }
@@ -180,13 +189,13 @@ pub async fn checkout_handler(
 ) -> Response {
     let api_key = match &app.stripe_api_key {
         Some(k) => k.clone(),
-        None    => return Redirect::to("/app?msg=stripe_not_configured").into_response(),
+        None => return Redirect::to("/app?msg=stripe_not_configured").into_response(),
     };
 
     // Use the introductory $9.95 price when ?promo=1 and a promo price is configured;
     // otherwise fall back to the standard $19.99 price.
-    let is_promo  = params.promo.as_deref() == Some("1");
-    let price_id  = if is_promo {
+    let is_promo = params.promo.as_deref() == Some("1");
+    let price_id = if is_promo {
         app.stripe_promo_price_id
             .as_deref()
             .or(app.stripe_price_id.as_deref())
@@ -197,7 +206,7 @@ pub async fn checkout_handler(
 
     let price_id = match price_id {
         Some(p) => p,
-        None    => return Redirect::to("/app?msg=stripe_not_configured").into_response(),
+        None => return Redirect::to("/app?msg=stripe_not_configured").into_response(),
     };
 
     let tenant_id = params.tenant_id.unwrap_or_else(|| "default".to_string());
@@ -208,12 +217,13 @@ pub async fn checkout_handler(
         &price_id,
         &tenant_id,
         &format!("{}/billing/success?tenant_id={}", host, tenant_id),
-        &format!("{}/app",                           host),
-    ).await;
+        &format!("{}/app", host),
+    )
+    .await;
 
     match session_url {
         Ok(url) => Redirect::to(&url).into_response(),
-        Err(e)  => {
+        Err(e) => {
             log::error!("Stripe checkout session failed: {}", e);
             Redirect::to("/app?msg=payment_error").into_response()
         }
@@ -228,8 +238,11 @@ pub async fn success_handler(
     State(_app): State<AppState>,
     Query(params): Query<CheckoutParams>,
 ) -> Html<String> {
-    let tid = params.tenant_id.unwrap_or_else(|| "your account".to_string());
-    Html(format!(r#"<!DOCTYPE html>
+    let tid = params
+        .tenant_id
+        .unwrap_or_else(|| "your account".to_string());
+    Html(format!(
+        r#"<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>TradingBots.fun · Welcome to Pro</title>
@@ -252,7 +265,9 @@ pub async fn success_handler(
 <p>Live trading is active for <b>{}</b>. Your bot will start placing real orders on the next cycle.</p>
 <p style="font-size:.8rem;color:#484f58">If live trading doesn't start within 2 minutes, refresh the dashboard.</p>
 <a href="/app">Go to my account →</a>
-</body></html>"#, tid))
+</body></html>"#,
+        tid
+    ))
 }
 
 /// `POST /webhooks/stripe`
@@ -271,16 +286,19 @@ pub async fn webhook_handler(
     // Require webhook secret — if not configured, reject silently
     let secret = match &app.stripe_webhook_secret {
         Some(s) => s.clone(),
-        None    => {
+        None => {
             log::warn!("Stripe webhook received but STRIPE_WEBHOOK_SECRET not set");
             return (StatusCode::OK, "not configured").into_response();
         }
     };
 
     // Verify signature
-    let sig = match headers.get("stripe-signature").and_then(|v| v.to_str().ok()) {
+    let sig = match headers
+        .get("stripe-signature")
+        .and_then(|v| v.to_str().ok())
+    {
         Some(s) => s.to_string(),
-        None    => return (StatusCode::BAD_REQUEST, "Missing Stripe-Signature").into_response(),
+        None => return (StatusCode::BAD_REQUEST, "Missing Stripe-Signature").into_response(),
     };
 
     if let Err(e) = verify_signature(&body, &sig, &secret) {
@@ -290,7 +308,7 @@ pub async fn webhook_handler(
 
     // Parse event
     let event: StripeEvent = match serde_json::from_slice(&body) {
-        Ok(e)  => e,
+        Ok(e) => e,
         Err(e) => {
             log::error!("Stripe event parse error: {}", e);
             return (StatusCode::BAD_REQUEST, "Parse error").into_response();
@@ -300,13 +318,12 @@ pub async fn webhook_handler(
     log::info!("📨 Stripe event: {}", event.event_type);
 
     match event.event_type.as_str() {
-
         // ── New subscription — upgrade tenant to Pro ──────────────────────
         "checkout.session.completed" => {
             let obj = &event.data.object;
-            let tenant_id   = obj["metadata"]["tenant_id"].as_str().unwrap_or("");
+            let tenant_id = obj["metadata"]["tenant_id"].as_str().unwrap_or("");
             let customer_id = obj["customer"].as_str().unwrap_or("");
-            let sub_id      = obj["subscription"].as_str().unwrap_or("");
+            let sub_id = obj["subscription"].as_str().unwrap_or("");
 
             if tenant_id.is_empty() {
                 log::warn!("checkout.session.completed: no tenant_id in metadata");
@@ -314,17 +331,18 @@ pub async fn webhook_handler(
                 let mut mgr = app.tenants.write().await;
                 let tid = crate::tenant::TenantId::from_str(tenant_id);
                 match mgr.upgrade_to_pro(&tid, customer_id, sub_id) {
-                    Ok(())  => log::info!("✅ Tenant {} upgraded to Pro", tenant_id),
-                    Err(e)  => log::error!("Upgrade failed for {}: {}", tenant_id, e),
+                    Ok(()) => log::info!("✅ Tenant {} upgraded to Pro", tenant_id),
+                    Err(e) => log::error!("Upgrade failed for {}: {}", tenant_id, e),
                 }
             }
         }
 
         // ── Subscription cancelled or payment failed — downgrade ──────────
         "customer.subscription.deleted" | "invoice.payment_failed" => {
-            let obj         = &event.data.object;
+            let obj = &event.data.object;
             // Try metadata first, fall back to customer ID lookup
-            let tenant_id_meta = obj["metadata"]["tenant_id"].as_str()
+            let tenant_id_meta = obj["metadata"]["tenant_id"]
+                .as_str()
                 .or_else(|| obj["customer"].as_str());
 
             if let Some(lookup_key) = tenant_id_meta {
@@ -336,7 +354,8 @@ pub async fn webhook_handler(
                     mgr.downgrade_to_free(&tid)
                 } else {
                     // Fall back: find by Stripe customer ID
-                    let found_id = mgr.find_by_stripe_customer(lookup_key)
+                    let found_id = mgr
+                        .find_by_stripe_customer(lookup_key)
                         .map(|h| h.id.clone());
                     if let Some(fid) = found_id {
                         mgr.downgrade_to_free(&fid)
@@ -346,8 +365,8 @@ pub async fn webhook_handler(
                 };
 
                 match result {
-                    Ok(())  => log::info!("⬇ Tenant downgraded to Free ({})", event.event_type),
-                    Err(e)  => log::error!("Downgrade failed: {}", e),
+                    Ok(()) => log::info!("⬇ Tenant downgraded to Free ({})", event.event_type),
+                    Err(e) => log::error!("Downgrade failed: {}", e),
                 }
             }
         }
@@ -369,13 +388,13 @@ pub async fn trial_handler(
 ) -> Response {
     let tid_str = match params.tenant_id {
         Some(t) => t,
-        None    => return Redirect::to("/app?msg=trial_no_id").into_response(),
+        None => return Redirect::to("/app?msg=trial_no_id").into_response(),
     };
 
     let tid = crate::tenant::TenantId::from_str(&tid_str);
     let mut mgr = app.tenants.write().await;
     match mgr.start_trial(&tid, 14) {
-        Ok(())  => {
+        Ok(()) => {
             log::info!("🎁 Trial started for tenant {}", tid_str);
             Redirect::to("/app?msg=trial_started").into_response()
         }
@@ -407,23 +426,23 @@ mod tests {
     #[test]
     fn valid_signature_passes() {
         let payload = b"test_payload";
-        let secret  = "whsec_test";
-        let ts      = chrono::Utc::now().timestamp();
-        let header  = make_valid_sig(payload, secret, ts);
+        let secret = "whsec_test";
+        let ts = chrono::Utc::now().timestamp();
+        let header = make_valid_sig(payload, secret, ts);
         assert!(verify_signature(payload, &header, secret).is_ok());
     }
 
     #[test]
     fn wrong_secret_fails() {
         let payload = b"test_payload";
-        let ts      = chrono::Utc::now().timestamp();
-        let header  = make_valid_sig(payload, "correct_secret", ts);
+        let ts = chrono::Utc::now().timestamp();
+        let header = make_valid_sig(payload, "correct_secret", ts);
         assert!(verify_signature(payload, &header, "wrong_secret").is_err());
     }
 
     #[test]
     fn tampered_payload_fails() {
-        let ts     = chrono::Utc::now().timestamp();
+        let ts = chrono::Utc::now().timestamp();
         let header = make_valid_sig(b"original_payload", "secret", ts);
         assert!(verify_signature(b"tampered_payload", &header, "secret").is_err());
     }
@@ -431,8 +450,8 @@ mod tests {
     #[test]
     fn old_timestamp_rejected() {
         let payload = b"test_payload";
-        let old_ts  = chrono::Utc::now().timestamp() - 400; // 6m 40s ago
-        let header  = make_valid_sig(payload, "secret", old_ts);
+        let old_ts = chrono::Utc::now().timestamp() - 400; // 6m 40s ago
+        let header = make_valid_sig(payload, "secret", old_ts);
         assert!(verify_signature(payload, &header, "secret").is_err());
     }
 

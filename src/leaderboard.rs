@@ -36,38 +36,38 @@ use crate::tenant::SharedTenantManager;
 /// One row from the live leaderboard view.
 #[derive(Debug, Clone, Serialize)]
 pub struct LeaderboardEntry {
-    pub rank:             i64,
-    pub tenant_id:        Uuid,
-    pub display_name:     String,
+    pub rank: i64,
+    pub tenant_id: Uuid,
+    pub display_name: String,
     /// Truncated wallet address shown on the leaderboard (privacy-preserving).
-    pub wallet_short:     String,
-    pub equity_usd:       f64,
+    pub wallet_short: String,
+    pub equity_usd: f64,
     pub start_equity_usd: f64,
-    pub pct_return:       f64,
+    pub pct_return: f64,
     pub trades_in_period: i32,
 }
 
 /// Active campaign metadata returned to the leaderboard page.
 #[derive(Debug, Clone, Serialize)]
 pub struct CampaignInfo {
-    pub id:             Uuid,
-    pub slug:           String,
-    pub title:          String,
-    pub description:    Option<String>,
-    pub starts_at:      String,
-    pub ends_at:        String,
+    pub id: Uuid,
+    pub slug: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub starts_at: String,
+    pub ends_at: String,
     pub prize_pool_usd: f64,
     /// Parsed prize tiers from the JSONB column.
-    pub prizes:         Vec<PrizeTier>,
+    pub prizes: Vec<PrizeTier>,
     /// Seconds remaining until the campaign ends (for countdown timer).
-    pub seconds_left:   i64,
+    pub seconds_left: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PrizeTier {
-    pub rank:  i32,
+    pub rank: i32,
     pub label: String,
-    pub usd:   f64,
+    pub usd: f64,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -89,21 +89,22 @@ pub async fn active_campaign(db: &SharedDb) -> Result<Option<CampaignInfo>> {
 
     let Some(r) = row else { return Ok(None) };
 
-    let prizes: Vec<PrizeTier> = r.prizes
+    let prizes: Vec<PrizeTier> = r
+        .prizes
         .as_ref()
         .and_then(|v: &serde_json::Value| serde_json::from_value(v.clone()).ok())
         .unwrap_or_default();
 
     Ok(Some(CampaignInfo {
-        id:             r.id,
-        slug:           r.slug,
-        title:          r.title,
-        description:    r.description,
-        starts_at:      r.starts_at.to_rfc3339(),
-        ends_at:        r.ends_at.to_rfc3339(),
+        id: r.id,
+        slug: r.slug,
+        title: r.title,
+        description: r.description,
+        starts_at: r.starts_at.to_rfc3339(),
+        ends_at: r.ends_at.to_rfc3339(),
         prize_pool_usd: r.prize_pool_usd.to_string().parse::<f64>().unwrap_or(0.0),
         prizes,
-        seconds_left:   r.seconds_left.unwrap_or(0),
+        seconds_left: r.seconds_left.unwrap_or(0),
     }))
 }
 
@@ -113,10 +114,7 @@ pub async fn active_campaign(db: &SharedDb) -> Result<Option<CampaignInfo>> {
 ///
 /// Returns up to `limit` entries, ranked by % return descending.
 /// Accounts with zero trades are excluded from the ranking.
-pub async fn live_standings(
-    db:    &SharedDb,
-    limit: i64,
-) -> Result<Vec<LeaderboardEntry>> {
+pub async fn live_standings(db: &SharedDb, limit: i64) -> Result<Vec<LeaderboardEntry>> {
     let rows = sqlx::query!(
         r#"SELECT rank, tenant_id, display_name, wallet_address,
                   equity_usd, start_equity_usd,
@@ -129,23 +127,42 @@ pub async fn live_standings(
     .await
     .map_err(|e| anyhow!("live_standings: {}", e))?;
 
-    Ok(rows.into_iter().filter_map(|r| {
-        let tenant_id = r.tenant_id?; // skip rows without a tenant_id
-        let wallet_short = r.wallet_address
-            .map(|w: String| if w.len() >= 10 { format!("{}…{}", &w[..6], &w[w.len()-4..]) } else { w })
-            .unwrap_or_else(|| "—".to_string());
+    Ok(rows
+        .into_iter()
+        .filter_map(|r| {
+            let tenant_id = r.tenant_id?; // skip rows without a tenant_id
+            let wallet_short = r
+                .wallet_address
+                .map(|w: String| {
+                    if w.len() >= 10 {
+                        format!("{}…{}", &w[..6], &w[w.len() - 4..])
+                    } else {
+                        w
+                    }
+                })
+                .unwrap_or_else(|| "—".to_string());
 
-        Some(LeaderboardEntry {
-            rank:             r.rank.unwrap_or(0),
-            tenant_id,
-            display_name:     r.display_name.unwrap_or_else(|| "Anonymous".into()),
-            wallet_short,
-            equity_usd:       r.equity_usd.map(|d: rust_decimal::Decimal| d.to_string().parse::<f64>().unwrap_or(0.0)).unwrap_or(0.0),
-            start_equity_usd: r.start_equity_usd.map(|d: rust_decimal::Decimal| d.to_string().parse::<f64>().unwrap_or(0.0)).unwrap_or(0.0),
-            pct_return:       r.pct_return.map(|d: rust_decimal::Decimal| d.to_string().parse::<f64>().unwrap_or(0.0)).unwrap_or(0.0),
-            trades_in_period: r.trades_in_period.unwrap_or(0),
+            Some(LeaderboardEntry {
+                rank: r.rank.unwrap_or(0),
+                tenant_id,
+                display_name: r.display_name.unwrap_or_else(|| "Anonymous".into()),
+                wallet_short,
+                equity_usd: r
+                    .equity_usd
+                    .map(|d: rust_decimal::Decimal| d.to_string().parse::<f64>().unwrap_or(0.0))
+                    .unwrap_or(0.0),
+                start_equity_usd: r
+                    .start_equity_usd
+                    .map(|d: rust_decimal::Decimal| d.to_string().parse::<f64>().unwrap_or(0.0))
+                    .unwrap_or(0.0),
+                pct_return: r
+                    .pct_return
+                    .map(|d: rust_decimal::Decimal| d.to_string().parse::<f64>().unwrap_or(0.0))
+                    .unwrap_or(0.0),
+                trades_in_period: r.trades_in_period.unwrap_or(0),
+            })
         })
-    }).collect())
+        .collect())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -162,17 +179,13 @@ pub async fn live_standings(
 ///
 /// Also increments `trades_in_period` by the number of new `closed_trades`
 /// rows since yesterday.
-pub async fn snapshot_daily(
-    db:      &SharedDb,
-    tenants: &SharedTenantManager,
-) -> Result<usize> {
+pub async fn snapshot_daily(db: &SharedDb, tenants: &SharedTenantManager) -> Result<usize> {
     // Get active campaign
-    let campaign_id: Option<Uuid> = sqlx::query_scalar!(
-        "SELECT id FROM campaigns WHERE is_active = TRUE LIMIT 1",
-    )
-    .fetch_optional(db.pool())
-    .await
-    .map_err(|e| anyhow!("snapshot_daily campaign lookup: {}", e))?;
+    let campaign_id: Option<Uuid> =
+        sqlx::query_scalar!("SELECT id FROM campaigns WHERE is_active = TRUE LIMIT 1",)
+            .fetch_optional(db.pool())
+            .await
+            .map_err(|e| anyhow!("snapshot_daily campaign lookup: {}", e))?;
 
     let Some(campaign_id) = campaign_id else {
         log::debug!("snapshot_daily: no active campaign, skipping");
@@ -218,8 +231,7 @@ pub async fn snapshot_daily(
     .map(|r| (r.tenant_id, r.cnt.unwrap_or(0)))
     .collect();
 
-    let trade_count_map: std::collections::HashMap<Uuid, i64> =
-        trade_counts.into_iter().collect();
+    let trade_count_map: std::collections::HashMap<Uuid, i64> = trade_counts.into_iter().collect();
 
     // Batch 2: get earliest start_equity_usd per tenant for this campaign
     let start_equities: Vec<(Uuid, rust_decimal::Decimal)> = sqlx::query!(
@@ -246,8 +258,10 @@ pub async fn snapshot_daily(
 
         let start_equity = start_equity_map
             .get(tenant_uuid)
-            .map(|d: &rust_decimal::Decimal| d.to_string().parse::<f64>().unwrap_or(*current_equity))
-            .unwrap_or(*current_equity);  // first snapshot: anchor to current equity
+            .map(|d: &rust_decimal::Decimal| {
+                d.to_string().parse::<f64>().unwrap_or(*current_equity)
+            })
+            .unwrap_or(*current_equity); // first snapshot: anchor to current equity
 
         let result = sqlx::query!(
             r#"INSERT INTO leaderboard_snapshots
@@ -271,7 +285,11 @@ pub async fn snapshot_daily(
         }
     }
 
-    log::info!("📊 Leaderboard: wrote {} daily snapshots for campaign {}", count, campaign_id);
+    log::info!(
+        "📊 Leaderboard: wrote {} daily snapshots for campaign {}",
+        count,
+        campaign_id
+    );
     Ok(count)
 }
 
@@ -286,18 +304,16 @@ pub async fn snapshot_daily(
 /// Returns a list of `(rank, tenant_id, prize_usd)` for operator confirmation.
 #[allow(dead_code)]
 pub async fn award_campaign_prizes(
-    db:          &SharedDb,
+    db: &SharedDb,
     campaign_id: Uuid,
 ) -> Result<Vec<(i64, Uuid, f64)>> {
     // Fetch campaign prize structure
-    let prizes_json: Option<serde_json::Value> = sqlx::query_scalar!(
-        "SELECT prizes FROM campaigns WHERE id = $1",
-        campaign_id,
-    )
-    .fetch_optional(db.pool())
-    .await
-    .map_err(|e| anyhow!("award prizes campaign fetch: {}", e))?
-    .flatten();
+    let prizes_json: Option<serde_json::Value> =
+        sqlx::query_scalar!("SELECT prizes FROM campaigns WHERE id = $1", campaign_id,)
+            .fetch_optional(db.pool())
+            .await
+            .map_err(|e| anyhow!("award prizes campaign fetch: {}", e))?
+            .flatten();
 
     let prize_tiers: Vec<PrizeTier> = prizes_json
         .and_then(|v| serde_json::from_value(v).ok())
@@ -312,7 +328,9 @@ pub async fn award_campaign_prizes(
     let mut awarded = Vec::new();
 
     for tier in &prize_tiers {
-        let Some(entry) = standings.get((tier.rank - 1) as usize) else { continue };
+        let Some(entry) = standings.get((tier.rank - 1) as usize) else {
+            continue;
+        };
 
         let tenant_uuid = entry.tenant_id;
 
@@ -332,7 +350,11 @@ pub async fn award_campaign_prizes(
 
         log::info!(
             "🏆 Campaign {} rank {} — tenant {} — +{:.2}% — prize ${}",
-            campaign_id, tier.rank, tenant_uuid, entry.pct_return, tier.usd
+            campaign_id,
+            tier.rank,
+            tenant_uuid,
+            entry.pct_return,
+            tier.usd
         );
         awarded.push((entry.rank, tenant_uuid, tier.usd));
     }
@@ -346,6 +368,10 @@ pub async fn award_campaign_prizes(
     .await
     .map_err(|e| anyhow!("deactivate campaign: {}", e))?;
 
-    log::info!("✅ Campaign {} closed — {} prizes awarded", campaign_id, awarded.len());
+    log::info!(
+        "✅ Campaign {} closed — {} prizes awarded",
+        campaign_id,
+        awarded.len()
+    );
     Ok(awarded)
 }

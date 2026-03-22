@@ -14,11 +14,11 @@
 //! - The key is shown once in plaintext on the `/app/setup` page immediately
 //!   after generation, then only accessible via the authenticated export route.
 
-use anyhow::{anyhow, Result};
 use aes_gcm::{
     aead::{Aead, KeyInit},
     Aes256Gcm, Nonce,
 };
+use anyhow::{anyhow, Result};
 use k256::ecdsa::SigningKey;
 use rand::RngCore;
 use sha2::{Digest, Sha256};
@@ -38,17 +38,17 @@ pub fn generate_keypair() -> (String, String) {
         .expect("32 random bytes always produce a valid secp256k1 key");
 
     // Uncompressed public key: 0x04 || x || y (65 bytes)
-    let verifying_key   = signing_key.verifying_key();
-    let uncompressed    = verifying_key.to_encoded_point(false);
-    let pubkey_bytes    = &uncompressed.as_bytes()[1..]; // drop the 0x04 prefix
+    let verifying_key = signing_key.verifying_key();
+    let uncompressed = verifying_key.to_encoded_point(false);
+    let pubkey_bytes = &uncompressed.as_bytes()[1..]; // drop the 0x04 prefix
 
     // Ethereum address = last 20 bytes of Keccak256(pubkey)
     let mut keccak = Keccak256::new();
     keccak.update(pubkey_bytes);
-    let hash       = keccak.finalize();
+    let hash = keccak.finalize();
     let addr_bytes = &hash[12..];
 
-    let address     = eip55_checksum(addr_bytes);
+    let address = eip55_checksum(addr_bytes);
     let private_key = format!("0x{}", hex::encode(key_bytes));
 
     (address, private_key)
@@ -70,9 +70,13 @@ fn eip55_checksum(addr_bytes: &[u8]) -> String {
                 c
             } else {
                 // Each hex char corresponds to a nibble in the hash
-                let byte  = hash[i / 2];
+                let byte = hash[i / 2];
                 let nibble = if i % 2 == 0 { byte >> 4 } else { byte & 0xf };
-                if nibble >= 8 { c.to_ascii_uppercase() } else { c }
+                if nibble >= 8 {
+                    c.to_ascii_uppercase()
+                } else {
+                    c
+                }
             }
         })
         .collect();
@@ -90,7 +94,7 @@ fn eip55_checksum(addr_bytes: &[u8]) -> String {
 /// Returns `"<nonce_hex>:<ciphertext_hex>"` — safe to store in the DB.
 pub fn encrypt_key(private_key: &str, session_secret: &str, tenant_id: &str) -> String {
     let key_bytes = derive_enc_key(session_secret, tenant_id);
-    let cipher    = Aes256Gcm::new_from_slice(&key_bytes).expect("32-byte key");
+    let cipher = Aes256Gcm::new_from_slice(&key_bytes).expect("32-byte key");
 
     let mut nonce_bytes = [0u8; 12];
     rand::rngs::OsRng.fill_bytes(&mut nonce_bytes);
@@ -105,16 +109,20 @@ pub fn encrypt_key(private_key: &str, session_secret: &str, tenant_id: &str) -> 
 
 /// Decrypt a private key string encrypted by [`encrypt_key`].
 pub fn decrypt_key(enc: &str, session_secret: &str, tenant_id: &str) -> Result<String> {
-    let mut parts     = enc.splitn(2, ':');
-    let nonce_hex     = parts.next().ok_or_else(|| anyhow!("malformed enc: missing nonce"))?;
-    let cipher_hex    = parts.next().ok_or_else(|| anyhow!("malformed enc: missing ciphertext"))?;
+    let mut parts = enc.splitn(2, ':');
+    let nonce_hex = parts
+        .next()
+        .ok_or_else(|| anyhow!("malformed enc: missing nonce"))?;
+    let cipher_hex = parts
+        .next()
+        .ok_or_else(|| anyhow!("malformed enc: missing ciphertext"))?;
 
-    let nonce_bytes   = hex::decode(nonce_hex)?;
-    let ciphertext    = hex::decode(cipher_hex)?;
+    let nonce_bytes = hex::decode(nonce_hex)?;
+    let ciphertext = hex::decode(cipher_hex)?;
 
     let key_bytes = derive_enc_key(session_secret, tenant_id);
-    let cipher    = Aes256Gcm::new_from_slice(&key_bytes).expect("32-byte key");
-    let nonce     = Nonce::from_slice(&nonce_bytes);
+    let cipher = Aes256Gcm::new_from_slice(&key_bytes).expect("32-byte key");
+    let nonce = Nonce::from_slice(&nonce_bytes);
 
     let plaintext = cipher
         .decrypt(nonce, ciphertext.as_ref())
@@ -155,12 +163,12 @@ pub async fn check_balance(address: &str) -> f64 {
         .send()
         .await
     {
-        Ok(r)  => r,
+        Ok(r) => r,
         Err(_) => return 0.0,
     };
 
     let json: serde_json::Value = match response.json().await {
-        Ok(j)  => j,
+        Ok(j) => j,
         Err(_) => return 0.0,
     };
 
@@ -201,7 +209,11 @@ mod tests {
         assert!(addr.starts_with("0x"), "address must start with 0x");
         assert_eq!(addr.len(), 42, "address must be 42 chars (0x + 40 hex)");
         assert!(priv_key.starts_with("0x"), "private key must start with 0x");
-        assert_eq!(priv_key.len(), 66, "private key must be 66 chars (0x + 64 hex)");
+        assert_eq!(
+            priv_key.len(),
+            66,
+            "private key must be 66 chars (0x + 64 hex)"
+        );
     }
 
     #[test]
@@ -215,10 +227,13 @@ mod tests {
     fn encrypt_decrypt_roundtrip() {
         let (_, private_key) = generate_keypair();
         let secret = "test-session-secret-32-chars-long";
-        let tid    = "00000000-0000-0000-0000-000000000001";
+        let tid = "00000000-0000-0000-0000-000000000001";
 
         let enc = encrypt_key(&private_key, secret, tid);
-        assert!(enc.contains(':'), "enc must contain nonce:ciphertext separator");
+        assert!(
+            enc.contains(':'),
+            "enc must contain nonce:ciphertext separator"
+        );
 
         let dec = decrypt_key(&enc, secret, tid).expect("decryption must succeed");
         assert_eq!(dec, private_key);
@@ -239,10 +254,12 @@ mod tests {
     #[test]
     fn eip55_known_address() {
         // Known EIP-55 checksum from the Ethereum spec
-        let addr_bytes = hex::decode("5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed"
-            .to_lowercase()
-            .trim_start_matches("0x"))
-            .unwrap();
+        let addr_bytes = hex::decode(
+            "5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed"
+                .to_lowercase()
+                .trim_start_matches("0x"),
+        )
+        .unwrap();
         let result = eip55_checksum(&addr_bytes);
         assert_eq!(result, "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed");
     }

@@ -44,8 +44,8 @@ pub struct OrderBook {
 /// cycle runs we compare the current bar epoch; if it's advanced we know a new
 /// bar has closed and the candles need refreshing.
 struct CachedCandles {
-    candles:   Vec<PriceData>,
-    bar_epoch: i64,   // floor(fetch_time_ms / interval_ms)
+    candles: Vec<PriceData>,
+    bar_epoch: i64, // floor(fetch_time_ms / interval_ms)
 }
 
 // ─────────────────────────── Helpers ─────────────────────────────────────────
@@ -64,12 +64,12 @@ pub fn is_hl_perp(sym: &str) -> bool {
 #[inline]
 fn interval_ms(interval: &str) -> Result<i64> {
     match interval {
-        "1m"  => Ok(       60_000),
-        "5m"  => Ok(      300_000),
-        "15m" => Ok(      900_000),
-        "1h"  => Ok(    3_600_000),
-        "4h"  => Ok(   14_400_000),
-        "1d"  => Ok(   86_400_000),
+        "1m" => Ok(60_000),
+        "5m" => Ok(300_000),
+        "15m" => Ok(900_000),
+        "1h" => Ok(3_600_000),
+        "4h" => Ok(14_400_000),
+        "1d" => Ok(86_400_000),
         other => anyhow::bail!("Unknown interval: {}", other),
     }
 }
@@ -90,8 +90,8 @@ fn interval_ms(interval: &str) -> Result<i64> {
 /// Candle refreshes: 40×1h = 800 weight once/hour, 40×4h = 800 weight once/4h
 /// Both well within the 1 200/min ceiling.
 pub struct MarketClient {
-    client:       reqwest::Client,
-    hl_base:      String,
+    client: reqwest::Client,
+    hl_base: String,
     /// Candle cache keyed by `"COIN:interval"` (e.g. `"BTC:1h"`).
     /// Interior-mutable so `&self` methods can update it.
     candle_cache: RwLock<HashMap<String, CachedCandles>>,
@@ -104,7 +104,7 @@ impl MarketClient {
                 .timeout(std::time::Duration::from_secs(10))
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new()),
-            hl_base:      "https://api.hyperliquid.xyz".to_string(),
+            hl_base: "https://api.hyperliquid.xyz".to_string(),
             candle_cache: RwLock::new(HashMap::new()),
         }
     }
@@ -128,8 +128,13 @@ impl MarketClient {
                     last_err = e;
                     if attempt + 1 < MAX_RETRIES {
                         let delay_ms = RETRY_BASE_MS * (1 << attempt);
-                        log::warn!("HTTP attempt {}/{} failed — retrying in {}ms: {}",
-                            attempt + 1, MAX_RETRIES, delay_ms, last_err);
+                        log::warn!(
+                            "HTTP attempt {}/{} failed — retrying in {}ms: {}",
+                            attempt + 1,
+                            MAX_RETRIES,
+                            delay_ms,
+                            last_err
+                        );
                         tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
                     }
                 }
@@ -144,13 +149,13 @@ impl MarketClient {
     ///
     /// Returns symbol → price map for every perp traded on the exchange.
     pub async fn fetch_all_mids(&self) -> Result<HashMap<String, f64>> {
-        let url    = format!("{}/info", self.hl_base);
-        let body   = serde_json::json!({ "type": "allMids" });
+        let url = format!("{}/info", self.hl_base);
+        let body = serde_json::json!({ "type": "allMids" });
         let client = self.client.clone();
 
         Self::with_retry(|| {
-            let url    = url.clone();
-            let body   = body.clone();
+            let url = url.clone();
+            let body = body.clone();
             let client = client.clone();
             async move {
                 let resp = client.post(&url).json(&body).send().await?;
@@ -181,7 +186,8 @@ impl MarketClient {
                     .collect();
                 Ok(mids)
             }
-        }).await
+        })
+        .await
     }
 
     // ── Candidate selection ───────────────────────────────────────────────────
@@ -203,7 +209,9 @@ impl MarketClient {
             .filter(|(sym, _)| is_hl_perp(sym))
             .filter_map(|(sym, &cur)| {
                 let prev = previous.get(sym.as_str()).copied().unwrap_or(cur);
-                if prev == 0.0 { return None; }
+                if prev == 0.0 {
+                    return None;
+                }
                 let pct = ((cur - prev) / prev).abs();
                 Some((sym.clone(), pct))
             })
@@ -218,7 +226,9 @@ impl MarketClient {
             .collect();
 
         for (sym, _) in &movers {
-            if candidates.len() >= MAX_CANDIDATES { break; }
+            if candidates.len() >= MAX_CANDIDATES {
+                break;
+            }
             if !candidates.contains(sym) {
                 candidates.push(sym.clone());
             }
@@ -250,12 +260,12 @@ impl MarketClient {
     /// `(coin, interval)` pair (cold start / bot restart).
     async fn fetch_hl_candles_cached(
         &self,
-        coin:     &str,
+        coin: &str,
         interval: &str,
-        limit:    u32,
+        limit: u32,
     ) -> Result<Vec<PriceData>> {
-        let ivl_ms  = interval_ms(interval)?;
-        let now_ms  = chrono::Utc::now().timestamp_millis();
+        let ivl_ms = interval_ms(interval)?;
+        let now_ms = chrono::Utc::now().timestamp_millis();
 
         // Per-coin jitter: deterministic hash-based offset in [0, 59] seconds.
         // We subtract this from now_ms before computing the epoch, which delays
@@ -265,10 +275,10 @@ impl MarketClient {
             let hash: u64 = coin.bytes().fold(5381u64, |acc, b| {
                 acc.wrapping_mul(33).wrapping_add(b as u64)
             });
-            (hash % 60) as i64 * 1_000   // 0..=59 seconds in milliseconds
+            (hash % 60) as i64 * 1_000 // 0..=59 seconds in milliseconds
         };
         let jittered_ms = now_ms - jitter_ms;
-        let cur_epoch   = jittered_ms / ivl_ms;   // integer bar index for this coin
+        let cur_epoch = jittered_ms / ivl_ms; // integer bar index for this coin
 
         let cache_key = format!("{}:{}", coin, interval);
 
@@ -277,21 +287,37 @@ impl MarketClient {
             let r = self.candle_cache.read().await;
             if let Some(entry) = r.get(&cache_key) {
                 if entry.bar_epoch == cur_epoch {
-                    log::debug!("candle_cache HIT  {}:{} epoch={}", coin, interval, cur_epoch);
+                    log::debug!(
+                        "candle_cache HIT  {}:{} epoch={}",
+                        coin,
+                        interval,
+                        cur_epoch
+                    );
                     return Ok(entry.candles.clone());
                 }
             }
         }
 
         // Slow path: fetch from HL (first call, or new bar has opened for this coin).
-        log::debug!("candle_cache MISS {}:{} epoch={} jitter={}ms — fetching",
-                    coin, interval, cur_epoch, jitter_ms);
+        log::debug!(
+            "candle_cache MISS {}:{} epoch={} jitter={}ms — fetching",
+            coin,
+            interval,
+            cur_epoch,
+            jitter_ms
+        );
         let candles = self.fetch_hl_candles_raw(coin, interval, limit).await?;
 
         // Write back; grab write lock only after the HTTP round trip.
         {
             let mut w = self.candle_cache.write().await;
-            w.insert(cache_key, CachedCandles { candles: candles.clone(), bar_epoch: cur_epoch });
+            w.insert(
+                cache_key,
+                CachedCandles {
+                    candles: candles.clone(),
+                    bar_epoch: cur_epoch,
+                },
+            );
         }
 
         Ok(candles)
@@ -302,14 +328,19 @@ impl MarketClient {
     /// - `coin`     — Hyperliquid ticker (e.g. `"BTC"`, `"kBONK"`)
     /// - `interval` — HL interval string: `"1h"`, `"4h"`, `"15m"`, etc.
     /// - `limit`    — Number of candles to return (newest last)
-    async fn fetch_hl_candles_raw(&self, coin: &str, interval: &str, limit: u32) -> Result<Vec<PriceData>> {
-        let ivl_ms   = interval_ms(interval)?;
-        let now_ms   = chrono::Utc::now().timestamp_millis();
+    async fn fetch_hl_candles_raw(
+        &self,
+        coin: &str,
+        interval: &str,
+        limit: u32,
+    ) -> Result<Vec<PriceData>> {
+        let ivl_ms = interval_ms(interval)?;
+        let now_ms = chrono::Utc::now().timestamp_millis();
         // +2 bar buffer so the window always contains `limit` fully-closed bars.
         let start_ms = now_ms - (limit as i64 + 2) * ivl_ms;
 
-        let url    = format!("{}/info", self.hl_base);
-        let body   = serde_json::json!({
+        let url = format!("{}/info", self.hl_base);
+        let body = serde_json::json!({
             "type": "candleSnapshot",
             "req": {
                 "coin":      coin,
@@ -318,20 +349,22 @@ impl MarketClient {
                 "endTime":   now_ms
             }
         });
-        let client   = self.client.clone();
+        let client = self.client.clone();
         let coin_str = coin.to_string();
 
         Self::with_retry(|| {
-            let url      = url.clone();
-            let body     = body.clone();
-            let client   = client.clone();
+            let url = url.clone();
+            let body = body.clone();
+            let client = client.clone();
             let coin_str = coin_str.clone();
             async move {
                 let resp = client.post(&url).json(&body).send().await?;
                 if !resp.status().is_success() {
                     anyhow::bail!(
                         "HL candleSnapshot {} {} → HTTP {}",
-                        coin_str, interval, resp.status()
+                        coin_str,
+                        interval,
+                        resp.status()
                     );
                 }
                 // HL candle shape:
@@ -343,21 +376,25 @@ impl MarketClient {
                 }
 
                 let parse = |v: &serde_json::Value, key: &str| -> f64 {
-                    v[key].as_str()
+                    v[key]
+                        .as_str()
                         .and_then(|s| s.parse().ok())
                         .or_else(|| v[key].as_f64())
                         .unwrap_or(0.0)
                 };
 
-                let mut candles: Vec<PriceData> = raw.iter().map(|c| PriceData {
-                    symbol:    coin_str.clone(),
-                    timestamp: c["t"].as_i64().unwrap_or(0),
-                    open:      parse(c, "o"),
-                    high:      parse(c, "h"),
-                    low:       parse(c, "l"),
-                    close:     parse(c, "c"),
-                    volume:    parse(c, "v"),
-                }).collect();
+                let mut candles: Vec<PriceData> = raw
+                    .iter()
+                    .map(|c| PriceData {
+                        symbol: coin_str.clone(),
+                        timestamp: c["t"].as_i64().unwrap_or(0),
+                        open: parse(c, "o"),
+                        high: parse(c, "h"),
+                        low: parse(c, "l"),
+                        close: parse(c, "c"),
+                        volume: parse(c, "v"),
+                    })
+                    .collect();
 
                 // Trim to exactly `limit` (the buffer may return a few extra).
                 if candles.len() > limit as usize {
@@ -366,7 +403,8 @@ impl MarketClient {
 
                 Ok(candles)
             }
-        }).await
+        })
+        .await
     }
 
     /// Fetch 50 hourly candles (cached — refetches at most once per 1h bar close).
@@ -386,15 +424,15 @@ impl MarketClient {
     /// Returns top-20 bids and asks as `(price, quantity)` pairs, sorted best-first.
     /// Not cached — order books change on every tick.
     pub async fn fetch_order_book(&self, coin: &str) -> Result<OrderBook> {
-        let url     = format!("{}/info", self.hl_base);
-        let body    = serde_json::json!({ "type": "l2Book", "coin": coin });
-        let client  = self.client.clone();
+        let url = format!("{}/info", self.hl_base);
+        let body = serde_json::json!({ "type": "l2Book", "coin": coin });
+        let client = self.client.clone();
         let sym_str = coin.to_string();
 
         Self::with_retry(|| {
-            let url     = url.clone();
-            let body    = body.clone();
-            let client  = client.clone();
+            let url = url.clone();
+            let body = body.clone();
+            let client = client.clone();
             let sym_str = sym_str.clone();
             async move {
                 let resp = client.post(&url).json(&body).send().await?;
@@ -408,23 +446,28 @@ impl MarketClient {
 
                 let parse_side = |idx: usize| -> Vec<(f64, f64)> {
                     book["levels"][idx].as_array().map_or(vec![], |list| {
-                        list.iter().take(20).filter_map(|entry| {
-                            let p: f64 = entry["px"].as_str()?.parse().ok()?;
-                            let q: f64 = entry["sz"].as_str()?.parse().ok()?;
-                            Some((p, q))
-                        }).collect()
+                        list.iter()
+                            .take(20)
+                            .filter_map(|entry| {
+                                let p: f64 = entry["px"].as_str()?.parse().ok()?;
+                                let q: f64 = entry["sz"].as_str()?.parse().ok()?;
+                                Some((p, q))
+                            })
+                            .collect()
                     })
                 };
 
                 Ok(OrderBook {
-                    symbol:    sym_str,
-                    timestamp: book["time"].as_i64()
-                                   .unwrap_or_else(|| chrono::Utc::now().timestamp_millis()),
+                    symbol: sym_str,
+                    timestamp: book["time"]
+                        .as_i64()
+                        .unwrap_or_else(|| chrono::Utc::now().timestamp_millis()),
                     bids: parse_side(0),
                     asks: parse_side(1),
                 })
             }
-        }).await
+        })
+        .await
     }
 
     /// Evict all cached candles (e.g. after a bot restart or manual reset).
@@ -447,33 +490,33 @@ mod tests {
 
     #[test]
     fn is_hl_perp_accepts_standard_perps() {
-        assert!(is_hl_perp("BTC"),    "BTC should be a valid HL perp");
-        assert!(is_hl_perp("ETH"),    "ETH should be a valid HL perp");
+        assert!(is_hl_perp("BTC"), "BTC should be a valid HL perp");
+        assert!(is_hl_perp("ETH"), "ETH should be a valid HL perp");
         assert!(is_hl_perp("kBONK"), "kBONK should be a valid HL perp");
-        assert!(is_hl_perp("AVAX"),  "AVAX should be a valid HL perp");
+        assert!(is_hl_perp("AVAX"), "AVAX should be a valid HL perp");
     }
 
     #[test]
     fn is_hl_perp_rejects_at_symbols() {
-        assert!(!is_hl_perp("@232"),   "@232 is a price-level derivative");
-        assert!(!is_hl_perp("@7"),     "@7 is a price-level derivative");
+        assert!(!is_hl_perp("@232"), "@232 is a price-level derivative");
+        assert!(!is_hl_perp("@7"), "@7 is a price-level derivative");
         assert!(!is_hl_perp("@1000"), "@1000 is a price-level derivative");
     }
 
     #[test]
     fn is_hl_perp_rejects_spot_pairs() {
         assert!(!is_hl_perp("PURR/USDC"), "PURR/USDC is a spot pair");
-        assert!(!is_hl_perp("BTC/USDC"),  "BTC/USDC is a spot pair");
+        assert!(!is_hl_perp("BTC/USDC"), "BTC/USDC is a spot pair");
     }
 
     // ── interval_ms ───────────────────────────────────────────────────────────
 
     #[test]
     fn interval_ms_known_intervals() {
-        assert_eq!(interval_ms("1m").unwrap(),        60_000);
-        assert_eq!(interval_ms("1h").unwrap(),     3_600_000);
-        assert_eq!(interval_ms("4h").unwrap(),    14_400_000);
-        assert_eq!(interval_ms("1d").unwrap(),    86_400_000);
+        assert_eq!(interval_ms("1m").unwrap(), 60_000);
+        assert_eq!(interval_ms("1h").unwrap(), 3_600_000);
+        assert_eq!(interval_ms("4h").unwrap(), 14_400_000);
+        assert_eq!(interval_ms("1d").unwrap(), 86_400_000);
     }
 
     #[test]
@@ -490,27 +533,47 @@ mod tests {
 
     #[test]
     fn filter_candidates_always_includes_anchors() {
-        let current  = make_mids(&[("BTC", 50000.0), ("ETH", 3000.0), ("SOL", 100.0),
-                                    ("DOGE", 0.1), ("AVAX", 30.0)]);
+        let current = make_mids(&[
+            ("BTC", 50000.0),
+            ("ETH", 3000.0),
+            ("SOL", 100.0),
+            ("DOGE", 0.1),
+            ("AVAX", 30.0),
+        ]);
         let previous = current.clone();
-        let market   = MarketClient::new();
-        let result   = market.filter_candidates(&current, &previous);
-        assert!(result.contains(&"BTC".to_string()), "BTC must always be a candidate");
-        assert!(result.contains(&"ETH".to_string()), "ETH must always be a candidate");
-        assert!(result.contains(&"SOL".to_string()), "SOL must always be a candidate");
+        let market = MarketClient::new();
+        let result = market.filter_candidates(&current, &previous);
+        assert!(
+            result.contains(&"BTC".to_string()),
+            "BTC must always be a candidate"
+        );
+        assert!(
+            result.contains(&"ETH".to_string()),
+            "ETH must always be a candidate"
+        );
+        assert!(
+            result.contains(&"SOL".to_string()),
+            "SOL must always be a candidate"
+        );
     }
 
     #[test]
     fn filter_candidates_caps_at_max() {
         let current: HashMap<String, f64> = (0..60)
             .map(|i| (format!("COIN{i}"), 100.0 + i as f64))
-            .chain([("BTC".to_string(), 50000.0), ("ETH".to_string(), 3000.0),
-                    ("SOL".to_string(), 100.0)])
+            .chain([
+                ("BTC".to_string(), 50000.0),
+                ("ETH".to_string(), 3000.0),
+                ("SOL".to_string(), 100.0),
+            ])
             .collect();
         let previous: HashMap<String, f64> = (0..60)
             .map(|i| (format!("COIN{i}"), 100.0))
-            .chain([("BTC".to_string(), 50000.0), ("ETH".to_string(), 3000.0),
-                    ("SOL".to_string(), 100.0)])
+            .chain([
+                ("BTC".to_string(), 50000.0),
+                ("ETH".to_string(), 3000.0),
+                ("SOL".to_string(), 100.0),
+            ])
             .collect();
         let market = MarketClient::new();
         let result = market.filter_candidates(&current, &previous);
@@ -523,54 +586,98 @@ mod tests {
 
     #[test]
     fn filter_candidates_top_movers_are_included() {
-        let current  = make_mids(&[("BTC", 50000.0), ("ETH", 3000.0), ("SOL", 100.0),
-                                    ("MOON", 2.0), ("STABLE", 1.0)]);
-        let previous = make_mids(&[("BTC", 50000.0), ("ETH", 3000.0), ("SOL", 100.0),
-                                    ("MOON", 1.0), ("STABLE", 1.0)]);
+        let current = make_mids(&[
+            ("BTC", 50000.0),
+            ("ETH", 3000.0),
+            ("SOL", 100.0),
+            ("MOON", 2.0),
+            ("STABLE", 1.0),
+        ]);
+        let previous = make_mids(&[
+            ("BTC", 50000.0),
+            ("ETH", 3000.0),
+            ("SOL", 100.0),
+            ("MOON", 1.0),
+            ("STABLE", 1.0),
+        ]);
         let market = MarketClient::new();
         let result = market.filter_candidates(&current, &previous);
-        assert!(result.contains(&"MOON".to_string()), "Top mover MOON should be included");
+        assert!(
+            result.contains(&"MOON".to_string()),
+            "Top mover MOON should be included"
+        );
     }
 
     #[test]
     fn filter_candidates_rejects_at_symbols() {
-        let current  = make_mids(&[("BTC", 50000.0), ("ETH", 3000.0), ("SOL", 100.0),
-                                    ("@232", 232.0), ("@7", 7.0)]);
-        let previous = make_mids(&[("BTC", 50000.0), ("ETH", 3000.0), ("SOL", 100.0),
-                                    ("@232", 100.0), ("@7", 1.0)]);
+        let current = make_mids(&[
+            ("BTC", 50000.0),
+            ("ETH", 3000.0),
+            ("SOL", 100.0),
+            ("@232", 232.0),
+            ("@7", 7.0),
+        ]);
+        let previous = make_mids(&[
+            ("BTC", 50000.0),
+            ("ETH", 3000.0),
+            ("SOL", 100.0),
+            ("@232", 100.0),
+            ("@7", 1.0),
+        ]);
         let market = MarketClient::new();
         let result = market.filter_candidates(&current, &previous);
-        assert!(!result.contains(&"@232".to_string()), "@232 must be filtered out");
-        assert!(!result.contains(&"@7".to_string()),   "@7 must be filtered out");
+        assert!(
+            !result.contains(&"@232".to_string()),
+            "@232 must be filtered out"
+        );
+        assert!(
+            !result.contains(&"@7".to_string()),
+            "@7 must be filtered out"
+        );
     }
 
     #[test]
     fn filter_candidates_rejects_spot_pairs() {
-        let current  = make_mids(&[("BTC", 50000.0), ("ETH", 3000.0), ("SOL", 100.0),
-                                    ("PURR/USDC", 2.0)]);
-        let previous = make_mids(&[("BTC", 50000.0), ("ETH", 3000.0), ("SOL", 100.0),
-                                    ("PURR/USDC", 0.01)]);
+        let current = make_mids(&[
+            ("BTC", 50000.0),
+            ("ETH", 3000.0),
+            ("SOL", 100.0),
+            ("PURR/USDC", 2.0),
+        ]);
+        let previous = make_mids(&[
+            ("BTC", 50000.0),
+            ("ETH", 3000.0),
+            ("SOL", 100.0),
+            ("PURR/USDC", 0.01),
+        ]);
         let market = MarketClient::new();
         let result = market.filter_candidates(&current, &previous);
-        assert!(!result.contains(&"PURR/USDC".to_string()), "Spot pairs must be filtered out");
+        assert!(
+            !result.contains(&"PURR/USDC".to_string()),
+            "Spot pairs must be filtered out"
+        );
     }
 
     #[test]
     fn filter_candidates_no_duplicates() {
-        let current  = make_mids(&[("BTC", 60000.0), ("ETH", 3000.0), ("SOL", 100.0)]);
+        let current = make_mids(&[("BTC", 60000.0), ("ETH", 3000.0), ("SOL", 100.0)]);
         let previous = make_mids(&[("BTC", 50000.0), ("ETH", 3000.0), ("SOL", 100.0)]);
-        let market   = MarketClient::new();
-        let result   = market.filter_candidates(&current, &previous);
+        let market = MarketClient::new();
+        let result = market.filter_candidates(&current, &previous);
         let btc_count = result.iter().filter(|s| s.as_str() == "BTC").count();
-        assert_eq!(btc_count, 1, "BTC must appear exactly once, got {}", btc_count);
+        assert_eq!(
+            btc_count, 1,
+            "BTC must appear exactly once, got {}",
+            btc_count
+        );
     }
 
     #[test]
     fn filter_candidates_empty_previous_gives_zero_change() {
-        let current  = make_mids(&[("BTC", 50000.0), ("ETH", 3000.0), ("SOL", 100.0)]);
+        let current = make_mids(&[("BTC", 50000.0), ("ETH", 3000.0), ("SOL", 100.0)]);
         let previous = HashMap::new();
-        let market   = MarketClient::new();
-        let result   = market.filter_candidates(&current, &previous);
+        let market = MarketClient::new();
+        let result = market.filter_candidates(&current, &previous);
         assert!(result.contains(&"BTC".to_string()));
     }
 
@@ -579,8 +686,10 @@ mod tests {
     /// The jitter function must produce values in [0, 59] seconds (inclusive).
     #[test]
     fn candle_jitter_in_range() {
-        let symbols = &["BTC", "ETH", "SOL", "AVAX", "kBONK", "kPEPE", "DOGE",
-                        "WIF", "ARB", "OP", "LINK", "AAVE", "UNI", "MKR"];
+        let symbols = &[
+            "BTC", "ETH", "SOL", "AVAX", "kBONK", "kPEPE", "DOGE", "WIF", "ARB", "OP", "LINK",
+            "AAVE", "UNI", "MKR",
+        ];
         for sym in symbols {
             let jitter_ms: i64 = {
                 let hash: u64 = sym.bytes().fold(5381u64, |acc, b| {
@@ -597,21 +706,26 @@ mod tests {
     /// mapping to the same slot — a degenerate hash would defeat the purpose).
     #[test]
     fn candle_jitter_distributes_across_coins() {
-        let symbols = &["BTC", "ETH", "SOL", "AVAX", "kBONK", "DOGE", "WIF",
-                        "ARB", "OP", "LINK", "AAVE", "UNI", "MKR", "CRV",
-                        "INJ", "TIA", "SEI", "SUI", "APT", "NEAR"];
-        let jitters: std::collections::HashSet<i64> = symbols.iter().map(|sym| {
-            let hash: u64 = sym.bytes().fold(5381u64, |acc, b| {
-                acc.wrapping_mul(33).wrapping_add(b as u64)
-            });
-            (hash % 60) as i64
-        }).collect();
+        let symbols = &[
+            "BTC", "ETH", "SOL", "AVAX", "kBONK", "DOGE", "WIF", "ARB", "OP", "LINK", "AAVE",
+            "UNI", "MKR", "CRV", "INJ", "TIA", "SEI", "SUI", "APT", "NEAR",
+        ];
+        let jitters: std::collections::HashSet<i64> = symbols
+            .iter()
+            .map(|sym| {
+                let hash: u64 = sym.bytes().fold(5381u64, |acc, b| {
+                    acc.wrapping_mul(33).wrapping_add(b as u64)
+                });
+                (hash % 60) as i64
+            })
+            .collect();
         // With 20 coins mapped into 60 slots the collision probability is
         // non-trivial, but we should see at least 10 distinct values.
         assert!(
             jitters.len() >= 10,
             "jitter values should spread across multiple slots, got {} unique: {:?}",
-            jitters.len(), jitters
+            jitters.len(),
+            jitters
         );
     }
 }

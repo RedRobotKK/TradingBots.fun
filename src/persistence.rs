@@ -29,12 +29,12 @@
 //! | saved_at         | Timestamp for staleness detection                 |
 //! | version          | Schema version for future migrations              |
 
+use crate::metrics::PerformanceMetrics;
+use crate::web_dashboard::{BotState, ClosedTrade, PaperPosition};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
-use crate::web_dashboard::{BotState, ClosedTrade, PaperPosition};
-use crate::metrics::PerformanceMetrics;
 
-const STATE_FILE:     &str = "state.json";
+const STATE_FILE: &str = "state.json";
 const STATE_FILE_TMP: &str = "state.json.tmp";
 /// Save state to disk every this many cycles (30 s each → every 5 min).
 pub const SAVE_EVERY_N_CYCLES: u64 = 10;
@@ -44,27 +44,27 @@ pub const SAVE_EVERY_N_CYCLES: u64 = 10;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistedState {
     /// Schema version — increment when fields are added/removed.
-    pub version:         u32,
+    pub version: u32,
     /// ISO-8601 timestamp when the snapshot was taken (UTC).
-    pub saved_at:        String,
+    pub saved_at: String,
 
     // ── Financials ────────────────────────────────────────────────────────────
-    pub capital:         f64,
+    pub capital: f64,
     pub initial_capital: f64,
-    pub peak_equity:     f64,
-    pub pnl:             f64,
+    pub peak_equity: f64,
+    pub pnl: f64,
 
     // ── Counters ──────────────────────────────────────────────────────────────
-    pub cycle_count:     u64,
+    pub cycle_count: u64,
 
     // ── Positions & trades ────────────────────────────────────────────────────
-    pub positions:       Vec<PaperPosition>,
-    pub closed_trades:   Vec<ClosedTrade>,
+    pub positions: Vec<PaperPosition>,
+    pub closed_trades: Vec<ClosedTrade>,
 
     // ── Risk state ────────────────────────────────────────────────────────────
-    pub metrics:         PerformanceMetrics,
-    pub equity_window:   VecDeque<(i64, f64)>,
-    pub cb_active:       bool,
+    pub metrics: PerformanceMetrics,
+    pub equity_window: VecDeque<(i64, f64)>,
+    pub cb_active: bool,
 }
 
 impl PersistedState {
@@ -73,18 +73,18 @@ impl PersistedState {
     /// Build a snapshot from the current `BotState`.
     pub fn from_bot_state(s: &BotState) -> Self {
         PersistedState {
-            version:         1,
-            saved_at:        chrono::Utc::now().to_rfc3339(),
-            capital:         s.capital,
+            version: 1,
+            saved_at: chrono::Utc::now().to_rfc3339(),
+            capital: s.capital,
             initial_capital: s.initial_capital,
-            peak_equity:     s.peak_equity,
-            pnl:             s.pnl,
-            cycle_count:     s.cycle_count,
-            positions:       s.positions.clone(),
-            closed_trades:   s.closed_trades.clone(),
-            metrics:         s.metrics.clone(),
-            equity_window:   s.equity_window.clone(),
-            cb_active:       s.cb_active,
+            peak_equity: s.peak_equity,
+            pnl: s.pnl,
+            cycle_count: s.cycle_count,
+            positions: s.positions.clone(),
+            closed_trades: s.closed_trades.clone(),
+            metrics: s.metrics.clone(),
+            equity_window: s.equity_window.clone(),
+            cb_active: s.cb_active,
         }
     }
 
@@ -95,8 +95,7 @@ impl PersistedState {
     /// Uses a tmp → rename pattern so a crash mid-write never corrupts the
     /// existing snapshot.
     pub fn save(&self) -> std::io::Result<()> {
-        let json = serde_json::to_string_pretty(self)
-            .map_err(std::io::Error::other)?;
+        let json = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
         std::fs::write(STATE_FILE_TMP, &json)?;
         std::fs::rename(STATE_FILE_TMP, STATE_FILE)?;
         Ok(())
@@ -106,7 +105,7 @@ impl PersistedState {
     /// file is missing, corrupt, or from an incompatible schema version.
     pub fn load() -> Option<Self> {
         let data = match std::fs::read_to_string(STATE_FILE) {
-            Ok(d)  => d,
+            Ok(d) => d,
             Err(_) => {
                 log::info!("💾 No state.json found — starting fresh");
                 return None;
@@ -145,15 +144,15 @@ impl PersistedState {
     /// `initial_capital` is deliberately NOT restored from the snapshot — it
     /// always comes from the current `.env` so the operator can adjust it.
     pub fn apply_to(&self, bot: &mut BotState) {
-        bot.capital       = self.capital;
-        bot.peak_equity   = self.peak_equity;
-        bot.pnl           = self.pnl;
-        bot.cycle_count   = self.cycle_count;
-        bot.positions     = self.positions.clone();
+        bot.capital = self.capital;
+        bot.peak_equity = self.peak_equity;
+        bot.pnl = self.pnl;
+        bot.cycle_count = self.cycle_count;
+        bot.positions = self.positions.clone();
         bot.closed_trades = self.closed_trades.clone();
-        bot.metrics       = self.metrics.clone();
+        bot.metrics = self.metrics.clone();
         bot.equity_window = self.equity_window.clone();
-        bot.cb_active     = self.cb_active;
+        bot.cb_active = self.cb_active;
         // initial_capital intentionally kept from config (operator may change it)
     }
 }
@@ -168,7 +167,7 @@ pub async fn save_snapshot(bot_state: &crate::web_dashboard::SharedState) {
         PersistedState::from_bot_state(&s)
     };
     match snapshot.save() {
-        Ok(_)  => log::debug!("💾 State snapshot saved"),
+        Ok(_) => log::debug!("💾 State snapshot saved"),
         Err(e) => log::warn!("⚠ Could not save state snapshot: {}", e),
     }
 }
@@ -181,18 +180,18 @@ mod tests {
 
     fn make_state() -> PersistedState {
         PersistedState {
-            version:         1,
-            saved_at:        "2026-01-01T00:00:00Z".to_string(),
-            capital:         850.0,
+            version: 1,
+            saved_at: "2026-01-01T00:00:00Z".to_string(),
+            capital: 850.0,
             initial_capital: 1000.0,
-            peak_equity:     1050.0,
-            pnl:             50.0,
-            cycle_count:     120,
-            positions:       vec![],
-            closed_trades:   vec![],
-            metrics:         PerformanceMetrics::default(),
-            equity_window:   VecDeque::new(),
-            cb_active:       false,
+            peak_equity: 1050.0,
+            pnl: 50.0,
+            cycle_count: 120,
+            positions: vec![],
+            closed_trades: vec![],
+            metrics: PerformanceMetrics::default(),
+            equity_window: VecDeque::new(),
+            cb_active: false,
         }
     }
 
@@ -201,12 +200,12 @@ mod tests {
         let s = make_state();
         let json = serde_json::to_string_pretty(&s).unwrap();
         let loaded: PersistedState = serde_json::from_str(&json).unwrap();
-        assert_eq!(loaded.capital,       s.capital);
+        assert_eq!(loaded.capital, s.capital);
         assert_eq!(loaded.initial_capital, s.initial_capital);
-        assert_eq!(loaded.peak_equity,   s.peak_equity);
-        assert_eq!(loaded.pnl,           s.pnl);
-        assert_eq!(loaded.cycle_count,   s.cycle_count);
-        assert_eq!(loaded.version,       1);
+        assert_eq!(loaded.peak_equity, s.peak_equity);
+        assert_eq!(loaded.pnl, s.pnl);
+        assert_eq!(loaded.cycle_count, s.cycle_count);
+        assert_eq!(loaded.version, 1);
     }
 
     #[test]
@@ -223,14 +222,17 @@ mod tests {
     #[test]
     fn apply_to_restores_financial_fields() {
         let snapshot = make_state();
-        let mut bot = BotState { initial_capital: 1000.0, ..BotState::default() };
+        let mut bot = BotState {
+            initial_capital: 1000.0,
+            ..BotState::default()
+        };
 
         snapshot.apply_to(&mut bot);
 
-        assert_eq!(bot.capital,       850.0);
-        assert_eq!(bot.peak_equity,   1050.0);
-        assert_eq!(bot.pnl,           50.0);
-        assert_eq!(bot.cycle_count,   120);
+        assert_eq!(bot.capital, 850.0);
+        assert_eq!(bot.peak_equity, 1050.0);
+        assert_eq!(bot.pnl, 50.0);
+        assert_eq!(bot.cycle_count, 120);
         // initial_capital must NOT be overwritten by the snapshot
         assert_eq!(bot.initial_capital, 1000.0);
     }
@@ -239,11 +241,17 @@ mod tests {
     fn apply_to_does_not_overwrite_initial_capital() {
         let mut snapshot = make_state();
         snapshot.initial_capital = 500.0; // operator previously had $500 configured
-        let mut bot = BotState { initial_capital: 2000.0, ..BotState::default() }; // new .env value — should win
+        let mut bot = BotState {
+            initial_capital: 2000.0,
+            ..BotState::default()
+        }; // new .env value — should win
 
         snapshot.apply_to(&mut bot);
 
-        assert_eq!(bot.initial_capital, 2000.0, "initial_capital must come from config, not snapshot");
+        assert_eq!(
+            bot.initial_capital, 2000.0,
+            "initial_capital must come from config, not snapshot"
+        );
     }
 
     #[test]

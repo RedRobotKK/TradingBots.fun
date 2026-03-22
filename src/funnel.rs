@@ -72,21 +72,21 @@ pub enum FunnelEvent {
 impl FunnelEvent {
     pub fn as_str(&self) -> &'static str {
         match self {
-            FunnelEvent::PageView         => "PAGE_VIEW",
-            FunnelEvent::LoginClick       => "LOGIN_CLICK",
-            FunnelEvent::AuthSuccess      => "AUTH_SUCCESS",
-            FunnelEvent::TrialStart       => "TRIAL_START",
-            FunnelEvent::TermsAccepted    => "TERMS_ACCEPTED",
-            FunnelEvent::WalletLinked     => "WALLET_LINKED",
-            FunnelEvent::FirstPosition    => "FIRST_POSITION",
-            FunnelEvent::UpgradeClick     => "UPGRADE_CLICK",
-            FunnelEvent::CheckoutStarted  => "CHECKOUT_STARTED",
-            FunnelEvent::Upgraded         => "UPGRADED",
-            FunnelEvent::TrialExpired     => "TRIAL_EXPIRED",
-            FunnelEvent::Churned          => "CHURNED",
-            FunnelEvent::AdImpression     => "AD_IMPRESSION",
-            FunnelEvent::AdClick          => "AD_CLICK",
-            FunnelEvent::Referred         => "REFERRED",
+            FunnelEvent::PageView => "PAGE_VIEW",
+            FunnelEvent::LoginClick => "LOGIN_CLICK",
+            FunnelEvent::AuthSuccess => "AUTH_SUCCESS",
+            FunnelEvent::TrialStart => "TRIAL_START",
+            FunnelEvent::TermsAccepted => "TERMS_ACCEPTED",
+            FunnelEvent::WalletLinked => "WALLET_LINKED",
+            FunnelEvent::FirstPosition => "FIRST_POSITION",
+            FunnelEvent::UpgradeClick => "UPGRADE_CLICK",
+            FunnelEvent::CheckoutStarted => "CHECKOUT_STARTED",
+            FunnelEvent::Upgraded => "UPGRADED",
+            FunnelEvent::TrialExpired => "TRIAL_EXPIRED",
+            FunnelEvent::Churned => "CHURNED",
+            FunnelEvent::AdImpression => "AD_IMPRESSION",
+            FunnelEvent::AdClick => "AD_CLICK",
+            FunnelEvent::Referred => "REFERRED",
         }
     }
 }
@@ -102,20 +102,18 @@ impl FunnelEvent {
 /// * `tenant_id` – `Some` once the user is authenticated, `None` for pre-auth
 /// * `props`     – optional JSONB context (UTM params, ad network, CPM, …)
 pub async fn record(
-    db:        &Option<SharedDb>,
-    event:     FunnelEvent,
-    anon_id:   &str,
+    db: &Option<SharedDb>,
+    event: FunnelEvent,
+    anon_id: &str,
     tenant_id: Option<&TenantId>,
-    props:     Option<Value>,
+    props: Option<Value>,
 ) {
     let pool = match db {
         Some(p) => p,
-        None    => return, // no DB — silently skip
+        None => return, // no DB — silently skip
     };
 
-    let tid = tenant_id.and_then(|t| {
-        uuid::Uuid::parse_str(t.as_str()).ok()
-    });
+    let tid = tenant_id.and_then(|t| uuid::Uuid::parse_str(t.as_str()).ok());
 
     // Use query() (not query!()) to avoid compile-time DB schema checks —
     // the table is created at runtime via migrations, not at compile time.
@@ -127,7 +125,7 @@ pub async fn record(
     .bind(tid)
     .bind(event.as_str())
     .bind(props)
-    .execute(pool.pool())   // pool() exposes the inner &PgPool which implements Executor
+    .execute(pool.pool()) // pool() exposes the inner &PgPool which implements Executor
     .await;
 
     if let Err(e) = result {
@@ -142,9 +140,9 @@ pub async fn record(
 /// Record a landing-page view with optional UTM/referrer context.
 #[allow(dead_code)] // called from landing-page handler once traffic tracking ships
 pub async fn page_view(
-    db:      &Option<SharedDb>,
+    db: &Option<SharedDb>,
     anon_id: &str,
-    path:    &str,
+    path: &str,
     referrer: Option<&str>,
     utm_source: Option<&str>,
     utm_campaign: Option<&str>,
@@ -165,28 +163,42 @@ pub async fn page_view(
 /// `utm_campaign`    — optional campaign tag
 #[allow(dead_code)] // called from auth_session_handler once server-side tracking ships
 pub async fn auth_success(
-    db:              &Option<SharedDb>,
-    anon_id:         &str,
-    tenant_id:       &TenantId,
-    is_new:          bool,
+    db: &Option<SharedDb>,
+    anon_id: &str,
+    tenant_id: &TenantId,
+    is_new: bool,
     referral_source: Option<&str>,
-    hl_referred:     bool,
-    utm_campaign:    Option<&str>,
+    hl_referred: bool,
+    utm_campaign: Option<&str>,
 ) {
     record(db, FunnelEvent::AuthSuccess, anon_id, Some(tenant_id), None).await;
     if is_new {
-        record(db, FunnelEvent::TrialStart, anon_id, Some(tenant_id), Some(json!({
-            "trial_days":       14,
-            "referral_source":  referral_source,
-            "utm_campaign":     utm_campaign,
-        }))).await;
+        record(
+            db,
+            FunnelEvent::TrialStart,
+            anon_id,
+            Some(tenant_id),
+            Some(json!({
+                "trial_days":       14,
+                "referral_source":  referral_source,
+                "utm_campaign":     utm_campaign,
+            })),
+        )
+        .await;
 
         // Fire REFERRED if this user came via our HL referral link —
         // used to segment referred cohorts in the ltv_by_cohort view.
         if hl_referred {
-            record(db, FunnelEvent::Referred, anon_id, Some(tenant_id), Some(json!({
-                "referral_source": referral_source,
-            }))).await;
+            record(
+                db,
+                FunnelEvent::Referred,
+                anon_id,
+                Some(tenant_id),
+                Some(json!({
+                    "referral_source": referral_source,
+                })),
+            )
+            .await;
         }
     }
 }
@@ -198,19 +210,26 @@ pub async fn auth_success(
 /// `cpm_usd`  – agreed/estimated CPM for this placement (used in ad_revenue_daily view)
 #[allow(dead_code)] // server-side fallback; client fires via sendBeacon to /api/funnel
 pub async fn ad_impression(
-    db:        &Option<SharedDb>,
-    anon_id:   &str,
+    db: &Option<SharedDb>,
+    anon_id: &str,
     tenant_id: Option<&TenantId>,
-    network:   &str,
-    ad_unit:   &str,
-    cpm_usd:   f64,
+    network: &str,
+    ad_unit: &str,
+    cpm_usd: f64,
 ) {
     let props = json!({
         "network": network,
         "ad_unit": ad_unit,
         "cpm_usd": cpm_usd,
     });
-    record(db, FunnelEvent::AdImpression, anon_id, tenant_id, Some(props)).await;
+    record(
+        db,
+        FunnelEvent::AdImpression,
+        anon_id,
+        tenant_id,
+        Some(props),
+    )
+    .await;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -291,7 +310,7 @@ pub fn client_tracking_script() -> &'static str {
 #[derive(Debug, Deserialize)]
 pub struct FunnelEventPayload {
     pub event_type: String,
-    pub anon_id:    String,
+    pub anon_id: String,
     #[serde(flatten)]
-    pub extra:      Value,
+    pub extra: Value,
 }

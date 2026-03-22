@@ -81,26 +81,23 @@ impl ThesisConstraints {
 pub fn sector_symbols(sector: &str) -> Option<Vec<String>> {
     let syms: &[&str] = match sector.to_ascii_lowercase().as_str() {
         "meme" | "memes" | "memecoin" | "memecoins" => &[
-            "PEPE", "WIF", "BONK", "DOGE", "SHIB", "FLOKI", "BRETT", "MOODENG",
-            "NEIRO", "GOAT", "MEME", "PONKE", "BOME", "PNUT",
+            "PEPE", "WIF", "BONK", "DOGE", "SHIB", "FLOKI", "BRETT", "MOODENG", "NEIRO", "GOAT",
+            "MEME", "PONKE", "BOME", "PNUT",
         ],
         "l1" | "layer1" | "layer-1" => &[
-            "BTC", "ETH", "SOL", "BNB", "AVAX", "ADA", "DOT", "ATOM", "NEAR",
-            "SUI", "APT", "SEI",
+            "BTC", "ETH", "SOL", "BNB", "AVAX", "ADA", "DOT", "ATOM", "NEAR", "SUI", "APT", "SEI",
         ],
         "l2" | "layer2" | "layer-2" => &[
             "ARB", "OP", "MATIC", "STRK", "BLAST", "ZK", "SCROLL", "BASE",
         ],
         "defi" => &[
-            "UNI", "AAVE", "CRV", "MKR", "SNX", "COMP", "SUSHI", "BAL",
-            "JUP", "ORCA", "DRIFT", "GMX", "DYDX",
+            "UNI", "AAVE", "CRV", "MKR", "SNX", "COMP", "SUSHI", "BAL", "JUP", "ORCA", "DRIFT",
+            "GMX", "DYDX",
         ],
-        "rwa" | "real-world" | "realworld" => &[
-            "ONDO", "MPL", "CPOOL", "RIO", "POLYX",
-        ],
-        "ai" | "aicoins" | "ai-coins" => &[
-            "FET", "AGIX", "OCEAN", "RNDR", "WLD", "TAO", "AIOZ", "GRT",
-        ],
+        "rwa" | "real-world" | "realworld" => &["ONDO", "MPL", "CPOOL", "RIO", "POLYX"],
+        "ai" | "aicoins" | "ai-coins" => {
+            &["FET", "AGIX", "OCEAN", "RNDR", "WLD", "TAO", "AIOZ", "GRT"]
+        }
         _ => return None,
     };
     Some(syms.iter().map(|s| s.to_string()).collect())
@@ -126,15 +123,25 @@ pub fn sector_symbols(sector: &str) -> Option<Vec<String>> {
 /// constraint update (so the caller can handle it differently).
 pub fn parse_command(cmd: &str) -> Option<ThesisConstraints> {
     // Hard length cap — the web handler already checks this, but belt-and-braces.
-    if cmd.len() > 200 { return Some(ThesisConstraints::default()); }
+    if cmd.len() > 200 {
+        return Some(ThesisConstraints::default());
+    }
 
     let lc = cmd.to_ascii_lowercase();
 
     // ── Trade queries (do NOT update constraints) ─────────────────────────
     let query_phrases = [
-        "what did you trade", "show trades", "show my trades",
-        "recent trades", "last trade", "what trades", "trade history",
-        "what have you", "what have i", "show positions", "my positions",
+        "what did you trade",
+        "show trades",
+        "show my trades",
+        "recent trades",
+        "last trade",
+        "what trades",
+        "trade history",
+        "what have you",
+        "what have i",
+        "show positions",
+        "my positions",
     ];
     if query_phrases.iter().any(|p| lc.contains(p)) {
         return None; // signal: treat as a query, not a constraint update
@@ -142,8 +149,15 @@ pub fn parse_command(cmd: &str) -> Option<ThesisConstraints> {
 
     // ── Reset ────────────────────────────────────────────────────────────
     let reset_phrases = [
-        "reset", "clear", "remove", "no constraint", "default",
-        "ai default", "let ai decide", "ai decides", "auto",
+        "reset",
+        "clear",
+        "remove",
+        "no constraint",
+        "default",
+        "ai default",
+        "let ai decide",
+        "ai decides",
+        "auto",
     ];
     if reset_phrases.iter().any(|p| lc.contains(p)) {
         return Some(ThesisConstraints::default());
@@ -163,7 +177,8 @@ pub fn parse_command(cmd: &str) -> Option<ThesisConstraints> {
             Some(2.0)
         } else if lc.contains("reduce risk") || lc.contains("less risk") {
             Some(3.0)
-        } else if lc.contains("high risk") || lc.contains("more risk") || lc.contains("aggressive") {
+        } else if lc.contains("high risk") || lc.contains("more risk") || lc.contains("aggressive")
+        {
             Some(10.0)
         } else {
             None
@@ -173,12 +188,26 @@ pub fn parse_command(cmd: &str) -> Option<ThesisConstraints> {
 
     // ── Sector detection ─────────────────────────────────────────────────
     let sector_keywords: &[(&str, &str)] = &[
-        ("meme coin", "meme"), ("meme coins", "meme"), ("memecoin", "meme"), ("memes", "meme"),
-        ("layer 1", "l1"), ("layer1", "l1"), ("layer-1", "l1"), ("l1 coin", "l1"),
-        ("layer 2", "l2"), ("layer2", "l2"), ("layer-2", "l2"),
-        ("defi", "defi"), ("decentralised finance", "defi"), ("decentralized finance", "defi"),
-        ("real world asset", "rwa"), ("real-world asset", "rwa"), ("rwa", "rwa"),
-        ("ai coin", "ai"), ("ai coins", "ai"), ("artificial intelligence", "ai"),
+        ("meme coin", "meme"),
+        ("meme coins", "meme"),
+        ("memecoin", "meme"),
+        ("memes", "meme"),
+        ("layer 1", "l1"),
+        ("layer1", "l1"),
+        ("layer-1", "l1"),
+        ("l1 coin", "l1"),
+        ("layer 2", "l2"),
+        ("layer2", "l2"),
+        ("layer-2", "l2"),
+        ("defi", "defi"),
+        ("decentralised finance", "defi"),
+        ("decentralized finance", "defi"),
+        ("real world asset", "rwa"),
+        ("real-world asset", "rwa"),
+        ("rwa", "rwa"),
+        ("ai coin", "ai"),
+        ("ai coins", "ai"),
+        ("artificial intelligence", "ai"),
     ];
     for (kw, sector) in sector_keywords {
         if lc.contains(kw) {
@@ -247,7 +276,10 @@ fn extract_leverage(lc: &str) -> Option<f64> {
     for pattern in &["max leverage ", "max lev ", "leverage ", "lev "] {
         if let Some(pos) = lc.find(pattern) {
             let rest = &lc[pos + pattern.len()..];
-            let num: String = rest.chars().take_while(|c| c.is_ascii_digit() || *c == '.').collect();
+            let num: String = rest
+                .chars()
+                .take_while(|c| c.is_ascii_digit() || *c == '.')
+                .collect();
             if let Ok(v) = num.parse::<f64>() {
                 if (1.0..=50.0).contains(&v) {
                     return Some(v);
@@ -270,15 +302,13 @@ fn extract_leverage(lc: &str) -> Option<f64> {
 fn extract_symbols(cmd: &str) -> Vec<String> {
     /// All Hyperliquid perp symbols we're willing to accept as a whitelist.
     const KNOWN: &[&str] = &[
-        "BTC", "ETH", "SOL", "BNB", "AVAX", "ADA", "DOT", "ATOM", "NEAR",
-        "SUI", "APT", "SEI", "PEPE", "WIF", "BONK", "DOGE", "SHIB", "FLOKI",
-        "BRETT", "MOODENG", "NEIRO", "GOAT", "MEME", "PONKE", "BOME", "PNUT",
-        "ARB", "OP", "MATIC", "STRK", "BLAST", "ZK", "UNI", "AAVE", "CRV",
-        "MKR", "SNX", "COMP", "SUSHI", "JUP", "ORCA", "DRIFT", "GMX", "DYDX",
-        "ONDO", "FET", "AGIX", "OCEAN", "RNDR", "WLD", "TAO", "GRT", "LTC",
-        "XRP", "LINK", "FTM", "INJ", "TIA", "PYTH", "JTO", "MANTA", "ALT",
-        "DYM", "PIXEL", "PORTAL", "WBTC", "ORDI", "SATS", "ENA", "ETHFI",
-        "EIGEN", "CELO", "IMX", "ICP", "LDO", "RPL", "PENDLE", "BANANA",
+        "BTC", "ETH", "SOL", "BNB", "AVAX", "ADA", "DOT", "ATOM", "NEAR", "SUI", "APT", "SEI",
+        "PEPE", "WIF", "BONK", "DOGE", "SHIB", "FLOKI", "BRETT", "MOODENG", "NEIRO", "GOAT",
+        "MEME", "PONKE", "BOME", "PNUT", "ARB", "OP", "MATIC", "STRK", "BLAST", "ZK", "UNI",
+        "AAVE", "CRV", "MKR", "SNX", "COMP", "SUSHI", "JUP", "ORCA", "DRIFT", "GMX", "DYDX",
+        "ONDO", "FET", "AGIX", "OCEAN", "RNDR", "WLD", "TAO", "GRT", "LTC", "XRP", "LINK", "FTM",
+        "INJ", "TIA", "PYTH", "JTO", "MANTA", "ALT", "DYM", "PIXEL", "PORTAL", "WBTC", "ORDI",
+        "SATS", "ENA", "ETHFI", "EIGEN", "CELO", "IMX", "ICP", "LDO", "RPL", "PENDLE", "BANANA",
         "TURBO", "MOG", "POPCAT", "FWOG", "GIGA", "MICHI",
     ];
 
@@ -287,8 +317,7 @@ fn extract_symbols(cmd: &str) -> Vec<String> {
     let parts: Vec<&str> = cmd.split(|c: char| !c.is_alphanumeric()).collect();
     for part in parts {
         let up = part.to_ascii_uppercase();
-        if up.len() >= 2 && up.len() <= 6 && KNOWN.contains(&up.as_str())
-            && !found.contains(&up) {
+        if up.len() >= 2 && up.len() <= 6 && KNOWN.contains(&up.as_str()) && !found.contains(&up) {
             found.push(up);
         }
     }
@@ -304,12 +333,12 @@ fn build_summary(c: &ThesisConstraints) -> Option<String> {
     } else if let Some(ref sector) = c.sector_filter {
         let label = match sector.as_str() {
             "meme" => "Meme coins",
-            "l1"   => "Layer-1",
-            "l2"   => "Layer-2",
+            "l1" => "Layer-1",
+            "l2" => "Layer-2",
             "defi" => "DeFi",
-            "rwa"  => "RWA",
-            "ai"   => "AI coins",
-            other  => other,
+            "rwa" => "RWA",
+            "ai" => "AI coins",
+            other => other,
         };
         parts.push(label.to_string());
     }
@@ -322,7 +351,11 @@ fn build_summary(c: &ThesisConstraints) -> Option<String> {
         }
     }
 
-    if parts.is_empty() { None } else { Some(parts.join(" · ")) }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" · "))
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -400,7 +433,10 @@ mod tests {
     fn meme_coins_phrase_sets_sector() {
         let c = parse_command("only invest in meme coins").unwrap();
         assert_eq!(c.sector_filter.as_deref(), Some("meme"));
-        assert!(c.symbol_whitelist.is_none(), "sector overrides symbol extraction");
+        assert!(
+            c.symbol_whitelist.is_none(),
+            "sector overrides symbol extraction"
+        );
     }
 
     #[test]

@@ -42,14 +42,14 @@ use uuid::Uuid;
 #[derive(Debug, Clone)]
 pub struct CrowdSignal {
     /// How many users are currently in this symbol.
-    pub holder_count:   i64,
+    pub holder_count: i64,
     /// Average unrealised P&L across all holders (as % of margin).
-    pub avg_pnl_pct:    f64,
+    pub avg_pnl_pct: f64,
     /// Total USD margin committed across all holders.
     #[allow(dead_code)]
     pub total_size_usd: f64,
     /// Dominant direction: `"LONG"`, `"SHORT"`, or `"MIXED"`.
-    pub crowd_side:     String,
+    pub crowd_side: String,
 }
 
 impl CrowdSignal {
@@ -65,11 +65,13 @@ impl CrowdSignal {
     ///
     /// The magnitude scales linearly with `holder_count` up to 5 holders.
     pub fn confidence_multiplier(&self, proposed_side: &str) -> f64 {
-        if self.holder_count < 2 { return 1.0; }
+        if self.holder_count < 2 {
+            return 1.0;
+        }
 
         let same_direction = self.crowd_side == proposed_side || self.crowd_side == "MIXED";
-        let winning = self.avg_pnl_pct >  1.5;
-        let losing  = self.avg_pnl_pct < -1.5;
+        let winning = self.avg_pnl_pct > 1.5;
+        let losing = self.avg_pnl_pct < -1.5;
         // Scale effect by number of holders, capped at 5 for maximum effect
         let scale = (self.holder_count as f64 / 5.0).min(1.0);
 
@@ -94,8 +96,14 @@ impl CrowdSignal {
 
 /// Encode a signal as +1 (agreed with trade direction), -1 (opposed), or 0 (absent).
 fn align(present: bool, bullish: bool, was_long: bool) -> i16 {
-    if !present { return 0; }
-    if bullish == was_long { 1 } else { -1 }
+    if !present {
+        return 0;
+    }
+    if bullish == was_long {
+        1
+    } else {
+        -1
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -107,15 +115,15 @@ fn align(present: bool, bullish: bool, was_long: bool) -> i16 {
 /// Fire-and-forget: errors are logged at DEBUG level but never bubble up
 /// to the trading loop — a failed insert must never stall position closes.
 pub async fn record_outcome(
-    db:         &Database,
-    tenant_id:  Option<Uuid>,
-    pos:        &PaperPosition,
+    db: &Database,
+    tenant_id: Option<Uuid>,
+    pos: &PaperPosition,
     exit_price: f64,
-    pnl_pct:    f64,
+    pnl_pct: f64,
     r_multiple: f64,
 ) {
     let was_long = pos.side == "LONG";
-    let c        = &pos.contrib;
+    let c = &pos.contrib;
 
     let outcome = if pnl_pct > 0.5 {
         "win"
@@ -149,23 +157,29 @@ pub async fn record_outcome(
         pnl_pct,
         r_multiple,
         pos.cycles_held as i32,
-        align(true, c.rsi_bullish,       was_long),
-        align(true, c.bb_bullish,        was_long),
-        align(true, c.macd_bullish,      was_long),
+        align(true, c.rsi_bullish, was_long),
+        align(true, c.bb_bullish, was_long),
+        align(true, c.macd_bullish, was_long),
         align(true, c.ema_cross_bullish, was_long),
-        align(true, c.of_bullish,        was_long),
-        align(c.z_score_present,         c.z_score_bullish,   was_long),
-        align(c.volume_present,          c.volume_bullish,    was_long),
-        align(c.sentiment_present,       c.sentiment_bullish, was_long),
-        align(c.funding_present,         c.funding_bullish,   was_long),
-        align(true, c.trend_bullish,     was_long),
-        align(c.candle_pattern_present,  c.candle_pattern_bullish, was_long),
-        align(c.chart_pattern_present,   c.chart_pattern_bullish,  was_long),
+        align(true, c.of_bullish, was_long),
+        align(c.z_score_present, c.z_score_bullish, was_long),
+        align(c.volume_present, c.volume_bullish, was_long),
+        align(c.sentiment_present, c.sentiment_bullish, was_long),
+        align(c.funding_present, c.funding_bullish, was_long),
+        align(true, c.trend_bullish, was_long),
+        align(c.candle_pattern_present, c.candle_pattern_bullish, was_long),
+        align(c.chart_pattern_present, c.chart_pattern_bullish, was_long),
         outcome,
     )
     .execute(db.pool())
     .await
-    .map_err(|e| log::debug!("collective: record_outcome failed for {}: {}", pos.symbol, e));
+    .map_err(|e| {
+        log::debug!(
+            "collective: record_outcome failed for {}: {}",
+            pos.symbol,
+            e
+        )
+    });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -174,11 +188,7 @@ pub async fn record_outcome(
 
 /// Upsert a newly opened position into `hot_positions`.
 /// Called immediately after execute_paper_trade succeeds.
-pub async fn upsert_hot_position(
-    db:        &Database,
-    tenant_id: Uuid,
-    pos:       &PaperPosition,
-) {
+pub async fn upsert_hot_position(db: &Database, tenant_id: Uuid, pos: &PaperPosition) {
     let _ = sqlx::query!(
         r#"INSERT INTO hot_positions
                (tenant_id, symbol, side, entry_price, size_usd, unrealised_pnl_pct)
@@ -197,17 +207,18 @@ pub async fn upsert_hot_position(
     )
     .execute(db.pool())
     .await
-    .map_err(|e| log::debug!("collective: upsert_hot_position failed for {}: {}", pos.symbol, e));
+    .map_err(|e| {
+        log::debug!(
+            "collective: upsert_hot_position failed for {}: {}",
+            pos.symbol,
+            e
+        )
+    });
 }
 
 /// Update the unrealised P&L of a live position.
 /// Called in the position management loop each cycle.
-pub async fn update_hot_pnl(
-    db:         &Database,
-    tenant_id:  Uuid,
-    symbol:     &str,
-    pnl_pct:    f64,
-) {
+pub async fn update_hot_pnl(db: &Database, tenant_id: Uuid, symbol: &str, pnl_pct: f64) {
     let _ = sqlx::query!(
         "UPDATE hot_positions SET unrealised_pnl_pct = $1
          WHERE tenant_id = $2 AND symbol = $3",
@@ -222,11 +233,7 @@ pub async fn update_hot_pnl(
 
 /// Delete a position from `hot_positions` when it closes.
 /// Called at the top of close_paper_position.
-pub async fn remove_hot_position(
-    db:        &Database,
-    tenant_id: Uuid,
-    symbol:    &str,
-) {
+pub async fn remove_hot_position(db: &Database, tenant_id: Uuid, symbol: &str) {
     let _ = sqlx::query!(
         "DELETE FROM hot_positions WHERE tenant_id = $1 AND symbol = $2",
         tenant_id,
@@ -234,7 +241,13 @@ pub async fn remove_hot_position(
     )
     .execute(db.pool())
     .await
-    .map_err(|e| log::debug!("collective: remove_hot_position failed for {}: {}", symbol, e));
+    .map_err(|e| {
+        log::debug!(
+            "collective: remove_hot_position failed for {}: {}",
+            symbol,
+            e
+        )
+    });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -261,9 +274,11 @@ pub async fn get_crowd_signal(db: &Database, symbol: &str) -> Option<CrowdSignal
     .ok()??;
 
     let holder_count = row.holder_count.unwrap_or(0);
-    if holder_count == 0 { return None; }
+    if holder_count == 0 {
+        return None;
+    }
 
-    let longs  = row.longs.unwrap_or(0);
+    let longs = row.longs.unwrap_or(0);
     let shorts = row.shorts.unwrap_or(0);
 
     let crowd_side = if longs > shorts * 2 {
@@ -276,7 +291,7 @@ pub async fn get_crowd_signal(db: &Database, symbol: &str) -> Option<CrowdSignal
 
     Some(CrowdSignal {
         holder_count,
-        avg_pnl_pct:    row.avg_pnl_pct.unwrap_or(0.0),
+        avg_pnl_pct: row.avg_pnl_pct.unwrap_or(0.0),
         total_size_usd: row.total_size_usd.unwrap_or(0.0),
         crowd_side,
     })
@@ -298,11 +313,10 @@ pub async fn get_crowd_signal(db: &Database, symbol: &str) -> Option<CrowdSignal
 ///
 /// Returns `None` when fewer than `min_trades` outcomes exist (not enough data).
 pub async fn recalculate_collective_weights(
-    db:              &Database,
+    db: &Database,
     current_weights: &SignalWeights,
-    min_trades:      i64,
+    min_trades: i64,
 ) -> Option<SignalWeights> {
-
     // Aggregate signal alignment by win/loss for the past 90 days
     let rows = sqlx::query!(
         r#"SELECT
@@ -344,7 +358,8 @@ pub async fn recalculate_collective_weights(
     if total < min_trades {
         log::info!(
             "🧠 Collective: {} outcomes recorded — need {} before recalculating weights",
-            total, min_trades
+            total,
+            min_trades
         );
         return None;
     }
@@ -353,28 +368,30 @@ pub async fn recalculate_collective_weights(
     macro_rules! tally {
         ($rows:expr, $wins:ident, $tot:ident, $aligned:ident, $opposed:ident) => {
             let mut $wins = 0i64;
-            let mut $tot  = 0i64;
+            let mut $tot = 0i64;
             for row in &$rows {
                 let a = row.$aligned.unwrap_or(0);
                 let o = row.$opposed.unwrap_or(0);
                 $tot += a + o;
-                if row.outcome == "win" { $wins += a; }
+                if row.outcome == "win" {
+                    $wins += a;
+                }
             }
         };
     }
 
-    tally!(rows, rsi_w,  rsi_t,  rsi_aligned,  rsi_opposed);
-    tally!(rows, bb_w,   bb_t,   bb_aligned,   bb_opposed);
+    tally!(rows, rsi_w, rsi_t, rsi_aligned, rsi_opposed);
+    tally!(rows, bb_w, bb_t, bb_aligned, bb_opposed);
     tally!(rows, macd_w, macd_t, macd_aligned, macd_opposed);
-    tally!(rows, ema_w,  ema_t,  ema_aligned,  ema_opposed);
-    tally!(rows, of_w,   of_t,   of_aligned,   of_opposed);
-    tally!(rows, z_w,    z_t,    z_aligned,    z_opposed);
-    tally!(rows, vol_w,  vol_t,  vol_aligned,  vol_opposed);
+    tally!(rows, ema_w, ema_t, ema_aligned, ema_opposed);
+    tally!(rows, of_w, of_t, of_aligned, of_opposed);
+    tally!(rows, z_w, z_t, z_aligned, z_opposed);
+    tally!(rows, vol_w, vol_t, vol_aligned, vol_opposed);
     tally!(rows, sent_w, sent_t, sent_aligned, sent_opposed);
     tally!(rows, fund_w, fund_t, fund_aligned, fund_opposed);
-    tally!(rows, trend_w,trend_t,trend_aligned,trend_opposed);
-    tally!(rows, cnd_w,  cnd_t,  cnd_aligned,  cnd_opposed);
-    tally!(rows, cht_w,  cht_t,  cht_aligned,  cht_opposed);
+    tally!(rows, trend_w, trend_t, trend_aligned, trend_opposed);
+    tally!(rows, cnd_w, cnd_t, cnd_aligned, cnd_opposed);
+    tally!(rows, cht_w, cht_t, cht_aligned, cht_opposed);
 
     // Laplace-smoothed precision: P(win | aligned) with add-1/add-2 smoothing
     fn precision(wins: i64, total: i64) -> f64 {
@@ -393,20 +410,20 @@ pub async fn recalculate_collective_weights(
     }
 
     let mut new_w = current_weights.clone();
-    new_w.rsi          = blend(precision(rsi_w,  rsi_t),  current_weights.rsi);
-    new_w.bollinger    = blend(precision(bb_w,   bb_t),   current_weights.bollinger);
-    new_w.macd         = blend(precision(macd_w, macd_t), current_weights.macd);
-    new_w.ema_cross    = blend(precision(ema_w,  ema_t),  current_weights.ema_cross);
-    new_w.order_flow   = blend(precision(of_w,   of_t),   current_weights.order_flow);
-    new_w.z_score      = blend(precision(z_w,    z_t),    current_weights.z_score);
-    new_w.volume       = blend(precision(vol_w,  vol_t),  current_weights.volume);
-    new_w.sentiment    = blend(precision(sent_w, sent_t), current_weights.sentiment);
+    new_w.rsi = blend(precision(rsi_w, rsi_t), current_weights.rsi);
+    new_w.bollinger = blend(precision(bb_w, bb_t), current_weights.bollinger);
+    new_w.macd = blend(precision(macd_w, macd_t), current_weights.macd);
+    new_w.ema_cross = blend(precision(ema_w, ema_t), current_weights.ema_cross);
+    new_w.order_flow = blend(precision(of_w, of_t), current_weights.order_flow);
+    new_w.z_score = blend(precision(z_w, z_t), current_weights.z_score);
+    new_w.volume = blend(precision(vol_w, vol_t), current_weights.volume);
+    new_w.sentiment = blend(precision(sent_w, sent_t), current_weights.sentiment);
     new_w.funding_rate = blend(precision(fund_w, fund_t), current_weights.funding_rate);
-    new_w.trend        = blend(precision(trend_w,trend_t),current_weights.trend);
+    new_w.trend = blend(precision(trend_w, trend_t), current_weights.trend);
     // candle_pattern and chart_pattern if they exist in SignalWeights
     // (they were added in a prior session — blend them too)
     new_w.candle_pattern = blend(precision(cnd_w, cnd_t), current_weights.candle_pattern);
-    new_w.chart_pattern  = blend(precision(cht_w, cht_t), current_weights.chart_pattern);
+    new_w.chart_pattern = blend(precision(cht_w, cht_t), current_weights.chart_pattern);
 
     new_w.clamp_and_normalise();
 
@@ -414,8 +431,13 @@ pub async fn recalculate_collective_weights(
         "🧠 Collective weights recalculated from {} trades (90d) → \
          rsi:{:.3} bb:{:.3} macd:{:.3} ema:{:.3} of:{:.3} z:{:.3} vol:{:.3}",
         total,
-        new_w.rsi, new_w.bollinger, new_w.macd, new_w.ema_cross,
-        new_w.order_flow, new_w.z_score, new_w.volume
+        new_w.rsi,
+        new_w.bollinger,
+        new_w.macd,
+        new_w.ema_cross,
+        new_w.order_flow,
+        new_w.z_score,
+        new_w.volume
     );
 
     Some(new_w)
@@ -432,8 +454,10 @@ mod tests {
     #[test]
     fn crowd_multiplier_returns_1_for_single_holder() {
         let s = CrowdSignal {
-            holder_count: 1, avg_pnl_pct: 10.0,
-            total_size_usd: 500.0, crowd_side: "LONG".to_string(),
+            holder_count: 1,
+            avg_pnl_pct: 10.0,
+            total_size_usd: 500.0,
+            crowd_side: "LONG".to_string(),
         };
         assert_eq!(s.confidence_multiplier("LONG"), 1.0);
     }
@@ -441,22 +465,34 @@ mod tests {
     #[test]
     fn crowd_winning_same_side_increases_confidence() {
         let s = CrowdSignal {
-            holder_count: 5, avg_pnl_pct: 5.0,
-            total_size_usd: 2500.0, crowd_side: "LONG".to_string(),
+            holder_count: 5,
+            avg_pnl_pct: 5.0,
+            total_size_usd: 2500.0,
+            crowd_side: "LONG".to_string(),
         };
         let mult = s.confidence_multiplier("LONG");
-        assert!(mult > 1.0, "winning crowd same side should increase confidence, got {}", mult);
+        assert!(
+            mult > 1.0,
+            "winning crowd same side should increase confidence, got {}",
+            mult
+        );
         assert!(mult <= 1.15, "multiplier capped, got {}", mult);
     }
 
     #[test]
     fn crowd_losing_same_side_decreases_confidence() {
         let s = CrowdSignal {
-            holder_count: 5, avg_pnl_pct: -4.0,
-            total_size_usd: 2500.0, crowd_side: "LONG".to_string(),
+            holder_count: 5,
+            avg_pnl_pct: -4.0,
+            total_size_usd: 2500.0,
+            crowd_side: "LONG".to_string(),
         };
         let mult = s.confidence_multiplier("LONG");
-        assert!(mult < 1.0, "losing crowd same side should decrease confidence, got {}", mult);
+        assert!(
+            mult < 1.0,
+            "losing crowd same side should decrease confidence, got {}",
+            mult
+        );
         assert!(mult >= 0.80, "floor respected, got {}", mult);
     }
 
@@ -464,39 +500,65 @@ mod tests {
     fn crowd_losing_opposite_side_is_contrarian_boost() {
         // Others shorted and are losing → we want to go LONG (contrarian edge)
         let s = CrowdSignal {
-            holder_count: 3, avg_pnl_pct: -3.0,
-            total_size_usd: 1500.0, crowd_side: "SHORT".to_string(),
+            holder_count: 3,
+            avg_pnl_pct: -3.0,
+            total_size_usd: 1500.0,
+            crowd_side: "SHORT".to_string(),
         };
         let mult = s.confidence_multiplier("LONG");
-        assert!(mult > 1.0, "contrarian signal should boost confidence, got {}", mult);
+        assert!(
+            mult > 1.0,
+            "contrarian signal should boost confidence, got {}",
+            mult
+        );
     }
 
     #[test]
     fn crowd_winning_opposite_side_is_caution() {
         // Others shorted and are winning → our LONG is risky
         let s = CrowdSignal {
-            holder_count: 4, avg_pnl_pct: 3.5,
-            total_size_usd: 2000.0, crowd_side: "SHORT".to_string(),
+            holder_count: 4,
+            avg_pnl_pct: 3.5,
+            total_size_usd: 2000.0,
+            crowd_side: "SHORT".to_string(),
         };
         let mult = s.confidence_multiplier("LONG");
-        assert!(mult < 1.0, "opposing winning crowd should decrease confidence, got {}", mult);
+        assert!(
+            mult < 1.0,
+            "opposing winning crowd should decrease confidence, got {}",
+            mult
+        );
     }
 
     #[test]
     fn neutral_pnl_returns_1_multiplier() {
         let s = CrowdSignal {
-            holder_count: 3, avg_pnl_pct: 0.2, // below both thresholds
-            total_size_usd: 1500.0, crowd_side: "LONG".to_string(),
+            holder_count: 3,
+            avg_pnl_pct: 0.2, // below both thresholds
+            total_size_usd: 1500.0,
+            crowd_side: "LONG".to_string(),
         };
         assert_eq!(s.confidence_multiplier("LONG"), 1.0);
     }
 
     #[test]
     fn align_encoding_correct() {
-        assert_eq!(align(false, true,  true),  0,  "absent signal → 0");
-        assert_eq!(align(true,  true,  true),  1,  "bullish + long = aligned → +1");
-        assert_eq!(align(true,  false, false),  1, "bearish + short = aligned → +1");
-        assert_eq!(align(true,  false, true),  -1, "bearish + long = opposed → -1");
-        assert_eq!(align(true,  true,  false), -1, "bullish + short = opposed → -1");
+        assert_eq!(align(false, true, true), 0, "absent signal → 0");
+        assert_eq!(align(true, true, true), 1, "bullish + long = aligned → +1");
+        assert_eq!(
+            align(true, false, false),
+            1,
+            "bearish + short = aligned → +1"
+        );
+        assert_eq!(
+            align(true, false, true),
+            -1,
+            "bearish + long = opposed → -1"
+        );
+        assert_eq!(
+            align(true, true, false),
+            -1,
+            "bullish + short = opposed → -1"
+        );
     }
 }

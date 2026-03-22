@@ -13,8 +13,8 @@ pub enum Mode {
 #[allow(dead_code)]
 pub struct Config {
     pub mode: Mode,
-    pub trading_symbol: String,        // legacy single-symbol field
-    pub trading_symbols: Vec<String>,  // "ALL" or comma-separated list
+    pub trading_symbol: String,       // legacy single-symbol field
+    pub trading_symbols: Vec<String>, // "ALL" or comma-separated list
     pub initial_capital: f64,
     pub max_position_pct: f64,
     pub max_leverage: f64,
@@ -48,17 +48,17 @@ pub struct Config {
 
     // Stripe — subscription billing
     /// Stripe secret API key (sk_live_… / sk_test_…).
-    pub stripe_secret_key:      Option<String>,
+    pub stripe_secret_key: Option<String>,
     /// Stripe webhook signing secret (whsec_…) — verifies webhook authenticity.
-    pub stripe_webhook_secret:  Option<String>,
+    pub stripe_webhook_secret: Option<String>,
     /// Stripe Price ID for the Pro subscription ($19.99/month).
-    pub stripe_price_id:        Option<String>,
+    pub stripe_price_id: Option<String>,
 
     // Privy — consumer authentication
     /// Privy App ID from https://dashboard.privy.io (your-app-id).
     /// When set, all `/app/*` consumer routes require a valid Privy session.
     /// Leave unset for single-operator deployments (no per-user auth).
-    pub privy_app_id:             Option<String>,
+    pub privy_app_id: Option<String>,
     /// WalletConnect Cloud project ID — enables mobile wallet login (MetaMask Mobile,
     /// Rainbow, Coinbase Wallet, etc.) via Privy's wallet login method.
     /// Get a free project ID at https://cloud.walletconnect.com
@@ -68,7 +68,7 @@ pub struct Config {
     /// Generate with: `openssl rand -hex 32`
     /// Falls back to a random UUID at startup if not set (sessions survive
     /// only until the next server restart in that case).
-    pub session_secret:  String,
+    pub session_secret: String,
 
     // Apple Pay — domain verification
     /// Contents of the Apple Pay domain-association file from Stripe Dashboard.
@@ -101,6 +101,11 @@ pub struct Config {
     // Risk
     pub max_concurrent_trades: usize,
 
+    /// Minimum USD amount allowed per automated bridge withdrawal.
+    pub bridge_min_withdraw_usd: f64,
+    /// Trusted destination prefixes (Arbitrum addresses) for automated withdrawals.
+    pub bridge_trusted_destinations: Vec<String>,
+
     // Paper-trading flag
     pub paper_trading: bool,
 
@@ -129,7 +134,7 @@ impl Config {
         let mode = match mode_str.to_lowercase().as_str() {
             "mainnet" => Mode::Mainnet,
             "testnet" => Mode::Testnet,
-            _         => Mode::Paper,
+            _ => Mode::Paper,
         };
 
         let paper_trading = matches!(mode, Mode::Paper)
@@ -158,36 +163,46 @@ impl Config {
             max_leverage: 10.0,
             daily_loss_limit: 50.0,
             min_health_factor: 2.0,
-            binance_api_key:            env::var("BINANCE_API_KEY").ok(),
-            hyperliquid_key:            env::var("HYPERLIQUID_KEY").ok(),
-            hyperliquid_secret:         env::var("HYPERLIQUID_SECRET").ok(),
+            binance_api_key: env::var("BINANCE_API_KEY").ok(),
+            hyperliquid_key: env::var("HYPERLIQUID_KEY").ok(),
+            hyperliquid_secret: env::var("HYPERLIQUID_SECRET").ok(),
             hyperliquid_wallet_address: env::var("HYPERLIQUID_WALLET_ADDRESS").ok(),
-            builder_code:               env::var("BUILDER_CODE").ok(),
-            builder_fee_bps:            env::var("BUILDER_FEE_BPS")
+            builder_code: env::var("BUILDER_CODE").ok(),
+            builder_fee_bps: env::var("BUILDER_FEE_BPS")
                 .ok()
                 .and_then(|v| v.parse::<u32>().ok())
                 .unwrap_or(1)
                 .min(3), // HL hard cap
-            referral_code:              env::var("REFERRAL_CODE").ok(),
-            stripe_secret_key:          env::var("STRIPE_SECRET_KEY").ok(),
-            stripe_webhook_secret:      env::var("STRIPE_WEBHOOK_SECRET").ok(),
-            stripe_price_id:            env::var("STRIPE_PRICE_ID").ok(),
-            privy_app_id:               env::var("PRIVY_APP_ID").ok(),
-            walletconnect_project_id:   env::var("WALLETCONNECT_PROJECT_ID").ok(),
-            session_secret:             env::var("SESSION_SECRET")
+            referral_code: env::var("REFERRAL_CODE").ok(),
+            stripe_secret_key: env::var("STRIPE_SECRET_KEY").ok(),
+            stripe_webhook_secret: env::var("STRIPE_WEBHOOK_SECRET").ok(),
+            stripe_price_id: env::var("STRIPE_PRICE_ID").ok(),
+            privy_app_id: env::var("PRIVY_APP_ID").ok(),
+            walletconnect_project_id: env::var("WALLETCONNECT_PROJECT_ID").ok(),
+            session_secret: env::var("SESSION_SECRET")
                 .unwrap_or_else(|_| uuid::Uuid::new_v4().to_string()),
-            apple_pay_domain_assoc:     env::var("APPLE_PAY_DOMAIN_ASSOC").ok(),
-            admin_password:             env::var("ADMIN_PASSWORD").ok(),
-            coinzilla_zone_id:          env::var("COINZILLA_ZONE_ID").ok(),
-            email_api_key:              env::var("RESEND_API_KEY").ok(),
-            email_from:                 env::var("EMAIL_FROM").ok(),
-            stripe_promo_price_id:      env::var("STRIPE_PROMO_PRICE_ID").ok(),
-            lunarcrush_api_key:         env::var("LUNARCRUSH_API_KEY")
+            apple_pay_domain_assoc: env::var("APPLE_PAY_DOMAIN_ASSOC").ok(),
+            admin_password: env::var("ADMIN_PASSWORD").ok(),
+            coinzilla_zone_id: env::var("COINZILLA_ZONE_ID").ok(),
+            email_api_key: env::var("RESEND_API_KEY").ok(),
+            email_from: env::var("EMAIL_FROM").ok(),
+            stripe_promo_price_id: env::var("STRIPE_PROMO_PRICE_ID").ok(),
+            lunarcrush_api_key: env::var("LUNARCRUSH_API_KEY")
                 .unwrap_or_else(|_| "77c4fcm050bnxe49qo1h2n252umls0rrtkevh5uni".to_string()),
-            anthropic_api_key:          env::var("ANTHROPIC_API_KEY").ok(),
+            anthropic_api_key: env::var("ANTHROPIC_API_KEY").ok(),
             database_url: env::var("DATABASE_URL")
                 .unwrap_or_else(|_| "sqlite:///var/data/tradingbots.db".to_string()),
             max_concurrent_trades: 3,
+            bridge_min_withdraw_usd: env::var("BRIDGE_MIN_WITHDRAW_USD")
+                .ok()
+                .and_then(|v| v.parse::<f64>().ok())
+                .unwrap_or(50.0),
+            bridge_trusted_destinations: env::var("BRIDGE_TRUSTED_DESTINATIONS")
+                .unwrap_or_default()
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect(),
             paper_trading,
         })
     }

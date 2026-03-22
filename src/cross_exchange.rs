@@ -119,11 +119,11 @@ pub struct CrossExchangeSignal {
     /// Negative = HL trading below CEX.
     pub hl_premium_pct: f64,
     /// Number of consecutive cycles this divergence has persisted.
-    pub persistence:    u32,
+    pub persistence: u32,
     /// True when the signal is active (persistence gate met, or extreme bypass).
-    pub active:         bool,
+    pub active: bool,
     /// How the signal is being interpreted — changes with magnitude.
-    pub mode:           DivergenceMode,
+    pub mode: DivergenceMode,
 }
 
 impl CrossExchangeSignal {
@@ -144,7 +144,9 @@ impl CrossExchangeSignal {
     ///   Weight: scales toward MAX_REVERSION_WEIGHT (0.12) with divergence.
     ///   A 3% anomaly gets the full cap; a 1.5% anomaly gets ~half.
     pub fn score_contribution(&self) -> (f64, f64) {
-        if !self.active { return (0.0, 0.0); }
+        if !self.active {
+            return (0.0, 0.0);
+        }
 
         let abs_pct = self.hl_premium_pct.abs();
 
@@ -154,7 +156,11 @@ impl CrossExchangeSignal {
             DivergenceMode::Momentum => {
                 // Linear scale up to the momentum cap.
                 let w = ((abs_pct / 0.50) * MAX_MOMENTUM_WEIGHT).min(MAX_MOMENTUM_WEIGHT);
-                if self.hl_premium_pct > 0.0 { (w, 0.0) } else { (0.0, w) }
+                if self.hl_premium_pct > 0.0 {
+                    (w, 0.0)
+                } else {
+                    (0.0, w)
+                }
             }
 
             DivergenceMode::MeanReversion => {
@@ -173,18 +179,30 @@ impl CrossExchangeSignal {
     /// Direction emoji for rationale / dashboard.
     pub fn emoji(&self) -> &'static str {
         match self.mode {
-            DivergenceMode::Inactive    => "⚪",
-            DivergenceMode::Momentum    => if self.hl_premium_pct > 0.0 { "🟢" } else { "🔴" },
+            DivergenceMode::Inactive => "⚪",
+            DivergenceMode::Momentum => {
+                if self.hl_premium_pct > 0.0 {
+                    "🟢"
+                } else {
+                    "🔴"
+                }
+            }
             // Reversion: direction of the expected MOVE, not the current premium.
-            DivergenceMode::MeanReversion => if self.hl_premium_pct > 0.0 { "🔴⟳" } else { "🟢⟳" },
+            DivergenceMode::MeanReversion => {
+                if self.hl_premium_pct > 0.0 {
+                    "🔴⟳"
+                } else {
+                    "🟢⟳"
+                }
+            }
         }
     }
 
     /// Short mode label for rationale string.
     pub fn mode_label(&self) -> &'static str {
         match self.mode {
-            DivergenceMode::Inactive      => "",
-            DivergenceMode::Momentum      => "MOM",
+            DivergenceMode::Inactive => "",
+            DivergenceMode::Momentum => "MOM",
             DivergenceMode::MeanReversion => "REV",
         }
     }
@@ -196,7 +214,7 @@ impl CrossExchangeSignal {
 #[derive(Clone)]
 struct CexSnapshot {
     /// Weighted-average price across Binance, ByBit, OKX.
-    ref_price:   f64,
+    ref_price: f64,
     /// How many exchanges contributed to this snapshot.
     source_count: u8,
 }
@@ -205,18 +223,18 @@ struct CexSnapshot {
 #[derive(Default, Clone)]
 struct PersistenceEntry {
     /// Number of consecutive cycles the anomaly has been in the same direction.
-    cycles:    u32,
+    cycles: u32,
     /// Direction of the anomaly: +1 for HL > CEX, -1 for HL < CEX, 0 for none.
     direction: i8,
 }
 
 struct CacheInner {
     /// Latest CEX snapshot per HL symbol.
-    cex_prices:  HashMap<String, CexSnapshot>,
+    cex_prices: HashMap<String, CexSnapshot>,
     /// Persistence tracker per symbol.
     persistence: HashMap<String, PersistenceEntry>,
     /// Timestamp of the last successful CEX fetch.
-    last_fetch:  Option<Instant>,
+    last_fetch: Option<Instant>,
 }
 
 // ─────────────────────────── Main struct ─────────────────────────────────────
@@ -225,7 +243,7 @@ struct CacheInner {
 /// Clone the `Arc` freely — one instance per bot.
 pub struct CrossExchangeMonitor {
     client: Client,
-    inner:  RwLock<CacheInner>,
+    inner: RwLock<CacheInner>,
 }
 
 pub type SharedCrossExchange = Arc<CrossExchangeMonitor>;
@@ -238,9 +256,9 @@ impl CrossExchangeMonitor {
                 .build()
                 .unwrap_or_default(),
             inner: RwLock::new(CacheInner {
-                cex_prices:  HashMap::new(),
+                cex_prices: HashMap::new(),
                 persistence: HashMap::new(),
-                last_fetch:  None,
+                last_fetch: None,
             }),
         })
     }
@@ -269,15 +287,12 @@ impl CrossExchangeMonitor {
     /// Returns `None` when the symbol has no CEX counterpart
     /// (e.g. HL-native tokens not listed on major CEXes) or when
     /// the cache has never been successfully populated.
-    pub async fn evaluate(
-        &self,
-        symbol: &str,
-        hl_mid: f64,
-    ) -> Option<CrossExchangeSignal> {
+    pub async fn evaluate(&self, symbol: &str, hl_mid: f64) -> Option<CrossExchangeSignal> {
         // Refresh if stale.
         {
             let r = self.inner.read().await;
-            let stale = r.last_fetch
+            let stale = r
+                .last_fetch
                 .map(|t| t.elapsed() >= REFRESH_INTERVAL)
                 .unwrap_or(true);
             drop(r);
@@ -291,10 +306,12 @@ impl CrossExchangeMonitor {
 
         let r = self.inner.read().await;
         let snap = r.cex_prices.get(symbol)?;
-        if snap.ref_price <= 0.0 { return None; }
+        if snap.ref_price <= 0.0 {
+            return None;
+        }
 
         let premium_pct = (hl_mid - snap.ref_price) / snap.ref_price * 100.0;
-        let abs_pct     = premium_pct.abs();
+        let abs_pct = premium_pct.abs();
         let persistence = r.persistence.get(symbol).cloned().unwrap_or_default();
 
         // Determine activation.
@@ -302,8 +319,8 @@ impl CrossExchangeMonitor {
         // `persistence.cycles` holds the count from PREVIOUS cycles only.
         // We add +1 to count the current cycle, making PERSISTENCE_CYCLES = 3
         // activate exactly on the 3rd consecutive cycle (not the 4th).
-        let normal_active  = (persistence.cycles + 1) >= PERSISTENCE_CYCLES
-                             && abs_pct >= ANOMALY_THRESHOLD_PCT;
+        let normal_active =
+            (persistence.cycles + 1) >= PERSISTENCE_CYCLES && abs_pct >= ANOMALY_THRESHOLD_PCT;
         // Extreme bypass: divergence ≥2% activates immediately (no persistence wait)
         // because the arb window may close before 3 cycles have elapsed.
         let extreme_bypass = abs_pct >= EXTREME_THRESHOLD_PCT;
@@ -324,15 +341,21 @@ impl CrossExchangeMonitor {
             log::warn!(
                 "🚨 CrossExchange EXTREME anomaly: {} HL{:+.2}% vs CEX \
                  (sources: {}) — {} signal activated immediately",
-                symbol, premium_pct, snap.source_count,
-                if premium_pct > 0.0 { "BEAR/reversion" } else { "BULL/reversion" }
+                symbol,
+                premium_pct,
+                snap.source_count,
+                if premium_pct > 0.0 {
+                    "BEAR/reversion"
+                } else {
+                    "BULL/reversion"
+                }
             );
         }
 
         Some(CrossExchangeSignal {
-            symbol:         symbol.to_string(),
+            symbol: symbol.to_string(),
             hl_premium_pct: premium_pct,
-            persistence:    persistence.cycles,
+            persistence: persistence.cycles,
             active,
             mode,
         })
@@ -349,7 +372,7 @@ impl CrossExchangeMonitor {
 
         if premium_pct.abs() < ANOMALY_THRESHOLD_PCT {
             // Sub-threshold: reset counter.
-            entry.cycles    = 0;
+            entry.cycles = 0;
             entry.direction = 0;
             return;
         }
@@ -358,7 +381,7 @@ impl CrossExchangeMonitor {
 
         if cur_dir != entry.direction {
             // Direction flip: reset to 1 (this cycle is the first in new direction).
-            entry.cycles    = 1;
+            entry.cycles = 1;
             entry.direction = cur_dir;
         } else {
             entry.cycles = entry.cycles.saturating_add(1);
@@ -370,7 +393,8 @@ impl CrossExchangeMonitor {
     #[allow(dead_code)]
     pub async fn active_anomaly_count(&self) -> usize {
         let r = self.inner.read().await;
-        r.persistence.values()
+        r.persistence
+            .values()
             .filter(|e| (e.cycles + 1) >= PERSISTENCE_CYCLES && e.direction != 0)
             .count()
     }
@@ -378,7 +402,9 @@ impl CrossExchangeMonitor {
     /// Age of the CEX price cache in seconds.  `None` if never populated.
     #[allow(dead_code)]
     pub async fn cache_age_secs(&self) -> Option<u64> {
-        self.inner.read().await
+        self.inner
+            .read()
+            .await
             .last_fetch
             .map(|t| t.elapsed().as_secs())
     }
@@ -392,39 +418,63 @@ impl CrossExchangeMonitor {
     async fn refresh_cex_prices(&self) -> Result<usize> {
         // Fire all three requests concurrently; a single exchange failure
         // doesn't block the others.
-        let (bn_res, bb_res, okx_res) = tokio::join!(
-            self.fetch_binance(),
-            self.fetch_bybit(),
-            self.fetch_okx(),
-        );
+        let (bn_res, bb_res, okx_res) =
+            tokio::join!(self.fetch_binance(), self.fetch_bybit(), self.fetch_okx(),);
 
-        let bn  = bn_res.unwrap_or_else(|e| { log::warn!("📡 Binance CEX fetch: {}", e); HashMap::new() });
-        let bb  = bb_res.unwrap_or_else(|e| { log::warn!("📡 ByBit CEX fetch: {}",  e); HashMap::new() });
-        let okx = okx_res.unwrap_or_else(|e| { log::warn!("📡 OKX CEX fetch: {}",   e); HashMap::new() });
+        let bn = bn_res.unwrap_or_else(|e| {
+            log::warn!("📡 Binance CEX fetch: {}", e);
+            HashMap::new()
+        });
+        let bb = bb_res.unwrap_or_else(|e| {
+            log::warn!("📡 ByBit CEX fetch: {}", e);
+            HashMap::new()
+        });
+        let okx = okx_res.unwrap_or_else(|e| {
+            log::warn!("📡 OKX CEX fetch: {}", e);
+            HashMap::new()
+        });
 
         // Merge: union of all symbols seen, average across available exchanges.
         let mut merged: HashMap<String, (f64, u8)> = HashMap::new(); // symbol → (sum, count)
 
-        for (sym, price) in &bn  { let e = merged.entry(sym.clone()).or_insert((0.0, 0)); e.0 += price; e.1 += 1; }
-        for (sym, price) in &bb  { let e = merged.entry(sym.clone()).or_insert((0.0, 0)); e.0 += price; e.1 += 1; }
-        for (sym, price) in &okx { let e = merged.entry(sym.clone()).or_insert((0.0, 0)); e.0 += price; e.1 += 1; }
+        for (sym, price) in &bn {
+            let e = merged.entry(sym.clone()).or_insert((0.0, 0));
+            e.0 += price;
+            e.1 += 1;
+        }
+        for (sym, price) in &bb {
+            let e = merged.entry(sym.clone()).or_insert((0.0, 0));
+            e.0 += price;
+            e.1 += 1;
+        }
+        for (sym, price) in &okx {
+            let e = merged.entry(sym.clone()).or_insert((0.0, 0));
+            e.0 += price;
+            e.1 += 1;
+        }
 
         let populated = merged.len();
 
         let mut w = self.inner.write().await;
         for (sym, (sum, cnt)) in merged {
             if cnt > 0 {
-                w.cex_prices.insert(sym, CexSnapshot {
-                    ref_price:    sum / (cnt as f64),
-                    source_count: cnt,
-                });
+                w.cex_prices.insert(
+                    sym,
+                    CexSnapshot {
+                        ref_price: sum / (cnt as f64),
+                        source_count: cnt,
+                    },
+                );
             }
         }
         w.last_fetch = Some(Instant::now());
 
         log::info!(
             "📡 CrossExchange: {} symbols (Binance={} ByBit={} OKX={})",
-            populated, bn.len(), bb.len(), okx.len()
+            populated,
+            bn.len(),
+            bb.len(),
+            okx.len()
         );
 
         Ok(populated)
@@ -433,7 +483,8 @@ impl CrossExchangeMonitor {
     /// Binance: `GET /api/v3/ticker/price` — returns all symbols in one call.
     /// Response: `[{"symbol": "BTCUSDT", "price": "50000.00"}, ...]`
     async fn fetch_binance(&self) -> Result<HashMap<String, f64>> {
-        let resp = self.client
+        let resp = self
+            .client
             .get("https://api.binance.com/api/v3/ticker/price")
             .send()
             .await?;
@@ -450,7 +501,9 @@ impl CrossExchangeMonitor {
             let price_str = item["price"].as_str().unwrap_or("0");
             let price: f64 = price_str.parse().unwrap_or(0.0);
 
-            if price <= 0.0 { continue; }
+            if price <= 0.0 {
+                continue;
+            }
 
             if let Some(hl_sym) = binance_to_hl(sym_raw) {
                 map.insert(hl_sym, price);
@@ -463,7 +516,8 @@ impl CrossExchangeMonitor {
     /// ByBit: `GET /v5/market/tickers?category=linear` — all linear perpetuals.
     /// Response: `{"result": {"list": [{"symbol": "BTCUSDT", "lastPrice": "50000"}, ...]}}`
     async fn fetch_bybit(&self) -> Result<HashMap<String, f64>> {
-        let resp = self.client
+        let resp = self
+            .client
             .get("https://api.bybit.com/v5/market/tickers")
             .query(&[("category", "linear")])
             .send()
@@ -474,17 +528,20 @@ impl CrossExchangeMonitor {
         }
 
         let body: serde_json::Value = resp.json().await?;
-        let list = body["result"]["list"].as_array()
+        let list = body["result"]["list"]
+            .as_array()
             .ok_or_else(|| anyhow::anyhow!("ByBit: unexpected response shape"))?;
 
         let mut map = HashMap::new();
 
         for item in list {
-            let sym_raw   = item["symbol"].as_str().unwrap_or("");
+            let sym_raw = item["symbol"].as_str().unwrap_or("");
             let price_str = item["lastPrice"].as_str().unwrap_or("0");
             let price: f64 = price_str.parse().unwrap_or(0.0);
 
-            if price <= 0.0 { continue; }
+            if price <= 0.0 {
+                continue;
+            }
 
             if let Some(hl_sym) = bybit_to_hl(sym_raw) {
                 map.insert(hl_sym, price);
@@ -497,7 +554,8 @@ impl CrossExchangeMonitor {
     /// OKX: `GET /api/v5/market/tickers?instType=SWAP` — all swap (perp) instruments.
     /// Response: `{"data": [{"instId": "BTC-USDT-SWAP", "last": "50000"}, ...]}`
     async fn fetch_okx(&self) -> Result<HashMap<String, f64>> {
-        let resp = self.client
+        let resp = self
+            .client
             .get("https://www.okx.com/api/v5/market/tickers")
             .query(&[("instType", "SWAP")])
             .send()
@@ -508,17 +566,20 @@ impl CrossExchangeMonitor {
         }
 
         let body: serde_json::Value = resp.json().await?;
-        let list = body["data"].as_array()
+        let list = body["data"]
+            .as_array()
             .ok_or_else(|| anyhow::anyhow!("OKX: unexpected response shape"))?;
 
         let mut map = HashMap::new();
 
         for item in list {
-            let inst_id   = item["instId"].as_str().unwrap_or("");
+            let inst_id = item["instId"].as_str().unwrap_or("");
             let price_str = item["last"].as_str().unwrap_or("0");
             let price: f64 = price_str.parse().unwrap_or(0.0);
 
-            if price <= 0.0 { continue; }
+            if price <= 0.0 {
+                continue;
+            }
 
             if let Some(hl_sym) = okx_to_hl(inst_id) {
                 map.insert(hl_sym, price);
@@ -600,9 +661,9 @@ mod tests {
 
     #[test]
     fn binance_plain_symbol() {
-        assert_eq!(binance_to_hl("BTCUSDT"),  Some("BTC".into()));
-        assert_eq!(binance_to_hl("ETHUSDT"),  Some("ETH".into()));
-        assert_eq!(binance_to_hl("SOLUSDT"),  Some("SOL".into()));
+        assert_eq!(binance_to_hl("BTCUSDT"), Some("BTC".into()));
+        assert_eq!(binance_to_hl("ETHUSDT"), Some("ETH".into()));
+        assert_eq!(binance_to_hl("SOLUSDT"), Some("SOL".into()));
         assert_eq!(binance_to_hl("AVAXUSDT"), Some("AVAX".into()));
     }
 
@@ -616,22 +677,22 @@ mod tests {
     #[test]
     fn binance_composite_indices_filtered() {
         assert_eq!(binance_to_hl("BTCDOMUSDT"), None);
-        assert_eq!(binance_to_hl("DEFIUSDT"),   None);
+        assert_eq!(binance_to_hl("DEFIUSDT"), None);
     }
 
     #[test]
     fn binance_non_usdt_filtered() {
         // Not a USDT pair — should return None.
-        assert_eq!(binance_to_hl("BTCBUSD"),  None);
-        assert_eq!(binance_to_hl("ETHBTC"),   None);
+        assert_eq!(binance_to_hl("BTCBUSD"), None);
+        assert_eq!(binance_to_hl("ETHBTC"), None);
     }
 
     #[test]
     fn okx_swap_to_hl() {
-        assert_eq!(okx_to_hl("BTC-USDT-SWAP"),  Some("BTC".into()));
-        assert_eq!(okx_to_hl("ETH-USDT-SWAP"),  Some("ETH".into()));
-        assert_eq!(okx_to_hl("SOL-USDT-SWAP"),  Some("SOL".into()));
-        assert_eq!(okx_to_hl("BTC-USD-SWAP"),   None);  // coin-margined, not USDT
+        assert_eq!(okx_to_hl("BTC-USDT-SWAP"), Some("BTC".into()));
+        assert_eq!(okx_to_hl("ETH-USDT-SWAP"), Some("ETH".into()));
+        assert_eq!(okx_to_hl("SOL-USDT-SWAP"), Some("SOL".into()));
+        assert_eq!(okx_to_hl("BTC-USD-SWAP"), None); // coin-margined, not USDT
     }
 
     // ── Persistence / signal tests ────────────────────────────────────────────
@@ -639,11 +700,11 @@ mod tests {
     #[test]
     fn signal_inactive_below_threshold() {
         let sig = CrossExchangeSignal {
-            symbol:         "BTC".into(),
+            symbol: "BTC".into(),
             hl_premium_pct: 0.10,
-            persistence:    5,
-            active:         false,
-            mode:           DivergenceMode::Inactive,
+            persistence: 5,
+            active: false,
+            mode: DivergenceMode::Inactive,
         };
         let (bull, bear) = sig.score_contribution();
         assert_eq!(bull, 0.0);
@@ -654,107 +715,147 @@ mod tests {
     #[test]
     fn signal_momentum_positive_premium_gives_bull() {
         let sig = CrossExchangeSignal {
-            symbol:         "ETH".into(),
+            symbol: "ETH".into(),
             hl_premium_pct: 0.50,
-            persistence:    3,
-            active:         true,
-            mode:           DivergenceMode::Momentum,
+            persistence: 3,
+            active: true,
+            mode: DivergenceMode::Momentum,
         };
         let (bull, bear) = sig.score_contribution();
-        assert!(bull  > 0.0, "positive momentum premium should give bull score");
+        assert!(
+            bull > 0.0,
+            "positive momentum premium should give bull score"
+        );
         assert_eq!(bear, 0.0);
-        assert!(bull <= MAX_MOMENTUM_WEIGHT + 1e-9, "momentum bull must not exceed cap");
+        assert!(
+            bull <= MAX_MOMENTUM_WEIGHT + 1e-9,
+            "momentum bull must not exceed cap"
+        );
     }
 
     /// Small negative premium → momentum → bear signal
     #[test]
     fn signal_momentum_negative_premium_gives_bear() {
         let sig = CrossExchangeSignal {
-            symbol:         "SOL".into(),
+            symbol: "SOL".into(),
             hl_premium_pct: -0.50,
-            persistence:    4,
-            active:         true,
-            mode:           DivergenceMode::Momentum,
+            persistence: 4,
+            active: true,
+            mode: DivergenceMode::Momentum,
         };
         let (bull, bear) = sig.score_contribution();
         assert_eq!(bull, 0.0);
-        assert!(bear > 0.0, "negative momentum premium should give bear score");
-        assert!(bear <= MAX_MOMENTUM_WEIGHT + 1e-9, "momentum bear must not exceed cap");
+        assert!(
+            bear > 0.0,
+            "negative momentum premium should give bear score"
+        );
+        assert!(
+            bear <= MAX_MOMENTUM_WEIGHT + 1e-9,
+            "momentum bear must not exceed cap"
+        );
     }
 
     /// Large positive premium (HL overshot) → mean-reversion → BEAR signal (direction flipped)
     #[test]
     fn signal_reversion_large_positive_premium_gives_bear() {
         let sig = CrossExchangeSignal {
-            symbol:         "BTC".into(),
-            hl_premium_pct: 3.0,   // HL 3% above CEX — will snap down
-            persistence:    1,     // extreme bypass — only 1 cycle
-            active:         true,
-            mode:           DivergenceMode::MeanReversion,
+            symbol: "BTC".into(),
+            hl_premium_pct: 3.0, // HL 3% above CEX — will snap down
+            persistence: 1,      // extreme bypass — only 1 cycle
+            active: true,
+            mode: DivergenceMode::MeanReversion,
         };
         let (bull, bear) = sig.score_contribution();
-        assert_eq!(bull, 0.0, "HL overshooting CEX should be BEAR in reversion mode");
-        assert!(bear > 0.0, "HL overshooting should give bear reversion signal");
-        assert!(bear <= MAX_REVERSION_WEIGHT + 1e-9, "reversion bear must not exceed cap");
+        assert_eq!(
+            bull, 0.0,
+            "HL overshooting CEX should be BEAR in reversion mode"
+        );
+        assert!(
+            bear > 0.0,
+            "HL overshooting should give bear reversion signal"
+        );
+        assert!(
+            bear <= MAX_REVERSION_WEIGHT + 1e-9,
+            "reversion bear must not exceed cap"
+        );
     }
 
     /// Large negative premium (HL undershot) → mean-reversion → BULL signal (direction flipped)
     #[test]
     fn signal_reversion_large_negative_premium_gives_bull() {
         let sig = CrossExchangeSignal {
-            symbol:         "ETH".into(),
-            hl_premium_pct: -3.0,  // HL 3% below CEX — will snap up
-            persistence:    1,
-            active:         true,
-            mode:           DivergenceMode::MeanReversion,
+            symbol: "ETH".into(),
+            hl_premium_pct: -3.0, // HL 3% below CEX — will snap up
+            persistence: 1,
+            active: true,
+            mode: DivergenceMode::MeanReversion,
         };
         let (bull, bear) = sig.score_contribution();
-        assert!(bull > 0.0, "HL undershooting CEX should be BULL in reversion mode");
+        assert!(
+            bull > 0.0,
+            "HL undershooting CEX should be BULL in reversion mode"
+        );
         assert_eq!(bear, 0.0);
-        assert!(bull <= MAX_REVERSION_WEIGHT + 1e-9, "reversion bull must not exceed cap");
+        assert!(
+            bull <= MAX_REVERSION_WEIGHT + 1e-9,
+            "reversion bull must not exceed cap"
+        );
     }
 
     /// Reversion weight grows with magnitude up to the cap
     #[test]
     fn signal_reversion_weight_scales_with_magnitude_and_caps() {
         let make = |pct: f64| CrossExchangeSignal {
-            symbol:         "BTC".into(),
+            symbol: "BTC".into(),
             hl_premium_pct: -pct,
-            persistence:    1,
-            active:         true,
-            mode:           DivergenceMode::MeanReversion,
+            persistence: 1,
+            active: true,
+            mode: DivergenceMode::MeanReversion,
         };
 
         let (bull_15, _) = make(1.5).score_contribution();
         let (bull_30, _) = make(3.0).score_contribution();
         let (bull_50, _) = make(5.0).score_contribution();
 
-        assert!(bull_15 < bull_30, "larger divergence should have larger reversion signal");
-        assert!((bull_30 - MAX_REVERSION_WEIGHT).abs() < 1e-9, "3% divergence should reach full cap");
-        assert!((bull_50 - MAX_REVERSION_WEIGHT).abs() < 1e-9, "5% divergence should still be capped");
+        assert!(
+            bull_15 < bull_30,
+            "larger divergence should have larger reversion signal"
+        );
+        assert!(
+            (bull_30 - MAX_REVERSION_WEIGHT).abs() < 1e-9,
+            "3% divergence should reach full cap"
+        );
+        assert!(
+            (bull_50 - MAX_REVERSION_WEIGHT).abs() < 1e-9,
+            "5% divergence should still be capped"
+        );
     }
 
     /// Reversion signal is always larger than momentum signal for same magnitude
     #[test]
     fn reversion_weight_exceeds_momentum_weight_for_same_magnitude() {
         let momentum_sig = CrossExchangeSignal {
-            symbol:         "SOL".into(),
+            symbol: "SOL".into(),
             hl_premium_pct: -0.50,
-            persistence:    3,
-            active:         true,
-            mode:           DivergenceMode::Momentum,
+            persistence: 3,
+            active: true,
+            mode: DivergenceMode::Momentum,
         };
         let reversion_sig = CrossExchangeSignal {
-            symbol:         "SOL".into(),
+            symbol: "SOL".into(),
             hl_premium_pct: -2.0,
-            persistence:    1,
-            active:         true,
-            mode:           DivergenceMode::MeanReversion,
+            persistence: 1,
+            active: true,
+            mode: DivergenceMode::MeanReversion,
         };
         let (mom_bull, _) = momentum_sig.score_contribution();
         let (rev_bull, _) = reversion_sig.score_contribution();
-        assert!(rev_bull > mom_bull,
-            "reversion signal ({:.4}) should be larger than momentum ({:.4})", rev_bull, mom_bull);
+        assert!(
+            rev_bull > mom_bull,
+            "reversion signal ({:.4}) should be larger than momentum ({:.4})",
+            rev_bull,
+            mom_bull
+        );
     }
 
     #[test]
@@ -779,7 +880,10 @@ mod tests {
                 let r = mon.inner.read().await;
                 r.persistence.get("BTC").map(|e| e.cycles).unwrap_or(0)
             };
-            assert_eq!(count_after, 1, "direction flip should reset persistence to 1");
+            assert_eq!(
+                count_after, 1,
+                "direction flip should reset persistence to 1"
+            );
         });
     }
 

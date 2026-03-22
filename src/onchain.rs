@@ -36,7 +36,7 @@ use tokio::sync::RwLock;
 
 /// Cache TTL — on-chain flows change slowly; 30-minute refresh is sufficient.
 const CACHE_TTL: Duration = Duration::from_secs(1_800);
-const BASE_URL:  &str     = "https://open-api.coinglass.com/public/v2/indicator/exchange_balance_list";
+const BASE_URL: &str = "https://open-api.coinglass.com/public/v2/indicator/exchange_balance_list";
 
 // ─────────────────────────── Public types ────────────────────────────────────
 
@@ -66,18 +66,22 @@ impl OnchainData {
     #[allow(dead_code)]
     pub fn label(&self) -> &'static str {
         match self.cached_strength {
-            s if s >  0.60 => "🟢 Strong outflows",
-            s if s >  0.25 => "🟢 Outflows",
+            s if s > 0.60 => "🟢 Strong outflows",
+            s if s > 0.25 => "🟢 Outflows",
             s if s > -0.25 => "⚪ Neutral",
             s if s > -0.60 => "🔴 Inflows",
-            _              => "🔴 Strong inflows",
+            _ => "🔴 Strong inflows",
         }
     }
 }
 
 /// Neutral placeholder returned when the API key is absent or a fetch fails.
 fn neutral(symbol: &str) -> OnchainData {
-    OnchainData { symbol: symbol.to_string(), netflow_24h: 0.0, cached_strength: 0.0 }
+    OnchainData {
+        symbol: symbol.to_string(),
+        netflow_24h: 0.0,
+        cached_strength: 0.0,
+    }
 }
 
 // ─────────────────────────── API response types ───────────────────────────────
@@ -90,9 +94,9 @@ struct CgResponse {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CgEntry {
-    symbol:          String,
+    symbol: String,
     /// Net change in exchange balance over 24 h (in native coin units).
-    net_flow:        Option<f64>,
+    net_flow: Option<f64>,
     /// Exchange total balance in native coin units (used to normalise netflow).
     exchange_balance: Option<f64>,
 }
@@ -100,13 +104,13 @@ struct CgEntry {
 // ─────────────────────────── Cache ───────────────────────────────────────────
 
 struct Inner {
-    data:       HashMap<String, OnchainData>,
+    data: HashMap<String, OnchainData>,
     fetched_at: Option<Instant>,
 }
 
 pub struct OnchainCache {
-    inner:   RwLock<Inner>,
-    client:  Client,
+    inner: RwLock<Inner>,
+    client: Client,
     api_key: Option<String>,
 }
 
@@ -119,8 +123,14 @@ impl OnchainCache {
             info!("ℹ  COINGLASS_API_KEY not set — on-chain signal disabled (neutral)");
         }
         Arc::new(Self {
-            inner:   RwLock::new(Inner { data: HashMap::new(), fetched_at: None }),
-            client:  Client::builder().timeout(Duration::from_secs(15)).build().unwrap_or_default(),
+            inner: RwLock::new(Inner {
+                data: HashMap::new(),
+                fetched_at: None,
+            }),
+            client: Client::builder()
+                .timeout(Duration::from_secs(15))
+                .build()
+                .unwrap_or_default(),
             api_key,
         })
     }
@@ -147,8 +157,10 @@ impl OnchainCache {
             self.refresh().await;
         }
         let inner = self.inner.read().await;
-        let base  = base_symbol(symbol);
-        inner.data.get(base)
+        let base = base_symbol(symbol);
+        inner
+            .data
+            .get(base)
             .cloned()
             .unwrap_or_else(|| neutral(symbol))
     }
@@ -159,8 +171,8 @@ impl OnchainCache {
         let Some(key) = &self.api_key else { return };
         match self.fetch(key).await {
             Ok(data) => {
-                let mut inner    = self.inner.write().await;
-                inner.data       = data;
+                let mut inner = self.inner.write().await;
+                inner.data = data;
                 inner.fetched_at = Some(Instant::now());
                 info!("✅ On-chain cache refreshed ({} assets)", inner.data.len());
             }
@@ -169,7 +181,8 @@ impl OnchainCache {
     }
 
     async fn fetch(&self, api_key: &str) -> Result<HashMap<String, OnchainData>> {
-        let resp: CgResponse = self.client
+        let resp: CgResponse = self
+            .client
             .get(BASE_URL)
             .header("CG-API-KEY", api_key)
             .send()
@@ -180,18 +193,21 @@ impl OnchainCache {
 
         let mut map = HashMap::new();
         for entry in resp.data {
-            let sym  = base_symbol(&entry.symbol).to_string();
+            let sym = base_symbol(&entry.symbol).to_string();
             let flow = entry.net_flow.unwrap_or(0.0);
-            let bal  = entry.exchange_balance.unwrap_or(0.0);
+            let bal = entry.exchange_balance.unwrap_or(0.0);
             // Normalise as fraction of exchange balance so large-cap coins
             // (huge absolute flow) are not always louder than small-caps.
             let norm = if bal > 0.0 { flow / bal } else { 0.0 };
             let strength = normalised_to_strength(norm);
-            map.insert(sym.clone(), OnchainData {
-                symbol:         sym,
-                netflow_24h:    flow,
-                cached_strength: strength,
-            });
+            map.insert(
+                sym.clone(),
+                OnchainData {
+                    symbol: sym,
+                    netflow_24h: flow,
+                    cached_strength: strength,
+                },
+            );
         }
         Ok(map)
     }
@@ -212,13 +228,33 @@ fn normalised_to_strength(norm: f64) -> f64 {
     //   0.005 = 0.5 %  (significant daily move)
     //   0.002 = 0.2 %  (moderate)
     //   0.0005= 0.05%  (noise boundary)
-    if      norm >  0.0050 { -1.00 } // strong inflows  → strong bear
-    else if norm >  0.0020 { -0.65 } // moderate inflows → moderate bear
-    else if norm >  0.0005 { -0.30 } // mild inflows    → slight bear
-    else if norm < -0.0050 {  1.00 } // strong outflows  → strong bull
-    else if norm < -0.0020 {  0.65 } // moderate outflows → moderate bull
-    else if norm < -0.0005 {  0.30 } // mild outflows   → slight bull
-    else                   {  0.00 } // neutral band
+    if norm > 0.0050 {
+        -1.00
+    }
+    // strong inflows  → strong bear
+    else if norm > 0.0020 {
+        -0.65
+    }
+    // moderate inflows → moderate bear
+    else if norm > 0.0005 {
+        -0.30
+    }
+    // mild inflows    → slight bear
+    else if norm < -0.0050 {
+        1.00
+    }
+    // strong outflows  → strong bull
+    else if norm < -0.0020 {
+        0.65
+    }
+    // moderate outflows → moderate bull
+    else if norm < -0.0005 {
+        0.30
+    }
+    // mild outflows   → slight bull
+    else {
+        0.00
+    } // neutral band
 }
 
 // ─────────────────────────── Tests ───────────────────────────────────────────
@@ -246,6 +282,6 @@ mod tests {
     #[test]
     fn base_symbol_strips_suffix() {
         assert_eq!(base_symbol("BTC-USD"), "BTC");
-        assert_eq!(base_symbol("ETH"),     "ETH");
+        assert_eq!(base_symbol("ETH"), "ETH");
     }
 }
