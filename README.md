@@ -408,3 +408,14 @@ For issues or questions:
 **Status:** ✅ Phase 1 Complete (Account Management)
 **Last Updated:** 2026-02-21
 **Version:** 0.1.0
+
+## Promotion script
+
+To mirror GitHub changes across staging and production, run `scripts/promote.sh`. The script pushes the selected branch (defaults to `master`) to three remotes in sequence: `origin`, `staging`, and `production`. Each remote should be configured ahead of time, e.g.: 
+
+```bash
+git remote add staging ssh://root@165.232.160.43/~/TradingBots.fun.git
+git remote add production ssh://root@157.230.32.73/~/TradingBots.fun.git
+```
+
+You can override the remote names with `GITHUB_REMOTE`, `STAGING_REMOTE`, or `PRODUCTION_REMOTE` if you prefer different aliases. The script exits with a clear message when a remote is missing, and each push triggers the remote hooks/services so the new code is built and deployed automatically.
