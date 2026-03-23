@@ -1,0 +1,213 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-03-23T22:03:05Z",
+    "commit": "005bf12",
+    "commit_full": "005bf12cf76d4a74905bdcbffc6734efe6c103ad",
+    "commit_message": "Fix 429s via shared pricing oracle + clippy + Python NameError",
+    "branch": "master",
+    "overall_status": "FAILED",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.94.0 (4a4ef493e 2026-03-02)",
+    "cargo": "cargo 1.94.0 (85eff7c80 2026-01-15)",
+    "os_kernel": "6.8.0-106-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 50,
+      "total_passed": 0,
+      "total_failed": 0,
+      "total_ignored": 0,
+      "failures": []
+    },
+    "clippy": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 46,
+      "error_count": 20,
+      "errors": [
+        {
+          "code": "E",
+          "message": "error returned from database: remaining connection slots are reserved for roles with the SUPERUSER attribute",
+          "file": "src/collective.rs",
+          "line": 136,
+          "col": 13
+        },
+        {
+          "code": "E",
+          "message": "error returned from database: remaining connection slots are reserved for roles with the SUPERUSER attribute",
+          "file": "src/collective.rs",
+          "line": 192,
+          "col": 13
+        },
+        {
+          "code": "E",
+          "message": "error returned from database: remaining connection slots are reserved for roles with the SUPERUSER attribute",
+          "file": "src/collective.rs",
+          "line": 222,
+          "col": 13
+        },
+        {
+          "code": "E",
+          "message": "error returned from database: remaining connection slots are reserved for roles with the SUPERUSER attribute",
+          "file": "src/collective.rs",
+          "line": 237,
+          "col": 13
+        },
+        {
+          "code": "E",
+          "message": "error returned from database: remaining connection slots are reserved for roles with the SUPERUSER attribute",
+          "file": "src/collective.rs",
+          "line": 261,
+          "col": 15
+        },
+        {
+          "code": "E",
+          "message": "error returned from database: remaining connection slots are reserved for roles with the SUPERUSER attribute",
+          "file": "src/collective.rs",
+          "line": 321,
+          "col": 16
+        },
+        {
+          "code": "E",
+          "message": "error returned from database: remaining connection slots are reserved for roles with the SUPERUSER attribute",
+          "file": "src/db.rs",
+          "line": 187,
+          "col": 20
+        },
+        {
+          "code": "E",
+          "message": "error returned from database: remaining connection slots are reserved for roles with the SUPERUSER attribute",
+          "file": "src/db.rs",
+          "line": 251,
+          "col": 20
+        },
+        {
+          "code": "E",
+          "message": "error returned from database: remaining connection slots are reserved for roles with the SUPERUSER attribute",
+          "file": "src/db.rs",
+          "line": 301,
+          "col": 19
+        },
+        {
+          "code": "E",
+          "message": "error returned from database: remaining connection slots are reserved for roles with the SUPERUSER attribute",
+          "file": "src/db.rs",
+          "line": 446,
+          "col": 19
+        },
+        {
+          "code": "E",
+          "message": "error returned from database: remaining connection slots are reserved for roles with the SUPERUSER attribute",
+          "file": "src/db.rs",
+          "line": 464,
+          "col": 20
+        },
+        {
+          "code": "E",
+          "message": "error returned from database: remaining connection slots are reserved for roles with the SUPERUSER attribute",
+          "file": "src/db.rs",
+          "line": 500,
+          "col": 9
+        },
+        {
+          "code": "E",
+          "message": "error returned from database: remaining connection slots are reserved for roles with the SUPERUSER attribute",
+          "file": "src/db.rs",
+          "line": 509,
+          "col": 9
+        },
+        {
+          "code": "E",
+          "message": "error returned from database: remaining connection slots are reserved for roles with the SUPERUSER attribute",
+          "file": "src/db.rs",
+          "line": 522,
+          "col": 9
+        },
+        {
+          "code": "E",
+          "message": "error returned from database: remaining connection slots are reserved for roles with the SUPERUSER attribute",
+          "file": "src/invite.rs",
+          "line": 63,
+          "col": 15
+        },
+        {
+          "code": "E",
+          "message": "error returned from database: remaining connection slots are reserved for roles with the SUPERUSER attribute",
+          "file": "src/invite.rs",
+          "line": 94,
+          "col": 9
+        },
+        {
+          "code": "E",
+          "message": "error returned from database: remaining connection slots are reserved for roles with the SUPERUSER attribute",
+          "file": "src/invite.rs",
+          "line": 103,
+          "col": 24
+        },
+        {
+          "code": "E",
+          "message": "error returned from database: remaining connection slots are reserved for roles with the SUPERUSER attribute",
+          "file": "src/invite.rs",
+          "line": 137,
+          "col": 28
+        },
+        {
+          "code": "E",
+          "message": "error returned from database: remaining connection slots are reserved for roles with the SUPERUSER attribute",
+          "file": "src/invite.rs",
+          "line": 170,
+          "col": 16
+        },
+        {
+          "code": "E",
+          "message": "error returned from database: remaining connection slots are reserved for roles with the SUPERUSER attribute",
+          "file": "src/invite.rs",
+          "line": 221,
+          "col": 16
+        }
+      ]
+    },
+    "audit": {
+      "status": "ADVISORY",
+      "exit_code": 1,
+      "duration_seconds": 5,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2023-0071",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2023-0071",
+          "severity": "5.9 (medium)",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "tradingbots",
+    "status": "active",
+    "active_since": "Mon 2026-03-23 22:00:45 UTC",
+    "recent_logs": [
+      "Mar 23 22:00:44 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: tradingbots.service: Deactivated successfully.",
+      "Mar 23 22:00:44 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Stopped tradingbots.service - TradingBots.fun.",
+      "Mar 23 22:00:44 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: tradingbots.service: Consumed 2min 1.337s CPU time, 346.1M memory peak, 81.1M memory swap peak.",
+      "Mar 23 22:00:45 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Starting tradingbots.service - TradingBots.fun...",
+      "Mar 23 22:00:45 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Started tradingbots.service - TradingBots.fun."
+    ]
+  }
+}
