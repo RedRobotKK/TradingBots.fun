@@ -1,0 +1,119 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-03-23T21:22:11Z",
+    "commit": "2ab02da",
+    "commit_full": "2ab02daee96ff2b5dc12b390414f90a4abdcc1b1",
+    "commit_message": "Remove unused imports in db.rs (clean up compiler warnings)",
+    "branch": "master",
+    "overall_status": "FAILED",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.94.0 (4a4ef493e 2026-03-02)",
+    "cargo": "cargo 1.94.0 (85eff7c80 2026-01-15)",
+    "os_kernel": "6.8.0-106-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "PASSED",
+      "exit_code": 0,
+      "duration_seconds": 613,
+      "total_passed": 741,
+      "total_failed": 0,
+      "total_ignored": 2,
+      "failures": []
+    },
+    "clippy": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 224,
+      "error_count": 7,
+      "errors": [
+        {
+          "code": "E",
+          "message": "this `impl` can be derived",
+          "file": "src/exchange.rs",
+          "line": 84,
+          "col": 1
+        },
+        {
+          "code": "E",
+          "message": "very complex type used. Consider factoring parts into `type` definitions",
+          "file": "src/pattern_insights.rs",
+          "line": 409,
+          "col": 6
+        },
+        {
+          "code": "E",
+          "message": "use of `or_insert_with` to construct default value",
+          "file": "src/pattern_insights.rs",
+          "line": 438,
+          "col": 37
+        },
+        {
+          "code": "E",
+          "message": "this expression creates a reference which is immediately dereferenced by the compiler",
+          "file": "src/reporting.rs",
+          "line": 110,
+          "col": 46
+        },
+        {
+          "code": "E",
+          "message": "this expression creates a reference which is immediately dereferenced by the compiler",
+          "file": "src/reporting.rs",
+          "line": 115,
+          "col": 46
+        },
+        {
+          "code": "E",
+          "message": "`to_string` applied to a type that implements `Display` in `format!` args",
+          "file": "src/web_dashboard.rs",
+          "line": 3483,
+          "col": 28
+        },
+        {
+          "code": "E",
+          "message": "could not compile `tradingbots-fun` (lib) due to 6 previous errors"
+        }
+      ]
+    },
+    "audit": {
+      "status": "ADVISORY",
+      "exit_code": 1,
+      "duration_seconds": 3,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2023-0071",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2023-0071",
+          "severity": "5.9 (medium)",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "tradingbots",
+    "status": "active",
+    "active_since": "Mon 2026-03-23 20:55:33 UTC",
+    "recent_logs": [
+      "Mar 23 21:20:30 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[394997]: NameError: name 'append_alert_log' is not defined",
+      "Mar 23 21:21:52 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[394680]: [2026-03-23T21:21:52.957Z ERROR tradingbots_fun] Cycle error: hl_api_429: Hyperliquid rate limit hit (HTTP 429). The bot is sending requests too quickly. Backing off.",
+      "Mar 23 21:26:57 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[394680]: [2026-03-23T21:26:57.544Z ERROR tradingbots_fun] Cycle error: hl_api_429: Hyperliquid rate limit hit (HTTP 429). The bot is sending requests too quickly. Backing off.",
+      "Mar 23 21:29:58 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[394680]: [2026-03-23T21:29:58.107Z ERROR tradingbots_fun] Cycle error: hl_api_429: Hyperliquid rate limit hit (HTTP 429). The bot is sending requests too quickly. Backing off.",
+      "Mar 23 21:30:43 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[394680]: [2026-03-23T21:30:43.536Z ERROR tradingbots_fun] Cycle error: hl_api_429: Hyperliquid rate limit hit (HTTP 429). The bot is sending requests too quickly. Backing off."
+    ]
+  }
+}
