@@ -327,7 +327,9 @@ async fn main() -> Result<()> {
     let market = Arc::new(data::MarketClient::with_oracle(price_oracle.clone()));
     price_feed::PriceFeedService::new(
         price_oracle,
-        shared_db.clone(), // writes price_oracle + price_oracle_history tables
+        // Pass the raw PgPool (not the Arc<Database> wrapper) so price_feed
+        // can use a separate small pool without touching the main 10-conn pool.
+        shared_db.as_deref().map(|db| db.pool().clone()),
     )
     .spawn();
 

@@ -114,12 +114,17 @@ impl Database {
     /// Open the connection pool and run pending migrations.
     pub async fn connect(url: &str) -> Result<Self> {
         log::info!("🗄  Connecting to PostgreSQL…");
+        // Pool sizing: Postgres default max_connections = 100.
+        // We use 10 max to leave ample headroom for future services, pgAdmin,
+        // and the price_feed's dedicated 3-connection sub-pool.
+        // With 9 tenant loops + Axum handlers, 10 connections is sufficient
+        // because sqlx queues queries rather than opening new raw connections.
         let pool = PgPoolOptions::new()
-            .max_connections(20) // 12 Axum handlers + 6 background tasks + 2 trading writers
-            .min_connections(3) // keep warm — avoids first-query latency
-            .acquire_timeout(std::time::Duration::from_secs(30)) // was 8s — long enough to queue not fail-fast
-            .idle_timeout(std::time::Duration::from_secs(600)) // recycle idle connections every 10 min
-            .max_lifetime(std::time::Duration::from_secs(1800)) // retire connections after 30 min
+            .max_connections(10)
+            .min_connections(2)  // keep 2 warm; was 3 (saves 1 idle slot)
+            .acquire_timeout(std::time::Duration::from_secs(30))
+            .idle_timeout(std::time::Duration::from_secs(600))
+            .max_lifetime(std::time::Duration::from_secs(1800))
             .connect(url)
             .await
             .with_context(|| format!("Cannot connect to PostgreSQL: {url}"))?;
@@ -128,6 +133,12 @@ impl Database {
         db.run_migrations().await?;
         log::info!("✅ PostgreSQL ready");
         Ok(db)
+    }
+
+    /// Expose the underlying [`PgPool`] for services that need direct pool access
+    /// (e.g. [`crate::price_feed::PriceFeedService`]).
+    pub fn pool(&self) -> &PgPool {
+        &self.pool
     }
 
     /// Apply all pending migrations from `./migrations/` (embedded at compile time).

@@ -332,90 +332,117 @@ async fn run_binance_mini(oracle: SharedPriceOracle) -> Result<()> {
 
 // ── DB writer ─────────────────────────────────────────────────────────────────
 
+/// Flush the oracle snapshot to Postgres using UNNEST batch queries.
+///
+/// Two queries total per flush cycle (regardless of symbol count):
+///   1. Batch upsert into `price_oracle`  (current state, one row per symbol)
+///   2. Batch insert into `price_oracle_history` (time-series tick log)
+///
+/// Only symbols with at least one HL price (`hl_mid IS NOT NULL`) are written.
+/// This excludes Binance-only symbols that HL doesn't trade, keeping the table
+/// small and the history useful for trading decisions.
 async fn flush_to_db(pool: &sqlx::PgPool, entries: &[OracleEntry]) -> Result<()> {
-    if entries.is_empty() {
+    // Only persist symbols that Hyperliquid knows about (have a hl_mid).
+    let hl_entries: Vec<&OracleEntry> = entries
+        .iter()
+        .filter(|e| e.hl_mid.is_some())
+        .collect();
+
+    if hl_entries.is_empty() {
         return Ok(());
     }
+
     let now = Utc::now();
 
-    // Build a single multi-row upsert for price_oracle (current state)
-    // and a batch insert for price_oracle_history (time-series log).
-    // Using dynamic SQL to avoid N round-trips.
+    // ── Build typed vectors for UNNEST ────────────────────────────────────────
+    let mut symbols:         Vec<&str>        = Vec::with_capacity(hl_entries.len());
+    let mut mids:            Vec<f64>         = Vec::with_capacity(hl_entries.len());
+    let mut bids:            Vec<f64>         = Vec::with_capacity(hl_entries.len());
+    let mut asks:            Vec<f64>         = Vec::with_capacity(hl_entries.len());
+    let mut spreads:         Vec<f64>         = Vec::with_capacity(hl_entries.len());
+    let mut hl_mids:         Vec<Option<f64>> = Vec::with_capacity(hl_entries.len());
+    let mut binance_mids:    Vec<Option<f64>> = Vec::with_capacity(hl_entries.len());
+    let mut volumes:         Vec<Option<f64>> = Vec::with_capacity(hl_entries.len());
+    let mut cross_spreads:   Vec<Option<f64>> = Vec::with_capacity(hl_entries.len());
+    let mut sources:         Vec<&str>        = Vec::with_capacity(hl_entries.len());
 
-    let mut oracle_vals = String::new();
-    let mut hist_vals   = String::new();
-    let mut params: Vec<Box<dyn sqlx::Encode<'_, sqlx::Postgres> + Send + Sync>> = Vec::new();
-
-    // Use unnest-style batch insert via Postgres's VALUES list
-    for (i, e) in entries.iter().enumerate() {
-        let p = i * 9 + 1; // 9 columns in price_oracle upsert
-        if !oracle_vals.is_empty() {
-            oracle_vals.push(',');
-        }
-        oracle_vals.push_str(&format!(
-            "(${p}, ${}, ${}, ${}, ${}, ${}, ${}, ${}, ${})",
-            p+1, p+2, p+3, p+4, p+5, p+6, p+7, p+8
-        ));
-        let _ = (e, &hist_vals, &params, &now); // satisfy unused vars lint
+    for e in &hl_entries {
+        symbols.push(&e.symbol);
+        mids.push(e.mid);
+        bids.push(e.bid);
+        asks.push(e.ask);
+        spreads.push(e.spread_bps as f64);
+        hl_mids.push(e.hl_mid);
+        binance_mids.push(e.binance_mid);
+        volumes.push(e.volume_24h_usd);
+        cross_spreads.push(e.cross_spread_pct.map(|v| v as f64));
+        sources.push(e.source);
     }
 
-    // Simpler: issue one query per entry (pool handles connection reuse efficiently)
-    // For high-frequency production use, replace with COPY or unnest batch.
-    for e in entries {
-        sqlx::query(
-            r#"INSERT INTO price_oracle
+    // ── Query 1: upsert price_oracle (1 query, N rows via UNNEST) ─────────────
+    sqlx::query(
+        r#"INSERT INTO price_oracle
                (symbol, mid, bid, ask, spread_bps, hl_mid, binance_mid,
                 volume_24h_usd, cross_spread_pct, source, updated_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-               ON CONFLICT (symbol) DO UPDATE SET
-                 mid              = EXCLUDED.mid,
-                 bid              = EXCLUDED.bid,
-                 ask              = EXCLUDED.ask,
-                 spread_bps       = EXCLUDED.spread_bps,
-                 hl_mid           = EXCLUDED.hl_mid,
-                 binance_mid      = EXCLUDED.binance_mid,
-                 volume_24h_usd   = EXCLUDED.volume_24h_usd,
-                 cross_spread_pct = EXCLUDED.cross_spread_pct,
-                 source           = EXCLUDED.source,
-                 updated_at       = EXCLUDED.updated_at"#,
-        )
-        .bind(&e.symbol)
-        .bind(e.mid)
-        .bind(e.bid)
-        .bind(e.ask)
-        .bind(e.spread_bps as f64)
-        .bind(e.hl_mid)
-        .bind(e.binance_mid)
-        .bind(e.volume_24h_usd)
-        .bind(e.cross_spread_pct.map(|v| v as f64))
-        .bind(e.source)
-        .bind(now)
-        .execute(pool)
-        .await?;
+           SELECT * FROM UNNEST(
+               $1::text[], $2::float8[], $3::float8[], $4::float8[],
+               $5::float8[], $6::float8[], $7::float8[],
+               $8::float8[], $9::float8[], $10::text[],
+               $11::timestamptz[]
+           ) AS t(symbol, mid, bid, ask, spread_bps, hl_mid, binance_mid,
+                  volume_24h_usd, cross_spread_pct, source, updated_at)
+           ON CONFLICT (symbol) DO UPDATE SET
+               mid              = EXCLUDED.mid,
+               bid              = EXCLUDED.bid,
+               ask              = EXCLUDED.ask,
+               spread_bps       = EXCLUDED.spread_bps,
+               hl_mid           = EXCLUDED.hl_mid,
+               binance_mid      = EXCLUDED.binance_mid,
+               volume_24h_usd   = EXCLUDED.volume_24h_usd,
+               cross_spread_pct = EXCLUDED.cross_spread_pct,
+               source           = EXCLUDED.source,
+               updated_at       = EXCLUDED.updated_at"#,
+    )
+    .bind(&symbols)
+    .bind(&mids)
+    .bind(&bids)
+    .bind(&asks)
+    .bind(&spreads)
+    .bind(&hl_mids)
+    .bind(&binance_mids)
+    .bind(&volumes)
+    .bind(&cross_spreads)
+    .bind(&sources)
+    .bind(vec![now; hl_entries.len()])
+    .execute(pool)
+    .await?;
 
-        // History row — every 5-second flush writes one row per active symbol
-        sqlx::query(
-            r#"INSERT INTO price_oracle_history
+    // ── Query 2: append price_oracle_history (1 query, N rows via UNNEST) ────
+    sqlx::query(
+        r#"INSERT INTO price_oracle_history
                (symbol, mid, hl_mid, binance_mid, spread_bps, volume_24h_usd,
                 source, recorded_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7,$8)"#,
-        )
-        .bind(&e.symbol)
-        .bind(e.mid)
-        .bind(e.hl_mid)
-        .bind(e.binance_mid)
-        .bind(e.spread_bps as f64)
-        .bind(e.volume_24h_usd)
-        .bind(e.source)
-        .bind(now)
-        .execute(pool)
-        .await?;
-    }
+           SELECT * FROM UNNEST(
+               $1::text[], $2::float8[], $3::float8[], $4::float8[],
+               $5::float8[], $6::float8[], $7::text[], $8::timestamptz[]
+           ) AS t(symbol, mid, hl_mid, binance_mid, spread_bps, volume_24h_usd,
+                  source, recorded_at)"#,
+    )
+    .bind(&symbols)
+    .bind(&mids)
+    .bind(&hl_mids)
+    .bind(&binance_mids)
+    .bind(&spreads)
+    .bind(&volumes)
+    .bind(&sources)
+    .bind(vec![now; hl_entries.len()])
+    .execute(pool)
+    .await?;
 
     log::debug!(
-        "price_oracle: flushed {} symbols to DB at {}",
+        "price_oracle: flushed {} HL symbols to DB ({} total in oracle)",
+        hl_entries.len(),
         entries.len(),
-        now.format("%H:%M:%S")
     );
     Ok(())
 }
