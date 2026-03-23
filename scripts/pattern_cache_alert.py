@@ -162,9 +162,6 @@ def main():
     alert_if_changed(cache)
 
 
-if __name__ == "__main__":
-    main()
-
 def append_alert_log(payload: dict):
     try:
         LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -176,6 +173,11 @@ def append_alert_log(payload: dict):
             fh.write(json.dumps(entry) + "\n")
     except OSError as exc:
         print(f"⚠️ Failed to append alert log: {exc}", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()
+
 
 def dispatch_webhook(payload: dict):
     url = os.getenv("PATTERN_CACHE_WEBHOOK_URL")

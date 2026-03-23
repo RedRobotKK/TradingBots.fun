@@ -3480,7 +3480,7 @@ async fn agent_app_handler(
 </script>
 </body>
 </html>"###,
-        init = init_payload.to_string(),
+        init = init_payload,
     );
     Html(html).into_response()
 }

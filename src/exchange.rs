@@ -74,21 +74,11 @@ pub struct HyperliquidStats {
     last_rate_limit: Mutex<Option<DateTime<Utc>>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct HyperliquidStatsSnapshot {
     pub total_requests: u64,
     pub rate_limit_hits: u64,
     pub last_rate_limit_at: Option<String>,
-}
-
-impl Default for HyperliquidStatsSnapshot {
-    fn default() -> Self {
-        Self {
-            total_requests: 0,
-            rate_limit_hits: 0,
-            last_rate_limit_at: None,
-        }
-    }
 }
 
 impl HyperliquidStats {

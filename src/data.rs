@@ -1,7 +1,8 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use tokio::sync::RwLock;
+use std::time::{Duration, Instant};
+use tokio::sync::{Mutex, RwLock};
 
 // ─────────────────────────── Retry configuration ─────────────────────────────
 /// Maximum number of HTTP request attempts before giving up.
@@ -15,6 +16,18 @@ const RETRY_BASE_MS: u64 = 1_000;
 /// With HL's native candle API (one POST per coin, no external rate-limit),
 /// 40 pairs fit comfortably within a 30-second cycle budget.
 const MAX_CANDIDATES: usize = 40;
+
+/// How long a cached allMids or order-book snapshot is considered fresh.
+///
+/// All 9 tenant loops share a single `Arc<MarketClient>`.  Without a shared
+/// cache they would fire identical HTTP requests to Hyperliquid in a tight
+/// burst every 30-second cycle, triggering HTTP 429 rate-limit responses.
+///
+/// With a 25-second TTL the first tenant that needs a snapshot fetches it;
+/// every other tenant that arrives within the same cycle window gets the
+/// in-memory copy.  Net result: at most 1 allMids request and ~40 l2Book
+/// requests per 30-second cycle — down from up to 9× each.
+const PRICE_ORACLE_TTL: Duration = Duration::from_secs(25);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PriceData {
@@ -95,6 +108,16 @@ pub struct MarketClient {
     /// Candle cache keyed by `"COIN:interval"` (e.g. `"BTC:1h"`).
     /// Interior-mutable so `&self` methods can update it.
     candle_cache: RwLock<HashMap<String, CachedCandles>>,
+
+    // ── Shared pricing oracle ─────────────────────────────────────────────────
+    // All 9 tenant loops share one Arc<MarketClient>.  These caches ensure that
+    // only ONE HTTP request is sent to Hyperliquid per PRICE_ORACLE_TTL window
+    // regardless of how many tenants ask for the same data simultaneously.
+
+    /// allMids oracle: (fetched_at, symbol → mid_price)
+    mids_oracle: Mutex<Option<(Instant, HashMap<String, f64>)>>,
+    /// Order-book oracle: symbol → (fetched_at, OrderBook)
+    book_oracle: RwLock<HashMap<String, (Instant, OrderBook)>>,
 }
 
 impl MarketClient {
@@ -106,6 +129,8 @@ impl MarketClient {
                 .unwrap_or_else(|_| reqwest::Client::new()),
             hl_base: "https://api.hyperliquid.xyz".to_string(),
             candle_cache: RwLock::new(HashMap::new()),
+            mids_oracle: Mutex::new(None),
+            book_oracle: RwLock::new(HashMap::new()),
         }
     }
 
@@ -145,15 +170,29 @@ impl MarketClient {
 
     // ── Tier 1: allMids ───────────────────────────────────────────────────────
 
-    /// Fetch all mid-prices from Hyperliquid in a single API call (weight = 2).
+    /// Fetch all mid-prices from Hyperliquid (weight = 2), with oracle caching.
     ///
-    /// Returns symbol → price map for every perp traded on the exchange.
+    /// If a snapshot was fetched within `PRICE_ORACLE_TTL` (25 s) it is returned
+    /// immediately — no HTTP round-trip.  This means all 9 tenant loops that
+    /// share this `Arc<MarketClient>` share the same fresh snapshot and only the
+    /// *first* caller within each 30-second window pays the network cost.
     pub async fn fetch_all_mids(&self) -> Result<HashMap<String, f64>> {
+        // Fast path: return cached snapshot if still fresh.
+        {
+            let guard = self.mids_oracle.lock().await;
+            if let Some((fetched_at, ref mids)) = *guard {
+                if fetched_at.elapsed() < PRICE_ORACLE_TTL {
+                    return Ok(mids.clone());
+                }
+            }
+        }
+
+        // Slow path: fetch from Hyperliquid and update the oracle.
         let url = format!("{}/info", self.hl_base);
         let body = serde_json::json!({ "type": "allMids" });
         let client = self.client.clone();
 
-        Self::with_retry(|| {
+        let mids = Self::with_retry(|| {
             let url = url.clone();
             let body = body.clone();
             let client = client.clone();
@@ -187,7 +226,11 @@ impl MarketClient {
                 Ok(mids)
             }
         })
-        .await
+        .await?;
+
+        // Store in oracle so subsequent callers within the TTL skip the HTTP call.
+        *self.mids_oracle.lock().await = Some((Instant::now(), mids.clone()));
+        Ok(mids)
     }
 
     // ── Candidate selection ───────────────────────────────────────────────────
@@ -419,17 +462,30 @@ impl MarketClient {
 
     // ── Tier 3: order book (per-cycle, not cached) ────────────────────────────
 
-    /// Fetch order book depth from Hyperliquid's `l2Book` endpoint (weight = 2).
+    /// Fetch order book depth from Hyperliquid's `l2Book` endpoint (weight = 2),
+    /// with per-symbol oracle caching (TTL = `PRICE_ORACLE_TTL`).
     ///
     /// Returns top-20 bids and asks as `(price, quantity)` pairs, sorted best-first.
-    /// Not cached — order books change on every tick.
+    /// Multiple tenant loops requesting the same symbol within the TTL window
+    /// share a single cached snapshot — only one HTTP request is sent.
     pub async fn fetch_order_book(&self, coin: &str) -> Result<OrderBook> {
+        // Fast path: return cached book if still fresh.
+        {
+            let guard = self.book_oracle.read().await;
+            if let Some((fetched_at, ref book)) = guard.get(coin) {
+                if fetched_at.elapsed() < PRICE_ORACLE_TTL {
+                    return Ok(book.clone());
+                }
+            }
+        }
+
+        // Slow path: fetch from Hyperliquid.
         let url = format!("{}/info", self.hl_base);
         let body = serde_json::json!({ "type": "l2Book", "coin": coin });
         let client = self.client.clone();
         let sym_str = coin.to_string();
 
-        Self::with_retry(|| {
+        let book = Self::with_retry(|| {
             let url = url.clone();
             let body = body.clone();
             let client = client.clone();
@@ -467,7 +523,14 @@ impl MarketClient {
                 })
             }
         })
-        .await
+        .await?;
+
+        // Cache the freshly-fetched book for subsequent callers.
+        self.book_oracle
+            .write()
+            .await
+            .insert(coin.to_string(), (Instant::now(), book.clone()));
+        Ok(book)
     }
 
     /// Evict all cached candles (e.g. after a bot restart or manual reset).

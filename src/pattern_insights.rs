@@ -14,6 +14,9 @@ use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
+/// Guardrail entries grouped by symbol, sorted ascending by timestamp.
+type GuardrailMap = HashMap<String, Vec<(DateTime<Utc>, GuardrailFeedback)>>;
+
 const PATTERN_CACHE_FILE: &str = "pattern_cache.json";
 const PATTERN_JSON_PREFIX: &str = "pattern_insights_";
 const PATTERN_MD_PREFIX: &str = "pattern_insights_";
@@ -404,10 +407,8 @@ impl PatternEntry {
     }
 }
 
-fn build_guardrail_map(
-    entries: &[GuardrailFeedback],
-) -> Result<HashMap<String, Vec<(DateTime<Utc>, GuardrailFeedback)>>> {
-    let mut map: HashMap<String, Vec<(DateTime<Utc>, GuardrailFeedback)>> = HashMap::new();
+fn build_guardrail_map(entries: &[GuardrailFeedback]) -> Result<GuardrailMap> {
+    let mut map: GuardrailMap = HashMap::new();
     for entry in entries {
         let parsed = entry_ts(&entry.ts)?;
         map.entry(entry.symbol.clone())
@@ -435,7 +436,7 @@ fn summarize_combos(entries: &[PatternEntry]) -> Vec<SignalComboSummary> {
     let mut combos: HashMap<(String, String), ComboAccum> = HashMap::new();
     for entry in entries {
         let key = (entry.signal_breakdown.clone(), entry.context.clone());
-        let acc = combos.entry(key).or_insert_with(ComboAccum::default);
+        let acc = combos.entry(key).or_default();
         acc.occurrences += 1;
         if let TradeOutcome::Win = entry.outcome {
             acc.wins += 1;

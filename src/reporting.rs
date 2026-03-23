@@ -107,12 +107,12 @@ pub fn generate_report(req: &ReportRequest) -> Result<ReportSummary> {
             if is_win {
                 *acc.win_breakdowns.entry(breakdown.clone()).or_insert(0) += 1;
                 *acc.win_contexts
-                    .entry(context_signature(&guardrail))
+                    .entry(context_signature(guardrail))
                     .or_insert(0) += 1;
             } else {
                 *acc.loss_breakdowns.entry(breakdown.clone()).or_insert(0) += 1;
                 *acc.loss_contexts
-                    .entry(context_signature(&guardrail))
+                    .entry(context_signature(guardrail))
                     .or_insert(0) += 1;
             }
         }
