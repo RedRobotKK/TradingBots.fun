@@ -133,6 +133,7 @@ mod notifier;
 mod onchain;
 mod pattern_insights;
 mod persistence;
+mod price_feed;
 mod privy;
 mod reporting;
 mod risk;
@@ -318,7 +319,18 @@ async fn main() -> Result<()> {
         None
     };
 
-    let market = Arc::new(data::MarketClient::new());
+    // ── Shared price oracle ────────────────────────────────────────────────────
+    // One WebSocket connection to Hyperliquid + one to Binance feeds all tenant
+    // loops with <100 ms prices.  REST allMids calls drop to 0 weight once the
+    // WebSocket handshake completes (~2 s after startup).
+    let price_oracle = price_feed::new_oracle();
+    let market = Arc::new(data::MarketClient::with_oracle(price_oracle.clone()));
+    price_feed::PriceFeedService::new(
+        price_oracle,
+        shared_db.clone(), // writes price_oracle + price_oracle_history tables
+    )
+    .spawn();
+
     let hl = Arc::new(exchange::HyperliquidClient::new(&config)?);
 
     // Daily structured JSONL log (LLM-ingestible, rotates at midnight UTC)

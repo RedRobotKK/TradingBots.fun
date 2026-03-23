@@ -28,6 +28,10 @@ rmp-serde  = "1.1"           # msgpack encoding — required for HL action hash
 tracing    = "0.1"
 once_cell  = "1.21"
 
+# WebSocket — price feed (Hyperliquid + Binance streaming)
+tokio-tungstenite = { version = "0.21", features = ["native-tls"] }
+futures-util      = "0.3"
+
 # Web dashboard
 axum         = { version = "0.7", features = ["form"] }
 tower        = "0.4"

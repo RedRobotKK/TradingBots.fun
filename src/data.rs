@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, RwLock};
 
+use crate::price_feed::{self, SharedPriceOracle};
+
 // ─────────────────────────── Retry configuration ─────────────────────────────
 /// Maximum number of HTTP request attempts before giving up.
 /// 5 attempts covers transient 502 windows: delays = 1s, 2s, 4s, 8s → ~15s total.
@@ -89,48 +91,60 @@ fn interval_ms(interval: &str) -> Result<i64> {
 
 // ─────────────────────────── Market client ───────────────────────────────────
 
-/// Single-source market data client — Hyperliquid only.
+/// Market data client — Hyperliquid REST + shared WebSocket price oracle.
 ///
 /// # Rate budget (HL REST, 1 200 weight/min aggregate)
 ///
-/// | Call              | Weight | Frequency          |
-/// |-------------------|--------|--------------------|
-/// | `allMids`         |      2 | every cycle (30 s) |
-/// | `l2Book` × 40    |     80 | every cycle (30 s) |
-/// | `candleSnapshot`  |     20 | once per new bar   |
+/// | Call              | Weight | Frequency               |
+/// |-------------------|--------|-------------------------|
+/// | `allMids`         |      2 | **0** when WS oracle live|
+/// | `l2Book` × 40     |     80 | once per 25 s (shared)  |
+/// | `candleSnapshot`  |     20 | once per new bar        |
 ///
-/// Per-cycle budget: allMids(2) + 40×l2Book(80) = **82 weight** ≈ 164/min
-/// Candle refreshes: 40×1h = 800 weight once/hour, 40×4h = 800 weight once/4h
-/// Both well within the 1 200/min ceiling.
+/// When [`PriceFeedService`] is running (normal operation):
+///   - `fetch_all_mids` reads from the WebSocket oracle — 0 REST weight.
+///   - `fetch_order_book` still uses REST but is cached 25 s across all tenants.
+///   - Total REST budget ≈ 192 weight/min regardless of tenant count.
+///
+/// Fallback: if the oracle is absent or stale, standard HTTP poll is used.
 pub struct MarketClient {
     client: reqwest::Client,
     hl_base: String,
     /// Candle cache keyed by `"COIN:interval"` (e.g. `"BTC:1h"`).
-    /// Interior-mutable so `&self` methods can update it.
     candle_cache: RwLock<HashMap<String, CachedCandles>>,
-
-    // ── Shared pricing oracle ─────────────────────────────────────────────────
-    // All 9 tenant loops share one Arc<MarketClient>.  These caches ensure that
-    // only ONE HTTP request is sent to Hyperliquid per PRICE_ORACLE_TTL window
-    // regardless of how many tenants ask for the same data simultaneously.
-
-    /// allMids oracle: (fetched_at, symbol → mid_price)
+    /// HTTP fallback cache for allMids (used when WS oracle is stale/absent).
     mids_oracle: Mutex<Option<(Instant, HashMap<String, f64>)>>,
-    /// Order-book oracle: symbol → (fetched_at, OrderBook)
+    /// Order-book oracle: symbol → (fetched_at, OrderBook).
     book_oracle: RwLock<HashMap<String, (Instant, OrderBook)>>,
+    /// WebSocket-fed shared price oracle (primary source for mid prices).
+    /// Set to `None` at construction; injected by [`PriceFeedService`] on startup.
+    price_feed: Option<SharedPriceOracle>,
 }
 
 impl MarketClient {
+    /// Create a client with no live price feed (HTTP-only fallback).
     pub fn new() -> Self {
+        Self::build(None)
+    }
+
+    /// Create a client backed by a live [`SharedPriceOracle`] from
+    /// [`PriceFeedService`].  `fetch_all_mids` will return WebSocket prices
+    /// (<100 ms lag) with zero Hyperliquid REST API weight.
+    pub fn with_oracle(oracle: SharedPriceOracle) -> Self {
+        Self::build(Some(oracle))
+    }
+
+    fn build(price_feed: Option<SharedPriceOracle>) -> Self {
         MarketClient {
             client: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(10))
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new()),
-            hl_base: "https://api.hyperliquid.xyz".to_string(),
+            hl_base:     "https://api.hyperliquid.xyz".to_string(),
             candle_cache: RwLock::new(HashMap::new()),
-            mids_oracle: Mutex::new(None),
-            book_oracle: RwLock::new(HashMap::new()),
+            mids_oracle:  Mutex::new(None),
+            book_oracle:  RwLock::new(HashMap::new()),
+            price_feed,
         }
     }
 
@@ -170,14 +184,22 @@ impl MarketClient {
 
     // ── Tier 1: allMids ───────────────────────────────────────────────────────
 
-    /// Fetch all mid-prices from Hyperliquid (weight = 2), with oracle caching.
+    /// Fetch all mid-prices.  Priority order:
     ///
-    /// If a snapshot was fetched within `PRICE_ORACLE_TTL` (25 s) it is returned
-    /// immediately — no HTTP round-trip.  This means all 9 tenant loops that
-    /// share this `Arc<MarketClient>` share the same fresh snapshot and only the
-    /// *first* caller within each 30-second window pays the network cost.
+    /// 1. **WebSocket oracle** (`PriceFeedService` running) — 0 REST weight, <100 ms lag.
+    /// 2. **HTTP cache** (fallback) — if oracle absent/stale, fires one REST call
+    ///    and caches the result for 25 s across all tenants.
     pub async fn fetch_all_mids(&self) -> Result<HashMap<String, f64>> {
-        // Fast path: return cached snapshot if still fresh.
+        // ── Priority 1: live WebSocket oracle ─────────────────────────────────
+        if let Some(ref oracle) = self.price_feed {
+            let mids = price_feed::oracle_to_mids(oracle).await;
+            if !mids.is_empty() {
+                return Ok(mids);
+            }
+            // Oracle exists but has no data yet (WS connecting) — fall through to HTTP.
+        }
+
+        // ── Priority 2: HTTP cache (25-second TTL, shared across all tenants) ──
         {
             let guard = self.mids_oracle.lock().await;
             if let Some((fetched_at, ref mids)) = *guard {
