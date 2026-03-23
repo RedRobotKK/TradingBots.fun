@@ -30,7 +30,16 @@ use crate::config::Config;
 use crate::decision::Decision;
 use crate::risk::Account;
 use anyhow::{anyhow, Result};
+use chrono::{DateTime, Utc};
+use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
+use std::time::{Duration, Instant};
+use tokio::sync::Mutex;
+use tokio::time::sleep;
 
 // ─────────────────────────── API base URLs ───────────────────────────────────
 
@@ -55,6 +64,84 @@ pub struct Position {
 impl Position {
     pub fn should_close(&self) -> bool {
         ((self.current_price - self.entry_price) / self.entry_price).abs() > 0.05
+    }
+}
+
+#[derive(Debug)]
+pub struct HyperliquidStats {
+    total_requests: AtomicU64,
+    rate_limit_hits: AtomicU64,
+    last_rate_limit: Mutex<Option<DateTime<Utc>>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HyperliquidStatsSnapshot {
+    pub total_requests: u64,
+    pub rate_limit_hits: u64,
+    pub last_rate_limit_at: Option<String>,
+}
+
+impl Default for HyperliquidStatsSnapshot {
+    fn default() -> Self {
+        Self {
+            total_requests: 0,
+            rate_limit_hits: 0,
+            last_rate_limit_at: None,
+        }
+    }
+}
+
+impl HyperliquidStats {
+    pub fn new() -> Self {
+        Self {
+            total_requests: AtomicU64::new(0),
+            rate_limit_hits: AtomicU64::new(0),
+            last_rate_limit: Mutex::new(None),
+        }
+    }
+
+    pub fn record_request(&self) {
+        self.total_requests.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub async fn record_rate_limit(&self) {
+        self.rate_limit_hits.fetch_add(1, Ordering::Relaxed);
+        let mut guard = self.last_rate_limit.lock().await;
+        *guard = Some(Utc::now());
+    }
+
+    pub async fn snapshot(&self) -> HyperliquidStatsSnapshot {
+        let last = self.last_rate_limit.lock().await;
+        HyperliquidStatsSnapshot {
+            total_requests: self.total_requests.load(Ordering::Relaxed),
+            rate_limit_hits: self.rate_limit_hits.load(Ordering::Relaxed),
+            last_rate_limit_at: last.as_ref().map(|dt| dt.to_rfc3339()),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct RateLimiter {
+    last_request: Mutex<Instant>,
+    interval: Duration,
+}
+
+impl RateLimiter {
+    fn new(interval: Duration) -> Self {
+        Self {
+            last_request: Mutex::new(Instant::now() - interval),
+            interval,
+        }
+    }
+
+    async fn wait(&self) {
+        let mut last = self.last_request.lock().await;
+        let now = Instant::now();
+        if now.duration_since(*last) < self.interval {
+            let wait = self.interval - now.duration_since(*last);
+            sleep(wait).await;
+        }
+        *last = Instant::now();
     }
 }
 
@@ -99,6 +186,8 @@ pub struct HyperliquidClient {
     builder_code: Option<String>,
     /// Private key bytes — stored decoded to avoid accidental logging.
     private_key: Option<Vec<u8>>,
+    stats: Arc<HyperliquidStats>,
+    rate_limiter: Arc<RateLimiter>,
 }
 
 impl HyperliquidClient {
@@ -136,7 +225,33 @@ impl HyperliquidClient {
             wallet_addr: config.hyperliquid_wallet_address.clone(),
             builder_code: config.builder_code.clone(),
             private_key,
+            stats: Arc::new(HyperliquidStats::new()),
+            rate_limiter: Arc::new(RateLimiter::new(Duration::from_millis(
+                config.hyperliquid_rate_limit_ms,
+            ))),
         })
+    }
+
+    pub fn stats(&self) -> Arc<HyperliquidStats> {
+        self.stats.clone()
+    }
+
+    async fn send_with_rate_limit(
+        &self,
+        builder: reqwest::RequestBuilder,
+        context: &str,
+    ) -> Result<reqwest::Response> {
+        self.rate_limiter.wait().await;
+        self.stats.record_request();
+        let resp = builder
+            .send()
+            .await
+            .map_err(|e| anyhow!("{} request failed: {}", context, e))?;
+        if resp.status() == StatusCode::TOO_MANY_REQUESTS {
+            log::warn!("Hyperliquid {} request hit 429 — backing off", context);
+            self.stats.record_rate_limit().await;
+        }
+        Ok(resp)
     }
 
     // ── Read: clearinghouseState ──────────────────────────────────────────────
@@ -157,15 +272,16 @@ impl HyperliquidClient {
 
         let addr = self.wallet_addr.as_deref().unwrap();
         let resp = self
-            .client
-            .post(format!("{}/info", self.base_url))
-            .json(&InfoRequest {
-                req_type: "clearinghouseState",
-                user: Some(addr),
-            })
-            .send()
-            .await
-            .map_err(|e| anyhow!("clearinghouseState request failed: {}", e))?;
+            .send_with_rate_limit(
+                self.client
+                    .post(format!("{}/info", self.base_url))
+                    .json(&InfoRequest {
+                        req_type: "clearinghouseState",
+                        user: Some(addr),
+                    }),
+                "clearinghouseState",
+            )
+            .await?;
 
         if !resp.status().is_success() {
             let s = resp.status();
@@ -280,12 +396,13 @@ impl HyperliquidClient {
         });
 
         let resp = self
-            .client
-            .post(format!("{}/exchange", self.base_url))
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| anyhow!("order POST failed: {}", e))?;
+            .send_with_rate_limit(
+                self.client
+                    .post(format!("{}/exchange", self.base_url))
+                    .json(&body),
+                "order",
+            )
+            .await?;
 
         if !resp.status().is_success() {
             let s = resp.status();
@@ -400,12 +517,13 @@ impl HyperliquidClient {
         });
 
         let resp = self
-            .client
-            .post(format!("{}/exchange", self.base_url))
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| anyhow!("close order POST failed: {}", e))?;
+            .send_with_rate_limit(
+                self.client
+                    .post(format!("{}/exchange", self.base_url))
+                    .json(&body),
+                "close order",
+            )
+            .await?;
 
         if !resp.status().is_success() {
             let s = resp.status();

@@ -443,6 +443,7 @@ async fn main() -> Result<()> {
             global_thesis: global_thesis.clone(),
             report_cache: report_cache.clone(),
             pattern_cache: pattern_cache.clone(),
+            hyperliquid_stats: hl.stats(),
             bridge_manager: bridge_manager.clone(),
         };
         tokio::spawn(async move {

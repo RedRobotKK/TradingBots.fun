@@ -33,6 +33,9 @@ pub struct Config {
     /// and as the signer identity for all order submissions.
     pub hyperliquid_wallet_address: Option<String>,
 
+    /// Minimum spacing (ms) between Hyperliquid HTTP requests. Helps avoid 429s.
+    pub hyperliquid_rate_limit_ms: u64,
+
     // Revenue — builder code embedded in every HL order
     /// Hyperliquid builder address (0x…).  When set, every order routed through
     /// this bot embeds the builder code so the platform earns the builder fee.
@@ -167,6 +170,10 @@ impl Config {
             hyperliquid_key: env::var("HYPERLIQUID_KEY").ok(),
             hyperliquid_secret: env::var("HYPERLIQUID_SECRET").ok(),
             hyperliquid_wallet_address: env::var("HYPERLIQUID_WALLET_ADDRESS").ok(),
+            hyperliquid_rate_limit_ms: env::var("HYPERLIQUID_RATE_LIMIT_MS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(1800),
             builder_code: env::var("BUILDER_CODE").ok(),
             builder_fee_bps: env::var("BUILDER_FEE_BPS")
                 .ok()

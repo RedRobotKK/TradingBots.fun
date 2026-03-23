@@ -21,6 +21,7 @@ use tokio::sync::{Mutex, RwLock};
 static PRIVY_BUNDLE_JS: &str = include_str!("../static/privy-login.js");
 use crate::bridge::BridgeManager;
 use crate::coins;
+use crate::exchange;
 use crate::learner::{SignalContribution, SignalWeights};
 use crate::metrics::PerformanceMetrics;
 use crate::pattern_insights;
@@ -91,6 +92,7 @@ pub struct AppState {
     pub report_cache: Arc<Mutex<reporting::QueryCache>>,
     /// Cache storing the latest pattern-summary bundle (JSON + markdown).
     pub pattern_cache: Arc<Mutex<pattern_insights::PatternCache>>,
+    pub hyperliquid_stats: Arc<exchange::HyperliquidStats>,
     pub bridge_manager: Arc<BridgeManager>,
 }
 
@@ -293,6 +295,7 @@ pub struct BotState {
     pub last_update: String,
     /// Unix-ms timestamp when the next 30 s cycle will fire.  0 = unknown.
     pub next_cycle_at: i64,
+    pub hyperliquid_stats: exchange::HyperliquidStatsSnapshot,
     /// Rolling equity snapshots (max 288 ≈ 2.4 h at 30 s/cycle) for the sparkline.
     /// Populated by the main trading loop every cycle — NOT by page loads.
     #[serde(default)]
@@ -402,6 +405,7 @@ impl Default for BotState {
             status: String::new(),
             last_update: String::new(),
             next_cycle_at: 0,
+            hyperliquid_stats: exchange::HyperliquidStatsSnapshot::default(),
             equity_history: vec![],
             referral_code: None,
             ai_status: String::new(),
@@ -1854,6 +1858,15 @@ function toggleDetail(id){{
     var stEl=document.getElementById('bot-status');
     if(stEl&&s.status)stEl.textContent=s.status;
 
+    /* Hyperliquid traffic stats */
+    var hlStats = s.hyperliquid_stats || {{ total_requests: 0, rate_limit_hits: 0, last_rate_limit_at: null }};
+    var hlRequestsEl = document.getElementById('hl-requests');
+    if(hlRequestsEl) hlRequestsEl.textContent = hlStats.total_requests.toLocaleString();
+    var hlRateEl = document.getElementById('hl-rate-limits');
+    if(hlRateEl) hlRateEl.textContent = hlStats.rate_limit_hits.toLocaleString();
+    var hlLastEl = document.getElementById('hl-last-429');
+    if(hlLastEl) hlLastEl.textContent = hlStats.last_rate_limit_at || 'never';
+
     /* Equity hero P&L glow class */
     var hero=document.getElementById('equity-hero');
     if(hero){{
@@ -2409,7 +2422,9 @@ fn reason_class(r: &str) -> &'static str {
 }
 
 async fn api_state_handler(State(app): State<AppState>) -> Json<BotState> {
-    Json(app.bot_state.read().await.clone())
+    let mut state = app.bot_state.read().await.clone();
+    state.hyperliquid_stats = app.hyperliquid_stats.snapshot().await;
+    Json(state)
 }
 
 // ─────────────────────────── Consumer webapp ─────────────────────────────────
@@ -3333,6 +3348,21 @@ async fn agent_app_handler(
         <p style="margin:6px 0 0;font-size:.9rem;">Winner: <strong id="alert-winner">—</strong></p>
         <p style="margin:2px 0 0;font-size:.9rem;">Loser: <strong id="alert-loser">—</strong></p>
         <p style="margin:10px 0 0;font-size:.9rem;">Top combo: <span id="alert-combo">—</span></p>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Hyperliquid traffic</h2>
+      <div class="metric-row" style="display:flex;justify-content:space-between;">
+        <span>Requests sent</span>
+        <span id="hl-requests">—</span>
+      </div>
+      <div class="metric-row" style="display:flex;justify-content:space-between;">
+        <span>Rate-limit hits (429)</span>
+        <span id="hl-rate-limits">—</span>
+      </div>
+      <div class="metric-row" style="display:flex;justify-content:space-between;">
+        <span>Last 429</span>
+        <span id="hl-last-429">never</span>
       </div>
     </div>
   </div>
