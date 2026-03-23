@@ -419,3 +419,11 @@ git remote add production ssh://root@157.230.32.73/~/TradingBots.fun.git
 ```
 
 You can override the remote names with `GITHUB_REMOTE`, `STAGING_REMOTE`, or `PRODUCTION_REMOTE` if you prefer different aliases. The script exits with a clear message when a remote is missing, and each push triggers the remote hooks/services so the new code is built and deployed automatically.
+
+## Hyperliquid rate-limit telemetry & alerts
+
+The bot now writes the latest Hyperliquid request counters to `reports/hyperliquid_stats.json` every 15 seconds. Configure the spacing between live HL HTTP calls with `HYPERLIQUID_RATE_LIMIT_MS` (default `1800` ms) to avoid spamming 429s. Each cycle also updates the shared stats snapshot that's returned by `/api/state`, which is used by the dashboard card you added (`Hyperliquid traffic`).
+
+`scripts/pattern_cache_alert.py` reads the stats file and injects the counters into the alert payload as `hyperliquid_stats`. If `rate_limit_hits` increases since the last run, the script logs the delta (`reports/hyperliquid_alert.log`), tags `hyperliquid_alert.delta`, and emits an HTTP POST to `HYPERLIQUID_ALERT_WEBHOOK_URL` (set method/token/headers via `HYPERLIQUID_ALERT_WEBHOOK_METHOD`, `_TOKEN`, `_HEADERS`).
+
+With this in place you get both the dashboard card and an automation webhook whenever Hyperliquid throttles the bot.

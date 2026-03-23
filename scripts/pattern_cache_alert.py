@@ -6,6 +6,7 @@ import sys
 import urllib.error
 import urllib.request
 from datetime import datetime
+from typing import Dict, Optional
 
 ROOT = pathlib.Path(__file__).resolve().parent
 REPORTS = ROOT / ".." / "reports"
@@ -13,6 +14,9 @@ CACHE_FILE = REPORTS / "pattern_cache.json"
 LAST_MARKER = REPORTS / ".pattern_cache_last"
 ALERT_JSON = REPORTS / "pattern_cache_alert.json"
 LOG_FILE = REPORTS / "pattern_cache_alert.log"
+HL_STATS_FILE = REPORTS / "hyperliquid_stats.json"
+HL_LAST = REPORTS / ".hyperliquid_last"
+HL_LOG_FILE = REPORTS / "hyperliquid_alert.log"
 
 
 def load_cache():
@@ -24,6 +28,69 @@ def load_cache():
 
 def parse_timestamp(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def load_stats() -> Optional[Dict]:
+    if not HL_STATS_FILE.exists():
+        return None
+    try:
+        return json.loads(HL_STATS_FILE.read_text())
+    except json.JSONDecodeError:
+        return None
+
+
+def load_last_hits() -> int:
+    if not HL_LAST.exists():
+        return 0
+    try:
+        data = json.loads(HL_LAST.read_text())
+        return data.get("rate_limit_hits", 0)
+    except json.JSONDecodeError:
+        return 0
+
+
+def save_last_hits(count: int):
+    try:
+        HL_LAST.write_text(json.dumps({"rate_limit_hits": count}))
+    except OSError:
+        pass
+
+
+def append_hyperliquid_alert_log(entry: Dict):
+    try:
+        HL_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        log_entry = {"logged_at": datetime.utcnow().isoformat() + "Z", **entry}
+        with HL_LOG_FILE.open("a") as fh:
+            fh.write(json.dumps(log_entry) + "\n")
+    except OSError as exc:
+        print(f"⚠️ Failed to append Hyperliquid log: {exc}", file=sys.stderr)
+
+
+def dispatch_hyperliquid_alert(alert: Dict):
+    url = os.getenv("HYPERLIQUID_ALERT_WEBHOOK_URL")
+    if not url:
+        return
+    method = os.getenv("HYPERLIQUID_ALERT_WEBHOOK_METHOD", "POST").upper()
+    headers = {"Content-Type": "application/json"}
+    token = os.getenv("HYPERLIQUID_ALERT_WEBHOOK_TOKEN")
+    if token:
+        headers["Authorization"] = token if token.lower().startswith(("bearer ", "token ")) else f"Bearer {token}"
+    extra_headers = os.getenv("HYPERLIQUID_ALERT_WEBHOOK_HEADERS")
+    if extra_headers:
+        try:
+            parsed = json.loads(extra_headers)
+            if isinstance(parsed, dict):
+                for key, value in parsed.items():
+                    headers[key] = str(value)
+        except json.JSONDecodeError as exc:
+            print(f"⚠️ Invalid webhook headers JSON: {exc}", file=sys.stderr)
+    data = json.dumps(alert).encode("utf-8")
+    req = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            print(f"→ {method} Hyperliquid webhook {url} ({resp.status})")
+    except urllib.error.URLError as exc:
+        print(f"⚠️ Hyperliquid webhook dispatch failed: {exc}", file=sys.stderr)
 
 
 def alert_if_changed(cache: dict):
@@ -63,7 +130,27 @@ def alert_if_changed(cache: dict):
             "context": combo_context,
             "win_rate": combo_rate,
         },
+        "hyperliquid_stats": None,
+        "hyperliquid_alert": None,
     }
+    stats = load_stats()
+    if stats:
+        payload["hyperliquid_stats"] = stats
+        current_hits = stats.get("rate_limit_hits", 0)
+        last_hits = load_last_hits()
+        delta = current_hits - last_hits
+        save_last_hits(current_hits)
+        if delta > 0:
+            hl_alert = {
+                "delta": delta,
+                "rate_limit_hits": current_hits,
+                "last_rate_limit_at": stats.get("last_rate_limit_at"),
+            }
+            payload["hyperliquid_alert"] = hl_alert
+            append_hyperliquid_alert_log(hl_alert)
+            dispatch_hyperliquid_alert(hl_alert)
+    else:
+        save_last_hits(load_last_hits())
     ALERT_JSON.write_text(json.dumps(payload, indent=2))
     append_alert_log(payload)
     dispatch_webhook(payload)

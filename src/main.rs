@@ -165,9 +165,12 @@ use sentiment::{SentimentCache, SharedSentiment};
 use signal_watchlist::{SharedWatchlist, SignalWatchlist, SkipReason};
 use std::collections::HashMap;
 use std::fs;
+use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::fs as tokio_fs;
 use tokio::sync::{Mutex, RwLock};
 use trade_log::{date_today, ts_now, SharedTradeLogger, TradeEvent, TradeLogger};
 use uuid::Uuid;
@@ -408,6 +411,25 @@ async fn main() -> Result<()> {
     fs::create_dir_all("reports")?;
     let report_cache = Arc::new(Mutex::new(reporting::QueryCache::load()));
     let pattern_cache = Arc::new(Mutex::new(pattern_insights::PatternCache::load()));
+    let hyperliquid_stats_path = PathBuf::from("reports").join("hyperliquid_stats.json");
+    let stats_writer_stats = hl.stats();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(15));
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            let snapshot = stats_writer_stats.snapshot().await;
+            if let Ok(serialized) = serde_json::to_string_pretty(&snapshot) {
+                if let Err(err) = tokio_fs::write(&hyperliquid_stats_path, serialized).await {
+                    warn!(
+                        "Failed to write hyperliquid stats file {}: {}",
+                        hyperliquid_stats_path.display(),
+                        err
+                    );
+                }
+            }
+        }
+    });
     let bridge_manager = Arc::new(BridgeManager::new(
         hl.clone(),
         config.bridge_min_withdraw_usd,
