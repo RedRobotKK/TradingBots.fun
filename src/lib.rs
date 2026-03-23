@@ -52,6 +52,7 @@ pub mod notifier;
 pub mod onchain;
 pub mod pattern_insights;
 pub mod persistence;
+pub mod price_feed;
 pub mod privy;
 pub mod reporting;
 pub mod risk;

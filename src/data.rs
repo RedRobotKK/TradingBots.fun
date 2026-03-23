@@ -192,7 +192,7 @@ impl MarketClient {
     pub async fn fetch_all_mids(&self) -> Result<HashMap<String, f64>> {
         // ── Priority 1: live WebSocket oracle ─────────────────────────────────
         if let Some(ref oracle) = self.price_feed {
-            let mids = price_feed::oracle_to_mids(oracle).await;
+            let mids: HashMap<String, f64> = price_feed::oracle_to_mids(oracle).await;
             if !mids.is_empty() {
                 return Ok(mids);
             }

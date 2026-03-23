@@ -161,11 +161,6 @@ impl Database {
         Ok(())
     }
 
-    /// Expose the raw pool for advanced callers (tests, raw queries).
-    pub fn pool(&self) -> &PgPool {
-        &self.pool
-    }
-
     // ── Equity snapshots ────────────────────────────────────────────────────────
 
     /// Record one equity snapshot for a tenant.
