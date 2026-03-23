@@ -133,8 +133,10 @@ mod notifier;
 mod onchain;
 mod pattern_insights;
 mod persistence;
+mod position_monitor;
 mod price_feed;
 mod privy;
+mod signal_engine;
 mod reporting;
 mod risk;
 mod sentiment;
@@ -325,13 +327,44 @@ async fn main() -> Result<()> {
     // WebSocket handshake completes (~2 s after startup).
     let price_oracle = price_feed::new_oracle();
     let market = Arc::new(data::MarketClient::with_oracle(price_oracle.clone()));
+    let db_pool_opt = shared_db.as_deref().map(|db| db.pool().clone());
     price_feed::PriceFeedService::new(
-        price_oracle,
+        price_oracle.clone(),
         // Pass the raw PgPool (not the Arc<Database> wrapper) so price_feed
         // can use a separate small pool without touching the main 10-conn pool.
-        shared_db.as_deref().map(|db| db.pool().clone()),
+        db_pool_opt.clone(),
     )
     .spawn();
+
+    // ── Signal engine (per-symbol, scales to 1M+ tenants) ─────────────────────
+    // Computes RSI/MACD/order-flow signals ONCE per symbol per 30-second cycle.
+    // All tenants read from the resulting SharedSignalCache instead of each
+    // tenant independently recomputing signals — O(symbols) not O(tenants).
+    let signal_cache = signal_engine::new_signal_cache();
+    signal_engine::SignalEngine::new(
+        market.clone(),
+        price_oracle.clone(),
+        signal_cache.clone(),
+        db_pool_opt.clone(),
+    )
+    .spawn();
+
+    // ── Position monitor (event-driven, scales to 1M+ tenants) ───────────────
+    // Watches oracle price diffs; when a symbol moves ≥0.05%, queries all open
+    // positions for that symbol across ALL tenants and evaluates stops/targets.
+    // Writes triggered exits to execution_queue; worker pool executes them.
+    // Cost: O(symbols_that_moved) not O(tenants × positions).
+    if let Some(pool) = db_pool_opt.clone() {
+        position_monitor::PositionMonitor::new(
+            price_oracle.clone(),
+            signal_cache.clone(),
+            pool,
+        )
+        .spawn();
+        info!("✓ PositionMonitor + ExecutionWorkers running ({} workers)", position_monitor::EXECUTION_WORKER_COUNT);
+    } else {
+        info!("ℹ PositionMonitor disabled (no DB — restart with DATABASE_URL to enable)");
+    }
 
     let hl = Arc::new(exchange::HyperliquidClient::new(&config)?);
 
