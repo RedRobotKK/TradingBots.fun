@@ -46,9 +46,8 @@
 //! Set `OLLAMA_BASE_URL=http://<ollama-droplet-ip>:11434`.
 
 use anyhow::{Context, Result};
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use std::sync::Arc;
 
