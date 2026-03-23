@@ -1415,8 +1415,8 @@ async fn run_cycle(
             // TimeExit windows scale with DCA count — each add-on earns the position
             // more breathing room because we've explicitly decided to stay in.
             // Base: 240 cycles (2h) flat / 360 cycles (3h) chronic loss.
-            // With 1 DCA: 1.5× → 360 flat / 540 chronic.
-            // With 2+ DCA: 2× → 480 flat / 720 chronic.
+            // With 1 DCA: 2× → 480 flat / 720 chronic.
+            // With 2+ DCA: 3× → 720 flat / 1080 chronic.
             let time_mult = match pos.dca_count {
                 0 => 1,
                 1 => 2, // 1 DCA → double the patience window
@@ -4819,16 +4819,16 @@ mod tests {
 
     #[test]
     fn false_breakout_detected_for_long() {
-        // Trade peaked at 0.15R, is now at -0.08R after 45 min with no DCA.
-        // Pattern: false breakout — should close.
+        // Trade peaked at 0.35R (above the 0.30R production threshold), is now
+        // at -0.08R after 45 min with no DCA.  Pattern: false breakout — should close.
         let entry: f64 = 100.0;
         let stop = 95.0;
         let qty = 3.0;
         let r_risk = (entry - stop) * qty; // $15
-        let hwm = 100.75; // peaked at +$0.75 per unit × 3 qty = $2.25 → 2.25/15 = 0.15R
+        let hwm = 101.75; // peaked at +$1.75/unit × 3 qty = $5.25 → 5.25/15 = 0.35R
 
-        let peak_r = (hwm - entry) * qty / r_risk; // 0.15
-        assert!((peak_r - 0.15).abs() < 1e-10, "peak should be 0.15R");
+        let peak_r = (hwm - entry) * qty / r_risk; // 0.35
+        assert!((peak_r - 0.35).abs() < 1e-10, "peak should be 0.35R");
 
         // Current price has reversed to -0.08R
         let r_mult = -0.08_f64;
@@ -4836,7 +4836,7 @@ mod tests {
         let dca_count = 0_u32;
 
         let false_breakout =
-            peak_r >= 0.10 && r_mult < -0.05 && (30..120).contains(&cycles_held) && dca_count == 0;
+            peak_r >= 0.30 && r_mult < -0.05 && (30..120).contains(&cycles_held) && dca_count == 0;
         assert!(
             false_breakout,
             "REZ-type pattern should trigger false-breakout exit"
@@ -4845,14 +4845,15 @@ mod tests {
 
     #[test]
     fn false_breakout_not_triggered_with_dca() {
-        // Same reversal pattern but DCA was taken — we committed, let it play.
-        let peak_r = 0.15_f64;
+        // Same reversal pattern (peak 0.35R, now -0.08R) but DCA was taken —
+        // we committed to the position, so the false-breakout guard must not fire.
+        let peak_r = 0.35_f64;
         let r_mult = -0.08_f64;
         let cycles_held = 90_u32;
         let dca_count = 1_u32; // DCA taken
 
         let false_breakout =
-            peak_r >= 0.10 && r_mult < -0.05 && (30..120).contains(&cycles_held) && dca_count == 0;
+            peak_r >= 0.30 && r_mult < -0.05 && (30..120).contains(&cycles_held) && dca_count == 0;
         assert!(
             !false_breakout,
             "false-breakout must not fire when DCA has been deployed"
@@ -4861,14 +4862,14 @@ mod tests {
 
     #[test]
     fn false_breakout_not_triggered_after_60min() {
-        // After 60 min, time-exit rules take over — don't re-fire false_breakout.
-        let peak_r = 0.15_f64;
+        // After 60 min, time-exit rules take over — the false-breakout window is closed.
+        let peak_r = 0.35_f64;
         let r_mult = -0.08_f64;
         let cycles_held = 130_u32; // 65 min > 60 min window
         let dca_count = 0_u32;
 
         let false_breakout =
-            peak_r >= 0.10 && r_mult < -0.05 && (30..120).contains(&cycles_held) && dca_count == 0;
+            peak_r >= 0.30 && r_mult < -0.05 && (30..120).contains(&cycles_held) && dca_count == 0;
         assert!(
             !false_breakout,
             "false-breakout window closes after 60 min (120 cycles)"

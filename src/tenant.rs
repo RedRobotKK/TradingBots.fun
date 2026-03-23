@@ -773,16 +773,19 @@ pub fn new_tenant_manager() -> SharedTenantManager {
 /// Fixed display names and deterministic UUIDs so the dashboard remains stable
 /// across restarts and log lines are easy to grep.
 pub const DEMO_WALLETS: &[(&str, f64, &str)] = &[
-    // (display_name, initial_capital_usd, fixed_uuid_suffix)
-    ("Bot Alpha", 10.0, "demo-0001-0000-0000-000000000001"),
-    ("Bot Beta", 25.0, "demo-0002-0000-0000-000000000002"),
-    ("Bot Gamma", 50.0, "demo-0003-0000-0000-000000000003"),
-    ("Bot Delta", 100.0, "demo-0004-0000-0000-000000000004"),
-    ("Bot Epsilon", 250.0, "demo-0005-0000-0000-000000000005"),
-    ("Bot Zeta", 500.0, "demo-0006-0000-0000-000000000006"),
-    ("Bot Eta", 1_000.0, "demo-0007-0000-0000-000000000007"),
-    ("Bot Theta", 5_000.0, "demo-0008-0000-0000-000000000008"),
-    ("Bot Iota", 10_000.0, "demo-0009-0000-0000-000000000009"),
+    // (display_name, initial_capital_usd, deterministic UUID)
+    // IDs use the "d000000N-…" pattern — fully valid hex UUIDs so that
+    // Uuid::parse_str() succeeds in snapshot_daily() and these bots show
+    // up on the public leaderboard.
+    ("Bot Alpha",   10.0,     "d0000001-0000-0000-0000-000000000001"),
+    ("Bot Beta",    25.0,     "d0000002-0000-0000-0000-000000000002"),
+    ("Bot Gamma",   50.0,     "d0000003-0000-0000-0000-000000000003"),
+    ("Bot Delta",   100.0,    "d0000004-0000-0000-0000-000000000004"),
+    ("Bot Epsilon", 250.0,    "d0000005-0000-0000-0000-000000000005"),
+    ("Bot Zeta",    500.0,    "d0000006-0000-0000-0000-000000000006"),
+    ("Bot Eta",     1_000.0,  "d0000007-0000-0000-0000-000000000007"),
+    ("Bot Theta",   5_000.0,  "d0000008-0000-0000-0000-000000000008"),
+    ("Bot Iota",    10_000.0, "d0000009-0000-0000-0000-000000000009"),
 ];
 
 /// Register the 9 demo wallets into `mgr` if they are not already present.
