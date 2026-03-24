@@ -7676,10 +7676,52 @@ async fn public_landing_handler(State(_app): State<AppState>) -> axum::response:
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>TradingBots.fun — AI Trading Bot · Make Money 24/7</title>
-<meta name="description" content="Deposit USDC, let the AI trade for you 24/7. Live P&L, real trades, nothing hidden. Bot API with x402 payment support for autonomous agents.">
-<meta property="og:title" content="TradingBots.fun — AI that trades while you sleep">
-<meta property="og:description" content="Real capital. Real trades. Live win rate, P&L, and open positions — all public. Start for free or integrate via Bot API.">
+<title>TradingBots.fun — AI Trading Bot on Hyperliquid · x402 API</title>
+<meta name="description" content="Autonomous AI trading on Hyperliquid perpetuals. Deposit USDC via Arbitrum bridge, earn 24/7. x402 Bot API for autonomous agents — pay-per-session, no subscription.">
+<meta name="keywords" content="x402 trading API, AI agent trading, Hyperliquid bot, autonomous trading agent, x402 payment protocol, crypto trading bot, Arbitrum USDC bridge, AI agent Hyperliquid, perpetuals trading bot, x402 bot">
+<link rel="canonical" href="https://tradingbots.fun/">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://tradingbots.fun/">
+<meta property="og:title" content="TradingBots.fun — AI Trading Bot · x402 Agent API">
+<meta property="og:description" content="Real capital. Real trades. Autonomous AI on Hyperliquid perpetuals. x402 Bot API lets AI agents start, fund, and control trading sessions programmatically.">
+<meta property="og:image" content="https://tradingbots.fun/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="TradingBots.fun — AI Trading · x402 Agent API">
+<meta name="twitter:description" content="Autonomous AI trading on Hyperliquid. x402 pay-per-session Bot API. Arbitrum ↔ Hyperliquid bridge built-in.">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "SoftwareApplication",
+      "name": "TradingBots.fun",
+      "url": "https://tradingbots.fun",
+      "applicationCategory": "FinanceApplication",
+      "operatingSystem": "Web",
+      "description": "Autonomous AI trading bot on Hyperliquid perpetuals with x402 payment protocol API for AI agents and autonomous systems.",
+      "offers": {
+        "@type": "Offer",
+        "price": "10",
+        "priceCurrency": "USDC",
+        "description": "30-day Bot API session via x402 protocol"
+      }
+    },
+    {
+      "@type": "WebAPI",
+      "name": "TradingBots.fun Bot API",
+      "url": "https://tradingbots.fun/api/v1/",
+      "description": "x402-gated REST API for autonomous agents. AI agents can start trading sessions, fund wallets via Arbitrum bridge, and control live positions programmatically.",
+      "documentation": "https://tradingbots.fun/api/v1/status"
+    },
+    {
+      "@type": "Organization",
+      "name": "TradingBots.fun",
+      "url": "https://tradingbots.fun",
+      "description": "Autonomous AI trading infrastructure for Hyperliquid perpetuals with x402 payment protocol support."
+    }
+  ]
+}
+</script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:#0d1117;color:#c9d1d9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;min-height:100vh}
@@ -7742,6 +7784,19 @@ a{color:inherit;text-decoration:none}
 .stat-cell:last-child{border-right:none}
 .stat-val{font-size:1.45rem;font-weight:800;color:var(--text-hi);font-variant-numeric:tabular-nums;line-height:1}
 .stat-lbl{font-size:.64rem;color:var(--dim);text-transform:uppercase;letter-spacing:.75px;margin-top:5px}
+
+/* ── Bridge badge ── */
+.bridge-badge{display:inline-flex;align-items:center;gap:6px;background:rgba(88,166,255,.08);border:1px solid rgba(88,166,255,.2);border-radius:8px;padding:5px 12px;font-size:.72rem;color:var(--blue);font-weight:600;margin-bottom:22px}
+.bridge-badge svg{opacity:.7}
+
+/* ── x402 highlight band ── */
+.x402-hero{background:linear-gradient(135deg,rgba(88,166,255,.06) 0%,rgba(63,185,80,.04) 100%);border:1px solid rgba(88,166,255,.18);border-radius:16px;padding:28px 28px 24px;margin-top:40px}
+.x402-hero h3{font-size:1.05rem;font-weight:800;color:var(--text-hi);margin-bottom:6px;display:flex;align-items:center;gap:8px}
+.x402-tag{background:rgba(88,166,255,.15);color:var(--blue);border-radius:5px;padding:2px 8px;font-size:.65rem;font-weight:800;letter-spacing:.5px}
+.x402-hero p{font-size:.82rem;color:var(--muted);line-height:1.7;margin-bottom:18px}
+.x402-flow{display:flex;flex-direction:column;gap:8px}
+.x402-step{display:flex;align-items:flex-start;gap:10px;font-size:.78rem;color:var(--text)}
+.x402-step-num{width:20px;height:20px;border-radius:50%;background:rgba(88,166,255,.15);color:var(--blue);font-size:.65rem;font-weight:800;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px}
 
 /* ── Algo cards ── */
 .algo-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px}
@@ -7862,9 +7917,9 @@ th{padding:9px 14px;font-size:.65rem;font-weight:700;color:var(--dim);text-trans
   <div class="nav-links">
     <span class="live-badge"><span id="live-pill-text">1 Bot</span> Live</span>
     <a href="#how" class="nav-link">How it works</a>
-    <a href="#bot-api" class="nav-link">Bot API</a>
-    <a href="/app/agents" class="nav-link">Agent Console</a>
-    <a href="/login" class="nav-cta">Start Trading →</a>
+    <a href="#x402-api" class="nav-link">x402 API</a>
+    <a href="/leaderboard" class="nav-link">Leaderboard</a>
+    <a href="/login" class="nav-cta">Get Your Bot →</a>
   </div>
 </nav>
 
@@ -7873,17 +7928,18 @@ th{padding:9px 14px;font-size:.65rem;font-weight:700;color:var(--dim);text-trans
   <!-- AUM history sparkline renders here as a translucent background -->
   <canvas id="aum-canvas"></canvas>
   <div style="position:relative;z-index:1">
-    <div class="hero-eyebrow">● AI Trading · Live Right Now</div>
-    <h1>Your money.<br>Working <em>24/7</em>.</h1>
+    <div class="hero-eyebrow">● AI Trading · Live on Hyperliquid</div>
+    <h1>Get a bot.<br>Let it <em>trade for you</em>.</h1>
     <div id="hero-pnl" class="hero-pnl" style="display:none">
       <span id="hero-pnl-val">+$0.00</span>
       <span class="hero-pnl-meta">session profit · <span id="hero-wr">—</span> win rate</span>
     </div>
-    <p class="hero-sub">Deposit USDC. The AI enters and exits trades around the clock.<br><span id="hero-aum" style="color:var(--green);font-weight:700">—</span> under management right now.</p>
+    <p class="hero-sub">Deposit USDC via Arbitrum. The AI scans 50+ perpetual pairs every 30 seconds and manages your trades 24/7.<br><span id="hero-aum" style="color:var(--green);font-weight:700">—</span> under management right now.</p>
     <div class="hero-btns">
-      <a href="/login" class="btn-p">Start Earning →</a>
-      <a href="#bot-api" class="btn-s">Bot API</a>
+      <a href="/login" class="btn-p" style="font-size:1rem;padding:14px 32px">Get Your Bot →</a>
+      <a href="#x402-api" class="btn-s">Bot API (x402)</a>
     </div>
+    <p style="margin-top:14px;font-size:.72rem;color:var(--dim)">No subscription. Deposit USDC &amp; start. Withdraw anytime.</p>
   </div>
 </section>
 
@@ -7930,17 +7986,22 @@ th{padding:9px 14px;font-size:.65rem;font-weight:700;color:var(--dim);text-trans
     <div class="step">
       <div class="step-num">💰</div>
       <div class="step-title">Deposit USDC</div>
-      <div class="step-desc">Fund your bot wallet with any amount. No lock-ups — withdraw profits anytime.</div>
+      <div class="step-desc">Send USDC from Arbitrum — the built-in bridge handles the rest. No lock-ups, withdraw profits anytime.</div>
     </div>
     <div class="step">
       <div class="step-num">🤖</div>
       <div class="step-title">AI Trades For You</div>
-      <div class="step-desc">Multi-signal AI scans 50+ crypto pairs every 30 seconds, entering and exiting with precision.</div>
+      <div class="step-desc">Multi-signal AI scans 50+ Hyperliquid perpetual pairs every 30 seconds, entering and exiting with precision.</div>
     </div>
     <div class="step">
       <div class="step-num">📈</div>
       <div class="step-title">Collect Your Profits</div>
-      <div class="step-desc">Watch real P&L accumulate. Take profit on demand — your keys, your capital, full control.</div>
+      <div class="step-desc">Watch real P&L accumulate live. Take profit on demand — your keys, your capital, full control.</div>
+    </div>
+    <div class="step" style="border-color:rgba(88,166,255,.2);background:rgba(88,166,255,.03)">
+      <div class="step-num">⚡</div>
+      <div class="step-title">Or: Use the x402 API</div>
+      <div class="step-desc">AI agent? Call the API. HTTP 402 → pay 10 USDC on Base → get session token. Fully autonomous, no UI required.</div>
     </div>
   </div>
 </section>
@@ -7952,55 +8013,79 @@ th{padding:9px 14px;font-size:.65rem;font-weight:700;color:var(--dim);text-trans
 </section>
 
 <!-- ═══ FOR AI AGENTS — x402 ═══ -->
-<section class="sec" id="bot-api">
-  <div class="sec-head"><span class="sec-title">For AI Agents &amp; Bots</span><span class="sec-line"></span></div>
-  <div class="agent-grid">
+<section class="sec" id="x402-api">
+  <div class="sec-head"><span class="sec-title">For AI Agents &amp; Autonomous Systems</span><span class="sec-line"></span></div>
+
+  <!-- x402 intro band -->
+  <div class="x402-hero">
+    <h3><span class="x402-tag">x402</span> The Machine-Native Trading API</h3>
+    <p>The <strong style="color:var(--text-hi)">x402 protocol</strong> enables fully autonomous trading sessions — no UI, no human in the loop, no subscription sign-up. An AI agent sends a standard HTTP request, receives HTTP 402 with on-chain payment details, pays 10 USDC on Base, and immediately gains a 30-day authenticated session. The entire flow is machine-executable in milliseconds.</p>
+    <div class="x402-flow">
+      <div class="x402-step"><div class="x402-step-num">1</div><span><strong style="color:var(--text-hi)">Probe</strong> — <code style="font-size:.75rem;color:var(--dim)">POST /api/v1/session</code> returns <code style="font-size:.75rem;color:var(--yellow)">HTTP 402</code> with amount + payTo address</span></div>
+      <div class="x402-step"><div class="x402-step-num">2</div><span><strong style="color:var(--text-hi)">Pay</strong> — Agent sends 10 USDC on Base mainnet to the payment address, gets a tx hash</span></div>
+      <div class="x402-step"><div class="x402-step-num">3</div><span><strong style="color:var(--text-hi)">Activate</strong> — Retry with <code style="font-size:.75rem;color:var(--dim)">X-Payment: &lt;tx_hash&gt;</code> header, receive session token</span></div>
+      <div class="x402-step"><div class="x402-step-num">4</div><span><strong style="color:var(--text-hi)">Trade</strong> — Fund bot via Arbitrum bridge, issue commands, monitor positions — all via REST</span></div>
+    </div>
+  </div>
+
+  <div class="agent-grid" style="margin-top:20px">
     <div class="agent-text">
-      <h3>x402 — Pay-Per-Session Bot API</h3>
-      <p>Autonomous agents can start, fund, and control trading sessions entirely via HTTP. No UI, no human in the loop. Payments handled natively via the x402 protocol — 10 USDC on Base per 30-day session.</p>
+      <h3>REST Endpoints</h3>
+      <p style="margin-bottom:14px">Full programmatic control. Human or machine — same API.</p>
       <div class="endpoint-list">
-        <div class="ep"><span class="m-get">GET</span>  /api/v1/status</div>
-        <div class="ep"><span class="m-post">POST</span> /api/v1/session <span style="color:var(--dim);font-size:.65rem">← x402 gated</span></div>
+        <div class="ep"><span class="m-get">GET</span>  /api/v1/status <span style="color:var(--dim);font-size:.65rem;margin-left:auto">public</span></div>
+        <div class="ep"><span class="m-post">POST</span> /api/v1/session <span style="color:var(--yellow);font-size:.65rem;margin-left:auto">← x402 gated</span></div>
         <div class="ep"><span class="m-get">GET</span>  /api/v1/session/{id}</div>
         <div class="ep"><span class="m-post">POST</span> /api/v1/session/{id}/command</div>
+        <div class="ep"><span class="m-post">POST</span> /api/v1/bridge/deposit <span style="color:var(--dim);font-size:.65rem;margin-left:auto">Arb→HL</span></div>
+        <div class="ep"><span class="m-post">POST</span> /api/v1/bridge/withdraw <span style="color:var(--dim);font-size:.65rem;margin-left:auto">HL→Arb</span></div>
       </div>
+      <p style="margin-top:16px;font-size:.75rem;color:var(--dim)">Bridge endpoints route USDC between Arbitrum One and Hyperliquid natively — no manual wallet management.</p>
     </div>
     <div class="code-box">
       <div class="code-box-head">
         <span style="width:10px;height:10px;border-radius:50%;background:#f85149;display:inline-block"></span>
         <span style="width:10px;height:10px;border-radius:50%;background:#e3b341;display:inline-block"></span>
         <span style="width:10px;height:10px;border-radius:50%;background:#3fb950;display:inline-block"></span>
-        <span style="margin-left:8px">bash</span>
+        <span style="margin-left:8px;color:var(--dim)">x402 flow · bash</span>
       </div>
-<pre><span class="cmt"># 1. Check live status (no auth)</span>
-<span class="kw">curl</span> https://tradingbots.fun/api/v1/status
-
-<span class="cmt"># 2. Start session — get 402 with payment details</span>
+<pre><span class="cmt"># Step 1 — probe (any agent can call this)</span>
 <span class="kw">curl</span> -X POST https://tradingbots.fun/api/v1/session
-<span class="cmt"># ← 402 {"amount":"10 USDC","payTo":"0x..."}</span>
+<span class="cmt"># ← 402 { "x402Version":1, "accepts":[{</span>
+<span class="cmt">#         "scheme":"exact","amount":"10000000",</span>
+<span class="cmt">#         "asset":"USDC","network":"base",</span>
+<span class="cmt">#         "payTo":"0x..." }] }</span>
 
-<span class="cmt"># 3. Retry after paying (include tx hash)</span>
+<span class="cmt"># Step 2 — pay on Base (agent executes ERC-20 transfer)</span>
+<span class="cmt"># → tx: 0xabc...def</span>
+
+<span class="cmt"># Step 3 — activate session</span>
 <span class="kw">curl</span> -X POST https://tradingbots.fun/api/v1/session \
   -H <span class="str">"X-Payment: 0xabc...def"</span>
 <span class="cmt"># ← 200 {"session_id":"ses_...","token":"tok_..."}</span>
 
-<span class="cmt"># 4. Take profit on SOL</span>
+<span class="cmt"># Step 4 — bridge USDC from Arbitrum to fund bot</span>
+<span class="kw">curl</span> -X POST https://tradingbots.fun/api/v1/bridge/deposit \
+  -H <span class="str">"Authorization: Bearer tok_..."</span> \
+  -d <span class="str">'{"amount_usdc":500,"arb_wallet":"0x..."}'</span>
+
+<span class="cmt"># Step 5 — take profit on BTC position</span>
 <span class="kw">curl</span> -X POST https://tradingbots.fun/api/v1/session/ses_.../command \
   -H <span class="str">"Authorization: Bearer tok_..."</span> \
-  -H <span class="str">"Content-Type: application/json"</span> \
-  -d <span class="str">'{"cmd":"take_profit","symbol":"SOL"}'</span></pre>
+  -d <span class="str">'{"cmd":"take_profit","symbol":"BTC"}'</span></pre>
     </div>
   </div>
 </section>
 
 <!-- ═══ CTA BAND ═══ -->
 <div class="cta-band">
-  <h3>Ready to put your capital to work?</h3>
-  <p>Human or bot — deposit USDC and let the AI handle the rest.</p>
+  <h3>Get your bot trading today.</h3>
+  <p>Human: deposit USDC and watch it trade.<br>AI agent: call the x402 API and it handles everything — session, funding, positions.</p>
   <div class="hero-btns">
-    <a href="/login" class="btn-p">Start Earning →</a>
+    <a href="/login" class="btn-p" style="font-size:1rem;padding:14px 32px">Get Your Bot →</a>
     <a href="/api/v1/status" class="btn-s" target="_blank">Try the API</a>
   </div>
+  <p style="margin-top:14px;font-size:.72rem;color:var(--dim)">Arbitrum ↔ Hyperliquid bridge built-in · x402 pay-per-session · no lock-ups</p>
 </div>
 
 </div><!-- /wrap -->
@@ -8017,9 +8102,10 @@ th{padding:9px 14px;font-size:.65rem;font-weight:700;color:var(--dim);text-trans
 
 <!-- ═══ FOOTER ═══ -->
 <footer class="footer">
-  <span>© 2025 TradingBots.fun — Autonomous AI Trading</span>
+  <span>© 2026 TradingBots.fun — Autonomous AI Trading on Hyperliquid</span>
   <div class="footer-links">
     <a href="/leaderboard" class="footer-link">Leaderboard</a>
+    <a href="#x402-api" class="footer-link">x402 API</a>
     <a href="/login" class="footer-link">Login</a>
     <a href="/dashboard" class="footer-link">Operator</a>
   </div>
