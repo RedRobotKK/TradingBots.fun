@@ -92,23 +92,32 @@ impl Regime {
     /// Entry score threshold — minimum winner score to consider a trade.
     ///
     /// Calibrated against live signal score distributions (Mar 2026):
-    /// typical "good" signal produces bull/bear ≈ 0.10–0.30; old thresholds
+    /// typical "good" signal produces bull/bear ≈ 0.10–0.30; original thresholds
     /// (0.44/0.38/0.42) were 2–3× the actual score range → 0 trades in 500+ cycles.
-    /// New values sit at ~70–80% of a realistic strong signal.
+    /// Lowered to 0.22/0.16/0.18 to generate any trades, but this let through too
+    /// many marginal signals.  Raised slightly to filter weak entries while keeping
+    /// the bot active.
     fn threshold(self) -> f64 {
         match self {
-            Regime::Trending => 0.22, // trend signal bundle at 70% of strong Trending score
-            Regime::Ranging => 0.16,  // mean-reversion signals are smaller in absolute terms
-            Regime::Neutral => 0.18,  // balanced but signals conflict → lower gate
+            Regime::Trending => 0.26, // raised from 0.22 — trend requires clearer momentum
+            Regime::Ranging => 0.20,  // raised from 0.16 — mean-reversion extremes only
+            Regime::Neutral => 0.23,  // raised from 0.18 — tighter gate in ambiguous markets
         }
     }
     /// Dominance ratio — winning side must exceed losing side by this factor.
-    /// Higher = only enter when direction is unambiguous.
+    ///
+    /// Raised from 1.25/1.20/1.22 → 1.40/1.35/1.38.
+    ///
+    /// Rationale: with volume floor restored and order_flow capped, the raw bull/bear
+    /// scores are now more evenly distributed across signals.  A 1.25× dominance in
+    /// that environment means the bot fires on mild imbalances.  1.40× requires the
+    /// winning side to be 40% larger — equivalent to "most signals agree" rather than
+    /// "slightly more signals lean one way."
     fn dominance(self) -> f64 {
         match self {
-            Regime::Trending => 1.25,
-            Regime::Ranging => 1.20,
-            Regime::Neutral => 1.22,
+            Regime::Trending => 1.40, // was 1.25 — trending trades require clear momentum
+            Regime::Ranging => 1.35,  // was 1.20 — mean-reversion entries need conviction
+            Regime::Neutral => 1.38,  // was 1.22 — ambiguous regime = higher bar
         }
     }
 }

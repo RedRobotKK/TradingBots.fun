@@ -367,29 +367,47 @@ impl SignalWeights {
     }
 
     pub fn clamp_and_normalise(&mut self) {
-        // Strong-evidence signals: floor 0.04, ceiling 0.50
+        // Core technical signals: floor 0.04, ceiling 0.35
         // (These have meaningful real-time data each cycle)
         for w in [
             &mut self.rsi,
             &mut self.bollinger,
             &mut self.macd,
             &mut self.ema_cross,
-            &mut self.order_flow,
         ] {
-            *w = w.clamp(0.04, 0.50);
+            *w = w.clamp(0.04, 0.35);
         }
+
+        // Order flow: floored at 0.04 like other core signals, but ceiling is
+        // capped at 0.20 to prevent it crowding out the full signal set.
+        // Observed: after 200+ trades the learner had pushed this to 22.7% of
+        // total weight; above ~15–16% it dominates the decision and makes
+        // every entry sensitive to a single noisy book snapshot.
+        self.order_flow = self.order_flow.clamp(0.04, 0.20);
+
         // Trend 10-bar: floor lowered to 0.01 — backtest showed consistent harm,
         // kept for backward-compat with weight files but near-eliminated.
-        self.trend = self.trend.clamp(0.01, 0.30);
+        self.trend = self.trend.clamp(0.01, 0.20);
 
-        // Optional signals: can go to 0 (no data = no contribution) or ceiling 0.40
-        self.z_score = self.z_score.clamp(0.0, 0.40);
-        self.volume = self.volume.clamp(0.0, 0.40);
-        self.sentiment = self.sentiment.clamp(0.0, 0.40);
-        self.funding_rate = self.funding_rate.clamp(0.0, 0.40);
-        // Pattern signals: optional, floor 0.0, ceiling 0.40
-        self.candle_pattern = self.candle_pattern.clamp(0.0, 0.40);
-        self.chart_pattern = self.chart_pattern.clamp(0.0, 0.40);
+        // Optional signals: floor 0.0 means no contribution when data absent.
+        // ceiling 0.35 prevents any single optional signal from dominating.
+        self.z_score = self.z_score.clamp(0.0, 0.35);
+        self.sentiment = self.sentiment.clamp(0.0, 0.35);
+        self.funding_rate = self.funding_rate.clamp(0.0, 0.35);
+
+        // Volume: floor raised from 0.0 → 0.04.  Volume is used as a global
+        // conviction multiplier (vol_mult in decision.rs), not a directional
+        // signal.  The learner weight gates whether thin-volume dampening or
+        // high-volume amplification is applied.  Setting floor to 0.0 had the
+        // effect of disabling vol_mult entirely — the multiplier still ran in
+        // decision.rs but the learner stopped reinforcing/penalising it, causing
+        // it to drift to zero and mask real conviction differences between bars.
+        self.volume = self.volume.clamp(0.04, 0.25);
+
+        // Pattern signals: optional, floor 0.02 (require at least some evidence
+        // to pattern weight, ceiling 0.25 so they can't overwhelm core signals).
+        self.candle_pattern = self.candle_pattern.clamp(0.02, 0.25);
+        self.chart_pattern = self.chart_pattern.clamp(0.02, 0.25);
 
         let total = self.rsi
             + self.bollinger
