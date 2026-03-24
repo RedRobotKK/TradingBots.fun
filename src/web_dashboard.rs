@@ -10010,6 +10010,351 @@ async fn api_v1_session_latency_stats_handler(
 ///
 /// Shows all available trading venues with specs, leverage limits, and status.
 /// No authentication required.
+/// `GET /wallet/:name` — personalised read-only wallet dashboard for a named session.
+///
+/// Looks up the session by `name` field (case-insensitive).
+/// Public view — no auth required. Shows balance, P&L, open positions, and trades.
+async fn wallet_page_handler(
+    State(app): State<AppState>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let name_lc = name.to_lowercase();
+    let s = app.bot_state.read().await;
+
+    // Find session by name (case-insensitive)
+    let session = s.bot_sessions.values().find(|sess| {
+        sess.name.as_deref()
+            .map(|n| n.to_lowercase() == name_lc)
+            .unwrap_or(false)
+    });
+
+    let Some(sess) = session else {
+        return (
+            axum::http::StatusCode::NOT_FOUND,
+            axum::response::Html(format!(r#"<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<title>Wallet not found — tradingbots.fun</title>
+<style>body{{font-family:sans-serif;background:#0d1117;color:#c9d1d9;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}}
+.box{{text-align:center}}.box h1{{color:#f85149;font-size:1.5rem}}.box a{{color:#58a6ff}}</style></head>
+<body><div class="box"><h1>Wallet "{name}" not found</h1>
+<p>Check the name or create it via the admin API.</p>
+<p><a href="/">← Home</a></p></div></body></html>"#)),
+        ).into_response();
+    };
+
+    let display_name = sess.name.clone().unwrap_or_else(|| name.clone());
+    let balance      = sess.balance_usd;
+    let risk_mode    = sess.risk_mode.clone().unwrap_or_else(|| "balanced".to_string());
+    let venue        = sess.venue.clone();
+    let plan         = sess.plan.clone();
+    let created_at   = sess.created_at.clone();
+    let expires_at   = sess.expires_at.clone();
+    let session_id   = sess.id.clone();
+    let pnl          = sess.session_pnl;
+    let session_pnl_pct = if balance > 0.0 { (pnl / balance) * 100.0 } else { 0.0 };
+
+    // Gather global positions and trades (shared bot state)
+    let open_count  = s.positions.len();
+    let total_unrealised: f64 = s.positions.iter().map(|p| p.unrealised_pnl).sum();
+    let total_trades = s.closed_trades.len();
+    let global_pnl   = s.pnl;
+
+    let risk_color = match risk_mode.as_str() {
+        "aggressive"   => "#f85149",
+        "conservative" => "#3fb950",
+        _              => "#d29922",
+    };
+    let risk_emoji = match risk_mode.as_str() {
+        "aggressive"   => "🔥",
+        "conservative" => "🛡️",
+        _              => "⚖️",
+    };
+    let pnl_color = if pnl >= 0.0 { "#3fb950" } else { "#f85149" };
+    let pnl_sign  = if pnl >= 0.0 { "+" } else { "" };
+    let gpnl_color = if global_pnl >= 0.0 { "#3fb950" } else { "#f85149" };
+    let gpnl_sign  = if global_pnl >= 0.0 { "+" } else { "" };
+
+    // Build positions rows
+    let pos_rows: String = if s.positions.is_empty() {
+        r#"<tr><td colspan="6" style="text-align:center;color:#484f58;padding:20px">No open positions yet</td></tr>"#.to_string()
+    } else {
+        s.positions.iter().map(|p| {
+            let pc = if p.unrealised_pnl >= 0.0 { "#3fb950" } else { "#f85149" };
+            let sc = if p.side == "LONG" { "#3fb950" } else { "#f85149" };
+            format!(
+                "<tr><td><b>{sym}</b></td><td style='color:{sc}'>{side}</td>\
+                 <td>${entry:.4}</td><td>${cur:.4}</td>\
+                 <td style='color:{pc}'>{sign}${pnl:.2}</td>\
+                 <td>{lev:.1}×</td></tr>",
+                sym   = p.symbol,
+                sc    = sc,
+                side  = p.side,
+                entry = p.entry_price,
+                cur   = p.entry_price + (p.unrealised_pnl / p.quantity.max(0.0001)),
+                pc    = pc,
+                sign  = if p.unrealised_pnl >= 0.0 { "+" } else { "" },
+                pnl   = p.unrealised_pnl,
+                lev   = p.leverage,
+            )
+        }).collect()
+    };
+
+    // Build recent trades rows (last 10)
+    let trade_rows: String = if s.closed_trades.is_empty() {
+        r#"<tr><td colspan="5" style="text-align:center;color:#484f58;padding:20px">No closed trades yet</td></tr>"#.to_string()
+    } else {
+        s.closed_trades.iter().rev().take(10).map(|t| {
+            let pc = if t.pnl >= 0.0 { "#3fb950" } else { "#f85149" };
+            let sc = if t.side == "LONG" { "#3fb950" } else { "#f85149" };
+            format!(
+                "<tr><td><b>{sym}</b></td><td style='color:{sc}'>{side}</td>\
+                 <td style='color:{pc}'>{sign}${pnl:.2} ({sign}{pct:.1}%)</td>\
+                 <td>{reason}</td><td style='color:#484f58'>{ts}</td></tr>",
+                sym    = t.symbol,
+                sc     = sc,
+                side   = t.side,
+                pc     = pc,
+                sign   = if t.pnl >= 0.0 { "+" } else { "" },
+                pnl    = t.pnl.abs(),
+                pct    = t.pnl_pct.abs(),
+                reason = t.reason,
+                ts     = &t.closed_at.get(11..19).unwrap_or(""),
+            )
+        }).collect()
+    };
+
+    let html = format!(r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="30">
+<title>{name} — tradingbots.fun</title>
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0d1117;color:#c9d1d9;min-height:100vh}}
+header{{padding:16px 28px;border-bottom:1px solid #21262d;display:flex;align-items:center;justify-content:space-between}}
+.logo{{font-weight:700;font-size:1rem;color:#fff;text-decoration:none}}.logo span{{color:#58a6ff}}
+nav a{{color:#8b949e;text-decoration:none;font-size:.85rem;margin-left:16px}}
+main{{max-width:960px;margin:0 auto;padding:32px 20px}}
+.wallet-hero{{display:flex;align-items:center;gap:20px;margin-bottom:32px}}
+.avatar{{width:64px;height:64px;border-radius:50%;background:linear-gradient(135deg,#58a6ff,#3fb950);display:flex;align-items:center;justify-content:center;font-size:1.6rem;font-weight:700;color:#0d1117;flex-shrink:0}}
+.wallet-name{{font-size:1.8rem;font-weight:700;color:#fff}}
+.wallet-sub{{color:#8b949e;font-size:.9rem;margin-top:3px}}
+.risk-pill{{display:inline-block;padding:3px 12px;border-radius:999px;font-size:.78rem;font-weight:600;margin-top:6px}}
+.cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:28px}}
+.card{{background:#161b22;border:1px solid #30363d;border-radius:10px;padding:18px 20px}}
+.card-label{{font-size:.72rem;color:#6e7681;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px}}
+.card-value{{font-size:1.5rem;font-weight:700;color:#fff}}
+.card-sub{{font-size:.75rem;color:#6e7681;margin-top:3px}}
+section{{margin-bottom:28px}}
+.section-title{{font-size:.85rem;font-weight:600;color:#8b949e;text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid #21262d}}
+table{{width:100%;border-collapse:collapse;font-size:.85rem}}
+th{{text-align:left;color:#6e7681;font-weight:500;padding:8px 10px;border-bottom:1px solid #21262d;font-size:.78rem;text-transform:uppercase}}
+td{{padding:10px 10px;border-bottom:1px solid #161b22}}
+tr:last-child td{{border-bottom:none}}
+.badge{{display:inline-block;font-size:.7rem;padding:2px 8px;border-radius:6px;background:#21262d;color:#8b949e}}
+.live-dot{{width:8px;height:8px;border-radius:50%;background:#3fb950;display:inline-block;margin-right:6px;animation:pulse 2s infinite}}
+@keyframes pulse{{0%,100%{{opacity:1}}50%{{opacity:.4}}}}
+footer{{text-align:center;padding:30px 20px;color:#484f58;font-size:.8rem;border-top:1px solid #21262d;margin-top:40px}}
+footer a{{color:#58a6ff;text-decoration:none}}
+.refresh-note{{color:#484f58;font-size:.72rem;text-align:right;margin-bottom:16px}}
+</style>
+</head>
+<body>
+<header>
+  <a class="logo" href="/">trading<span>bots</span>.fun</a>
+  <nav>
+    <a href="/">Home</a>
+    <a href="/venues">Venues</a>
+    <a href="/api/v1/status">API</a>
+  </nav>
+</header>
+<main>
+
+  <div class="wallet-hero">
+    <div class="avatar">{initial}</div>
+    <div>
+      <div class="wallet-name">{name}'s Wallet</div>
+      <div class="wallet-sub">
+        <span class="live-dot"></span>Paper trading · {venue} · Session {session_id_short}
+      </div>
+      <span class="risk-pill" style="background:rgba(0,0,0,.3);color:{risk_color};border:1px solid {risk_color}40">
+        {risk_emoji} {risk_mode_cap} mode
+      </span>
+    </div>
+  </div>
+
+  <div class="cards">
+    <div class="card">
+      <div class="card-label">Starting Balance</div>
+      <div class="card-value">${balance:.0}</div>
+      <div class="card-sub">paper USDC</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Session P&amp;L</div>
+      <div class="card-value" style="color:{pnl_color}">{pnl_sign}${pnl:.2}</div>
+      <div class="card-sub" style="color:{pnl_color}">{pnl_sign}{pnl_pct:.2}%</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Unrealised P&amp;L</div>
+      <div class="card-value" style="color:{gpnl_color}">{gpnl_sign}${unrealised:.2}</div>
+      <div class="card-sub">{open_count} open position{pos_s}</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Bot Lifetime P&amp;L</div>
+      <div class="card-value" style="color:{gpnl_color}">{gpnl_sign}${global_pnl:.2}</div>
+      <div class="card-sub">{total_trades} trade{trade_s} closed</div>
+    </div>
+  </div>
+
+  <p class="refresh-note">↻ Auto-refreshes every 30s</p>
+
+  <section>
+    <div class="section-title">Open Positions</div>
+    <table>
+      <thead><tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Mark</th><th>Unreal. P&amp;L</th><th>Lev</th></tr></thead>
+      <tbody>{pos_rows}</tbody>
+    </table>
+  </section>
+
+  <section>
+    <div class="section-title">Recent Trades</div>
+    <table>
+      <thead><tr><th>Symbol</th><th>Side</th><th>P&amp;L</th><th>Reason</th><th>Time</th></tr></thead>
+      <tbody>{trade_rows}</tbody>
+    </table>
+  </section>
+
+  <section>
+    <div class="section-title">Session Details</div>
+    <table>
+      <tbody>
+        <tr><td style="color:#6e7681;width:140px">Session ID</td><td><span class="badge">{session_id}</span></td></tr>
+        <tr><td style="color:#6e7681">Plan</td><td>{plan}</td></tr>
+        <tr><td style="color:#6e7681">Risk Mode</td><td style="color:{risk_color}">{risk_emoji} {risk_mode_cap}</td></tr>
+        <tr><td style="color:#6e7681">Venue</td><td>{venue}</td></tr>
+        <tr><td style="color:#6e7681">Created</td><td>{created_at_short}</td></tr>
+        <tr><td style="color:#6e7681">Expires</td><td>{expires_at_short}</td></tr>
+        <tr><td style="color:#6e7681">API</td><td><a href="/api/wallet/{name_lc}" style="color:#58a6ff">/api/wallet/{name_lc}</a></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+</main>
+<footer>
+  tradingbots.fun · <a href="/venues">Venues</a> · <a href="/api/v1/status">API Status</a>
+</footer>
+</body>
+</html>"#,
+        name             = display_name,
+        initial          = display_name.chars().next().unwrap_or('?').to_uppercase().next().unwrap_or('?'),
+        venue            = venue,
+        session_id       = session_id,
+        session_id_short = &session_id[..12.min(session_id.len())],
+        risk_color       = risk_color,
+        risk_emoji       = risk_emoji,
+        risk_mode_cap    = {
+            let mut c = risk_mode.chars();
+            match c.next() {
+                None    => String::new(),
+                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+            }
+        },
+        balance          = balance,
+        pnl              = pnl,
+        pnl_color        = pnl_color,
+        pnl_sign         = pnl_sign,
+        pnl_pct          = session_pnl_pct,
+        gpnl_color       = gpnl_color,
+        gpnl_sign        = gpnl_sign,
+        global_pnl       = global_pnl,
+        unrealised       = total_unrealised,
+        open_count       = open_count,
+        pos_s            = if open_count == 1 { "" } else { "s" },
+        total_trades     = total_trades,
+        trade_s          = if total_trades == 1 { "" } else { "s" },
+        plan             = plan,
+        created_at_short = &created_at[..10.min(created_at.len())],
+        expires_at_short = &expires_at[..10.min(expires_at.len())],
+        name_lc          = name_lc,
+        pos_rows         = pos_rows,
+        trade_rows       = trade_rows,
+    );
+
+    axum::response::Html(html).into_response()
+}
+
+/// `GET /api/wallet/:name` — JSON snapshot of a named wallet session.
+///
+/// Public read-only endpoint. Looks up session by name (case-insensitive).
+async fn api_wallet_handler(
+    State(app): State<AppState>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let name_lc = name.to_lowercase();
+    let s = app.bot_state.read().await;
+
+    let session = s.bot_sessions.values().find(|sess| {
+        sess.name.as_deref()
+            .map(|n| n.to_lowercase() == name_lc)
+            .unwrap_or(false)
+    });
+
+    let Some(sess) = session else {
+        return (
+            axum::http::StatusCode::NOT_FOUND,
+            axum::response::Json(serde_json::json!({"error": format!("Wallet '{}' not found", name)})),
+        ).into_response();
+    };
+
+    let balance         = sess.balance_usd;
+    let pnl             = sess.session_pnl;
+    let pnl_pct         = if balance > 0.0 { (pnl / balance) * 100.0 } else { 0.0 };
+    let total_unrealised: f64 = s.positions.iter().map(|p| p.unrealised_pnl).sum();
+
+    let positions: Vec<serde_json::Value> = s.positions.iter().map(|p| serde_json::json!({
+        "symbol":         p.symbol,
+        "side":           p.side,
+        "entry_price":    p.entry_price,
+        "unrealised_pnl": p.unrealised_pnl,
+        "size_usd":       p.size_usd,
+        "leverage":       p.leverage,
+        "venue":          p.venue,
+    })).collect();
+
+    let recent_trades: Vec<serde_json::Value> = s.closed_trades.iter().rev().take(20).map(|t| serde_json::json!({
+        "symbol":    t.symbol,
+        "side":      t.side,
+        "pnl":       t.pnl,
+        "pnl_pct":   t.pnl_pct,
+        "reason":    t.reason,
+        "closed_at": t.closed_at,
+        "venue":     t.venue,
+    })).collect();
+
+    axum::response::Json(serde_json::json!({
+        "ok":            true,
+        "name":          sess.name,
+        "session_id":    sess.id,
+        "plan":          sess.plan,
+        "risk_mode":     sess.risk_mode,
+        "venue":         sess.venue,
+        "balance_usd":   balance,
+        "session_pnl":   pnl,
+        "session_pnl_pct": pnl_pct,
+        "unrealised_pnl": total_unrealised,
+        "open_positions": positions,
+        "recent_trades":  recent_trades,
+        "expires_at":    sess.expires_at,
+        "wallet_url":    format!("https://tradingbots.fun/wallet/{}", name_lc),
+    })).into_response()
+}
+
 async fn public_venues_handler() -> impl axum::response::IntoResponse {
     axum::response::Html(r#"<!DOCTYPE html>
 <html lang="en">
@@ -10267,6 +10612,9 @@ pub async fn serve(
             "/api/v1/venues/hyperliquid/markets",
             get(api_v1_venues_hyperliquid_markets_handler),
         )
+        // ── Named wallet pages (public read-only) ─────────────────────────────
+        .route("/wallet/:name", get(wallet_page_handler))
+        .route("/api/wallet/:name", get(api_wallet_handler))
         .with_state(app_state);
     let addr = format!("0.0.0.0:{}", port);
     log::info!("🌐 Dashboard at http://{}", addr);
