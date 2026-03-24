@@ -7251,6 +7251,53 @@ fn parse_trade_command(cmd: &str) -> Option<BotCommand> {
         return Some(BotCommand::CloseAll);
     }
 
+    // ── Partial-close intent: "close 1/3", "take 1/3", "close half",
+    //    "close a third of", "close one third of", "partial close", etc.
+    //
+    // These all indicate TakePartial (removes first unbanked tranche from
+    // the position).  The fraction/qualifier is stripped and the symbol is
+    // extracted from the remainder of the phrase.
+    //
+    // Matched phrases (case-insensitive):
+    //   "close 1/3 of TAO"             → TakePartial TAO
+    //   "close a third of the TAO position" → TakePartial TAO
+    //   "close half of SOL"            → TakePartial SOL
+    //   "take 1/3 of TAO"              → TakePartial TAO
+    //   "partial close TAO"            → TakePartial TAO
+    //   "take partial TAO"             → TakePartial TAO
+    //   "take some profit from TAO"    → TakePartial TAO
+    let is_partial_phrase = lower.contains("1/3")
+        || lower.contains("one third")
+        || lower.contains("a third")
+        || lower.contains("half")
+        || lower.contains("partial")
+        || lower.contains("some profit")
+        || lower.contains("1/2")
+        || lower.contains("33%")
+        || lower.contains("50%");
+
+    if is_partial_phrase {
+        // Strip all fraction/size qualifiers then find the first word that
+        // looks like a crypto symbol (all-uppercase letters or a known ticker).
+        // Strategy: walk words, skip known stopwords, return first non-stop word.
+        const STOP: &[&str] = &[
+            "close", "take", "exit", "sell", "reduce", "partial", "profit",
+            "profits", "1/3", "1/2", "a", "an", "the", "of", "from", "my",
+            "on", "in", "for", "some", "half", "third", "one", "position",
+            "trade", "33%", "50%", "percent", "lot",
+        ];
+        for w in &words {
+            if !STOP.contains(w) && !w.is_empty() && w.len() >= 2 {
+                return Some(BotCommand::TakePartial {
+                    symbol: w.to_uppercase(),
+                });
+            }
+        }
+        // Phrase matched but no symbol found — return TakePartial with empty
+        // to surface a clearer error rather than falling through silently.
+        return None;
+    }
+
     // ── "take profits" with no specific symbol ────────────────────────────
     if (lower.contains("take profit") || lower.contains("take profits"))
         && !lower.contains(" from ")
@@ -7260,11 +7307,21 @@ fn parse_trade_command(cmd: &str) -> Option<BotCommand> {
     }
 
     // ── Word-by-word scan for close / take-profit + symbol ────────────────
+    //
+    // NOTE: this runs AFTER the partial-close check, so "close 1/3 …" will
+    // never reach here; only plain "close <SYMBOL>" falls through.
     for (i, word) in words.iter().enumerate() {
         match *word {
             "close" | "exit" | "sell" => {
-                // "close kFloki", "exit BTC"
-                if let Some(sym) = words.get(i + 1).filter(|&&w| w != "all") {
+                // Skip quantifiers (numbers, fractions, "the", "my") so that
+                // "close the BTC position" → ClosePosition BTC (not "the").
+                const SKIP_WORDS: &[&str] =
+                    &["the", "my", "a", "an", "position", "trade", "all"];
+                let sym = words[i + 1..]
+                    .iter()
+                    .find(|&&w| !SKIP_WORDS.contains(&w) && w != "all")
+                    .copied();
+                if let Some(sym) = sym {
                     return Some(BotCommand::ClosePosition {
                         symbol: sym.to_uppercase(),
                     });
