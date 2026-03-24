@@ -1,0 +1,105 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-03-24T03:55:48Z",
+    "commit": "df76bc3",
+    "commit_full": "df76bc394515d8588a8dc9c79c8a5fd158cbde9c",
+    "commit_message": "Fix position_monitor.rs: replace compile-time sqlx macros with runtime queries",
+    "branch": "master",
+    "overall_status": "FAILED",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.94.0 (4a4ef493e 2026-03-02)",
+    "cargo": "cargo 1.94.0 (85eff7c80 2026-01-15)",
+    "os_kernel": "6.8.0-106-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 374,
+      "total_passed": 751,
+      "total_failed": 1,
+      "total_ignored": 2,
+      "failures": []
+    },
+    "clippy": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 25,
+      "error_count": 5,
+      "errors": [
+        {
+          "code": "E",
+          "message": "manual implementation of `split_once`",
+          "file": "src/position_monitor.rs",
+          "line": 330,
+          "col": 25
+        },
+        {
+          "code": "E",
+          "message": "manual implementation of `split_once`",
+          "file": "src/position_monitor.rs",
+          "line": 351,
+          "col": 29
+        },
+        {
+          "code": "E",
+          "message": "manual implementation of `split_once`",
+          "file": "src/position_monitor.rs",
+          "line": 380,
+          "col": 29
+        },
+        {
+          "code": "E",
+          "message": "manual implementation of `split_once`",
+          "file": "src/position_monitor.rs",
+          "line": 568,
+          "col": 22
+        },
+        {
+          "code": "E",
+          "message": "could not compile `tradingbots-fun` (lib) due to 4 previous errors"
+        }
+      ]
+    },
+    "audit": {
+      "status": "ADVISORY",
+      "exit_code": 1,
+      "duration_seconds": 5,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2023-0071",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2023-0071",
+          "severity": "5.9 (medium)",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "tradingbots",
+    "status": "active",
+    "active_since": "Mon 2026-03-23 22:36:44 UTC",
+    "recent_logs": [
+      "Mar 24 02:50:51 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[406311]: [2026-03-24T02:50:51.327Z ERROR tradingbots_fun] Cycle error: hl_api_429: Hyperliquid rate limit hit (HTTP 429). The bot is sending requests too quickly. Backing off.",
+      "Mar 24 02:56:51 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[406311]: [2026-03-24T02:56:51.005Z ERROR tradingbots_fun] Cycle error: hl_api_429: Hyperliquid rate limit hit (HTTP 429). The bot is sending requests too quickly. Backing off.",
+      "Mar 24 02:58:55 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[406311]: [2026-03-24T02:58:55.866Z ERROR tradingbots_fun] Cycle error: hl_api_429: Hyperliquid rate limit hit (HTTP 429). The bot is sending requests too quickly. Backing off.",
+      "Mar 24 03:20:51 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[406311]: [2026-03-24T03:20:51.755Z ERROR tradingbots_fun] Cycle error: hl_api_429: Hyperliquid rate limit hit (HTTP 429). The bot is sending requests too quickly. Backing off.",
+      "Mar 24 03:22:54 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[406311]: [2026-03-24T03:22:54.223Z ERROR tradingbots_fun] Cycle error: hl_api_429: Hyperliquid rate limit hit (HTTP 429). The bot is sending requests too quickly. Backing off."
+    ]
+  }
+}
