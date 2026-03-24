@@ -94,6 +94,7 @@ pub struct AppState {
     pub pattern_cache: Arc<Mutex<pattern_insights::PatternCache>>,
     pub hyperliquid_stats: Arc<exchange::HyperliquidStats>,
     pub bridge_manager: Arc<BridgeManager>,
+    pub latency_tracker: std::sync::Arc<tokio::sync::RwLock<crate::latency::LatencyTracker>>,
 }
 
 // ─────────────────────────────── Serde defaults ──────────────────────────────
@@ -7915,6 +7916,16 @@ a{color:inherit;text-decoration:none}
 /* ── Venue badge ── */
 .venue-badge{display:inline-block;font-size:.7rem;padding:2px 8px;border-radius:999px;background:rgba(56,139,253,.12);color:#58a6ff;border:1px solid rgba(56,139,253,.3);white-space:nowrap}
 
+#latency-card{display:none;margin-top:16px}
+.lat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:10px}
+.lat-cell{background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;text-align:center}
+.lat-label{font-size:.7rem;color:#6e7681;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px}
+.lat-val{font-size:1.1rem;font-weight:700;color:#c9d1d9;margin-bottom:2px}
+.lat-target{font-size:.68rem;color:#484f58}
+.lat-ok{color:#3fb950}
+.lat-warn{color:#d29922}
+.lat-bad{color:#f85149}
+
 /* ── x402 highlight band ── */
 .x402-hero{background:linear-gradient(135deg,rgba(88,166,255,.06) 0%,rgba(63,185,80,.04) 100%);border:1px solid rgba(88,166,255,.18);border-radius:16px;padding:28px 28px 24px;margin-top:40px}
 .x402-hero h3{font-size:1.05rem;font-weight:800;color:var(--text-hi);margin-bottom:6px;display:flex;align-items:center;gap:8px}
@@ -8224,6 +8235,7 @@ th{padding:9px 14px;font-size:.65rem;font-weight:700;color:var(--dim);text-trans
   <span id="footer-aum"></span>
   <span id="wallet-count"></span>
   <div id="weights-grid"></div>
+  <div id="latency-card"></div>
 </div>
 
 <!-- ═══ FOOTER ═══ -->
@@ -8425,6 +8437,9 @@ async function loadState() {
     // ── Signal weights ──
     renderWeights(s.signal_weights);
 
+    // ── Latency stats ──
+    renderLatency();
+
     // ── Regime highlight ──
     highlightRegime(s.candidates);
 
@@ -8522,6 +8537,60 @@ async function loadWallets() {
       if (total > 0) fAum.textContent = fmtUsd(total);
     }
   } catch(e) { console.warn('wallets failed', e); }
+}
+
+// ═══════════════════════════════════════════════════════
+//  Latency card
+// ═══════════════════════════════════════════════════════
+async function renderLatency() {
+  // Only show if we have a session token (bot-API users)
+  const token = window._sessionToken;
+  const sid   = window._sessionId;
+  if (!token || !sid) return;
+  const card = document.getElementById('latency-card');
+  if (!card) return;
+  try {
+    const r = await fetch(`/api/v1/session/${sid}/latency/stats`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    if (!r.ok) return;
+    const d = await r.json();
+    if (!d.ok) return;
+    card.style.display = '';
+    const p50   = d.p50_ms?.toFixed(0) ?? '—';
+    const p95   = d.p95_ms?.toFixed(0) ?? '—';
+    const p99   = d.p99_ms?.toFixed(0) ?? '—';
+    const tpm   = d.trades_per_minute?.toFixed(1) ?? '—';
+    const sr    = d.success_rate_pct?.toFixed(0) ?? '—';
+    const n     = d.sample_count ?? 0;
+    const p50cls = d.p50_ms <= 250  ? 'lat-ok' : d.p50_ms <= 500  ? 'lat-warn' : 'lat-bad';
+    const p95cls = d.p95_ms <= 450  ? 'lat-ok' : d.p95_ms <= 800  ? 'lat-warn' : 'lat-bad';
+    const p99cls = d.p99_ms <= 800  ? 'lat-ok' : d.p99_ms <= 1200 ? 'lat-warn' : 'lat-bad';
+    card.innerHTML = `
+      <div class="section-hdr">⚡ Execution Latency <span style="color:#484f58;font-size:.75rem">(n=${n})</span></div>
+      <div class="lat-grid">
+        <div class="lat-cell">
+          <div class="lat-label">p50 (median)</div>
+          <div class="lat-val ${p50cls}">${p50} ms</div>
+          <div class="lat-target">target &lt;250ms</div>
+        </div>
+        <div class="lat-cell">
+          <div class="lat-label">p95</div>
+          <div class="lat-val ${p95cls}">${p95} ms</div>
+          <div class="lat-target">target &lt;450ms</div>
+        </div>
+        <div class="lat-cell">
+          <div class="lat-label">p99</div>
+          <div class="lat-val ${p99cls}">${p99} ms</div>
+          <div class="lat-target">target &lt;800ms</div>
+        </div>
+        <div class="lat-cell">
+          <div class="lat-label">Throughput</div>
+          <div class="lat-val">${tpm} <span style="font-size:.7rem;color:#8b949e">t/min</span></div>
+          <div class="lat-target">fill rate: ${sr}%</div>
+        </div>
+      </div>`;
+  } catch(e) { /* silently skip — session token not set */ }
 }
 
 // ═══════════════════════════════════════════════════════
@@ -9147,6 +9216,32 @@ async fn api_v1_session_command_handler(
         .unwrap_or("")
         .to_string();
 
+    // ── Immediate read-only commands (no queueing needed) ─────────────────
+    if cmd_str == "get_positions" {
+        let s = app.bot_state.read().await;
+        let positions: Vec<serde_json::Value> = s.positions.iter().map(|p| serde_json::json!({
+            "symbol":          p.symbol,
+            "side":            p.side,
+            "entry_price":     p.entry_price,
+            "quantity":        p.quantity,
+            "size_usd":        p.size_usd,
+            "leverage":        p.leverage,
+            "unrealised_pnl":  p.unrealised_pnl,
+            "stop_loss":       p.stop_loss,
+            "take_profit":     p.take_profit,
+            "cycles_held":     p.cycles_held,
+            "venue":           p.venue,
+            "funding_rate":    p.funding_rate,
+            "ai_action":       p.ai_action,
+        })).collect();
+        let count = positions.len();
+        return axum::response::Json(serde_json::json!({
+            "ok":        true,
+            "positions": positions,
+            "count":     count,
+        })).into_response();
+    }
+
     let cmd: BotCommand = match cmd_str.as_str() {
         "close_position" | "close" => {
             if symbol.is_empty() {
@@ -9174,6 +9269,18 @@ async fn api_v1_session_command_handler(
         }
         "close_all" => BotCommand::CloseAll,
         "close_profitable" => BotCommand::CloseProfitable,
+        "set_leverage" => {
+            let lev = body.get("leverage").and_then(|v| v.as_i64()).unwrap_or(10) as i32;
+            if symbol.is_empty() {
+                return (
+                    axum::http::StatusCode::BAD_REQUEST,
+                    axum::response::Json(serde_json::json!({"error":"symbol required for set_leverage"})),
+                ).into_response();
+            }
+            BotCommand::SetLeverage { symbol, leverage: lev.clamp(1, 50) }
+        }
+        "pause_trading" => BotCommand::PauseTrading,
+        "resume_trading" => BotCommand::ResumeTrading,
         "open_long" | "buy_long" | "long" => {
             let sym = if !symbol.is_empty() {
                 symbol
@@ -9222,7 +9329,7 @@ async fn api_v1_session_command_handler(
                     axum::http::StatusCode::BAD_REQUEST,
                     axum::response::Json(serde_json::json!({
                         "error": "Unknown command",
-                        "valid": ["close_position","take_profit","close_all","close_profitable","open_long","open_short"]
+                        "valid": ["close_position","take_profit","close_all","close_profitable","open_long","open_short","set_leverage","pause_trading","resume_trading","get_positions"]
                     })),
                 ).into_response(),
             }
@@ -9531,12 +9638,396 @@ async fn api_v1_hl_account_handler(
     }
 }
 
+/// `GET /api/v1/session/{id}/positions` — real-time positions with full detail.
+///
+/// Returns every open position with entry, unrealized P&L, venue, funding rate,
+/// and AI action. Protected by `Authorization: Bearer {token}`.
+async fn api_v1_session_positions_handler(
+    State(app): State<AppState>,
+    headers: axum::http::HeaderMap,
+    axum::extract::Path(session_id): axum::extract::Path<String>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if let Err(e) = validate_bot_session(&app, &headers, &session_id).await {
+        return e;
+    }
+    let s = app.bot_state.read().await;
+    let positions: Vec<serde_json::Value> = s.positions.iter().map(|p| serde_json::json!({
+        "symbol":          p.symbol,
+        "side":            p.side,
+        "entry_price":     p.entry_price,
+        "quantity":        p.quantity,
+        "size_usd":        p.size_usd,
+        "leverage":        p.leverage,
+        "unrealised_pnl":  p.unrealised_pnl,
+        "pnl_pct":         if p.size_usd > 0.0 { (p.unrealised_pnl / p.size_usd) * 100.0 } else { 0.0 },
+        "stop_loss":       p.stop_loss,
+        "take_profit":     p.take_profit,
+        "cycles_held":     p.cycles_held,
+        "entry_time":      p.entry_time,
+        "venue":           p.venue,
+        "funding_rate":    p.funding_rate,
+        "funding_delta":   p.funding_delta,
+        "ai_action":       p.ai_action,
+        "ai_reason":       p.ai_reason,
+        "ob_sentiment":    p.ob_sentiment,
+    })).collect();
+    let count = positions.len();
+    let unrealised_total: f64 = s.positions.iter().map(|p| p.unrealised_pnl).sum();
+    axum::response::Json(serde_json::json!({
+        "ok":              true,
+        "session_id":      session_id,
+        "positions":       positions,
+        "count":           count,
+        "unrealised_total_usd": unrealised_total,
+        "venue":           "Hyperliquid Perps (paper)",
+    }))
+    .into_response()
+}
+
+/// `GET /api/v1/session/{id}/trades` — closed trade history with venue filter.
+///
+/// Query param: `?venue=hyperliquid` (optional). Without it returns all trades.
+/// Returns last 100 trades in reverse-chronological order.
+/// Protected by `Authorization: Bearer {token}`.
+async fn api_v1_session_trades_handler(
+    State(app): State<AppState>,
+    headers: axum::http::HeaderMap,
+    axum::extract::Path(session_id): axum::extract::Path<String>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if let Err(e) = validate_bot_session(&app, &headers, &session_id).await {
+        return e;
+    }
+    let venue_filter = params.get("venue").map(|v| v.to_lowercase());
+    let s = app.bot_state.read().await;
+    let trades: Vec<serde_json::Value> = s.closed_trades.iter().rev().take(100)
+        .filter(|t| {
+            if let Some(ref vf) = venue_filter {
+                t.venue.to_lowercase().contains(vf.as_str())
+            } else {
+                true
+            }
+        })
+        .map(|t| serde_json::json!({
+            "symbol":     t.symbol,
+            "side":       t.side,
+            "entry":      t.entry,
+            "exit":       t.exit,
+            "pnl":        t.pnl,
+            "pnl_pct":    t.pnl_pct,
+            "reason":     t.reason,
+            "venue":      t.venue,
+            "entry_time": t.entry_time,
+            "closed_at":  t.closed_at,
+            "quantity":   t.quantity,
+            "size_usd":   t.size_usd,
+            "leverage":   t.leverage,
+            "fees_est":   t.fees_est,
+            "note":       t.note,
+        }))
+        .collect();
+    let count = trades.len();
+    let total_pnl: f64 = s.closed_trades.iter().map(|t| t.pnl).sum();
+    axum::response::Json(serde_json::json!({
+        "ok":            true,
+        "session_id":    session_id,
+        "trades":        trades,
+        "count":         count,
+        "total_pnl_usd": total_pnl,
+        "venue_filter":  venue_filter,
+    }))
+    .into_response()
+}
+
+/// `GET /api/v1/venues/hyperliquid/markets` — live Hyperliquid market metadata.
+///
+/// Returns current mid prices, 24h funding rates, and mark prices for all
+/// available perps. **No authentication required** — public endpoint for
+/// agents doing pre-trade research.
+async fn api_v1_venues_hyperliquid_markets_handler(
+    State(app): State<AppState>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    // Fetch from Hyperliquid info API
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(6))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+
+    // Get meta (asset names, leverage limits)
+    let meta_result = client
+        .post("https://api.hyperliquid.xyz/info")
+        .json(&serde_json::json!({"type": "meta"}))
+        .send()
+        .await;
+
+    // Get all mids (current prices)
+    let mids_result = client
+        .post("https://api.hyperliquid.xyz/info")
+        .json(&serde_json::json!({"type": "allMids"}))
+        .send()
+        .await;
+
+    // Get funding rates
+    let funding_result = client
+        .post("https://api.hyperliquid.xyz/info")
+        .json(&serde_json::json!({"type": "fundingHistory", "coin": "BTC", "startTime": chrono::Utc::now().timestamp_millis() - 3_600_000}))
+        .send()
+        .await;
+
+    let mids: serde_json::Value = match mids_result {
+        Ok(r) => r.json().await.unwrap_or(serde_json::Value::Null),
+        Err(_) => serde_json::Value::Null,
+    };
+
+    let meta: serde_json::Value = match meta_result {
+        Ok(r) => r.json().await.unwrap_or(serde_json::Value::Null),
+        Err(_) => serde_json::Value::Null,
+    };
+
+    // Build market list from mids (it's a map of coin -> price string)
+    let markets: Vec<serde_json::Value> = if let Some(obj) = mids.as_object() {
+        obj.iter().take(100).map(|(coin, price)| {
+            let px: f64 = price.as_str().unwrap_or("0").parse().unwrap_or(0.0);
+            serde_json::json!({
+                "coin":     coin,
+                "mid_px":   px,
+                "venue":    "Hyperliquid Perps",
+                "leverage_max": 50,
+            })
+        }).collect()
+    } else {
+        vec![]
+    };
+
+    let market_count = markets.len();
+    axum::response::Json(serde_json::json!({
+        "ok":          true,
+        "venue":       "Hyperliquid Perps",
+        "network":     "mainnet",
+        "markets":     markets,
+        "market_count": market_count,
+        "meta":        meta,
+        "fetched_at":  chrono::Utc::now().to_rfc3339(),
+        "x402_info": {
+            "session_required":  false,
+            "session_endpoint":  "POST /api/v1/session",
+            "command_endpoint":  "POST /api/v1/session/{id}/command",
+        }
+    }))
+    .into_response()
+}
+
+/// `GET /api/v1/session/{id}/latency/stats` — per-session execution latency stats.
+///
+/// Returns p50/p95/p99 execution latency, throughput, and success rate.
+/// Protected by `Authorization: Bearer {token}`.
+///
+/// Note: in v0.2.1 the in-memory `LatencyTracker` is per-process (not per-session).
+/// The global tracker accumulates all trades on this node. Per-session isolation
+/// is on the roadmap once the `ConnectorRegistry` is fully wired.
+async fn api_v1_session_latency_stats_handler(
+    State(app): State<AppState>,
+    headers: axum::http::HeaderMap,
+    axum::extract::Path(session_id): axum::extract::Path<String>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if let Err(e) = validate_bot_session(&app, &headers, &session_id).await {
+        return e;
+    }
+    let window = params.get("window").map(|w| w.as_str()).unwrap_or("1h");
+    // Read the latency tracker from app state
+    let tracker = app.latency_tracker.read().await;
+    let stats = tracker.stats();
+    axum::response::Json(serde_json::json!({
+        "ok":              true,
+        "session_id":      session_id,
+        "window":          window,
+        "sample_count":    stats.sample_count,
+        "p50_ms":          stats.p50_ms,
+        "p95_ms":          stats.p95_ms,
+        "p99_ms":          stats.p99_ms,
+        "min_ms":          stats.min_ms,
+        "max_ms":          stats.max_ms,
+        "mean_ms":         stats.mean_ms,
+        "trades_per_minute": stats.trades_per_minute,
+        "success_rate_pct":  stats.success_rate_pct,
+        "targets": {
+            "p50_target_ms":  250.0,
+            "p95_target_ms":  450.0,
+            "p99_target_ms":  800.0,
+        },
+        "status": {
+            "p50_ok":  stats.p50_ms <= 250.0 || stats.sample_count == 0,
+            "p95_ok":  stats.p95_ms <= 450.0 || stats.sample_count == 0,
+            "p99_ok":  stats.p99_ms <= 800.0 || stats.sample_count == 0,
+        }
+    }))
+    .into_response()
+}
+
+/// `GET /venues` — public venues listing page.
+///
+/// Shows all available trading venues with specs, leverage limits, and status.
+/// No authentication required.
+async fn public_venues_handler() -> impl axum::response::IntoResponse {
+    axum::response::Html(r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Trading Venues — tradingbots.fun</title>
+<meta name="description" content="Available trading venues on tradingbots.fun: Hyperliquid Perps, x402-native, non-custodial AI agent trading.">
+<meta name="keywords" content="Hyperliquid perps, x402 trading API, autonomous agent trading, AI agent Hyperliquid, on-chain perpetuals">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0d1117;color:#c9d1d9;min-height:100vh}
+header{padding:20px 32px;border-bottom:1px solid #21262d;display:flex;align-items:center;gap:16px}
+.logo{font-weight:700;font-size:1.1rem;color:#fff;text-decoration:none}
+.logo span{color:#58a6ff}
+nav a{color:#8b949e;text-decoration:none;font-size:.9rem;margin-left:20px}
+nav a:hover{color:#c9d1d9}
+main{max-width:900px;margin:0 auto;padding:48px 24px}
+h1{font-size:2rem;font-weight:700;color:#fff;margin-bottom:8px}
+.subtitle{color:#8b949e;margin-bottom:40px;font-size:1.05rem}
+.venue-card{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:28px 32px;margin-bottom:20px;transition:border-color .2s}
+.venue-card:hover{border-color:#58a6ff}
+.vc-header{display:flex;align-items:center;gap:16px;margin-bottom:16px}
+.vc-name{font-size:1.35rem;font-weight:700;color:#fff}
+.vc-status{font-size:.75rem;padding:3px 10px;border-radius:999px;font-weight:600}
+.status-live{background:rgba(63,185,80,.15);color:#3fb950;border:1px solid rgba(63,185,80,.3)}
+.status-paper{background:rgba(210,153,34,.15);color:#d29922;border:1px solid rgba(210,153,34,.3)}
+.status-soon{background:rgba(139,148,158,.15);color:#8b949e;border:1px solid rgba(139,148,158,.3)}
+.vc-tagline{color:#8b949e;font-size:.95rem;margin-bottom:20px}
+.vc-specs{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px}
+.spec{background:#0d1117;border:1px solid #21262d;border-radius:8px;padding:12px 14px}
+.spec-label{font-size:.72rem;color:#6e7681;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px}
+.spec-value{font-size:.95rem;color:#fff;font-weight:600}
+.vc-features{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px}
+.feat{font-size:.78rem;padding:4px 10px;border-radius:6px;background:rgba(56,139,253,.1);color:#58a6ff;border:1px solid rgba(56,139,253,.2)}
+.vc-cta{display:inline-block;padding:10px 22px;background:#238636;color:#fff;border-radius:8px;text-decoration:none;font-size:.9rem;font-weight:600}
+.vc-cta:hover{background:#2ea043}
+.vc-api{background:#0d1117;border:1px solid #21262d;border-radius:8px;padding:14px 18px;margin-top:16px;font-family:'SF Mono',monospace;font-size:.82rem;color:#8b949e}
+.vc-api code{color:#79c0ff}
+footer{text-align:center;padding:40px 20px;color:#484f58;font-size:.82rem;border-top:1px solid #21262d;margin-top:60px}
+footer a{color:#58a6ff;text-decoration:none}
+</style>
+</head>
+<body>
+<header>
+  <a class="logo" href="/">trading<span>bots</span>.fun</a>
+  <nav>
+    <a href="/">Home</a>
+    <a href="/app">Dashboard</a>
+    <a href="/venues" style="color:#58a6ff">Venues</a>
+    <a href="/api/v1/status">API Status</a>
+  </nav>
+</header>
+<main>
+  <h1>Trading Venues</h1>
+  <p class="subtitle">Available execution venues for x402-powered AI agent sessions.</p>
+
+  <!-- Hyperliquid Perps (Paper) -->
+  <div class="venue-card">
+    <div class="vc-header">
+      <span class="vc-name">Hyperliquid Perps</span>
+      <span class="vc-status status-paper">Paper Trading</span>
+    </div>
+    <p class="vc-tagline">Real Hyperliquid CLOB data, simulated execution. Perfect for agent development and strategy validation before going live.</p>
+    <div class="vc-specs">
+      <div class="spec"><div class="spec-label">Max Leverage</div><div class="spec-value">50×</div></div>
+      <div class="spec"><div class="spec-label">Markets</div><div class="spec-value">~100 Perps</div></div>
+      <div class="spec"><div class="spec-label">Settlement</div><div class="spec-value">USDC</div></div>
+      <div class="spec"><div class="spec-label">Session Cost</div><div class="spec-value">10 USDC / 30d</div></div>
+      <div class="spec"><div class="spec-label">Burst Session</div><div class="spec-value">0.5 USDC / 24h</div></div>
+      <div class="spec"><div class="spec-label">Mode</div><div class="spec-value">Paper (live data)</div></div>
+    </div>
+    <div class="vc-features">
+      <span class="feat">x402 payment</span>
+      <span class="feat">Per-session wallet</span>
+      <span class="feat">Drawdown guard</span>
+      <span class="feat">Symbol whitelist</span>
+      <span class="feat">Risk modes</span>
+      <span class="feat">Webhook events</span>
+      <span class="feat">Latency tracking</span>
+      <span class="feat">Non-custodial</span>
+    </div>
+    <div class="vc-api">
+      <code>POST /api/v1/session</code> with <code>"venue": "hyperliquid"</code> + <code>X-Payment: 0x...</code>
+    </div>
+  </div>
+
+  <!-- Internal Engine -->
+  <div class="venue-card">
+    <div class="vc-header">
+      <span class="vc-name">Internal Engine</span>
+      <span class="vc-status status-live">Active</span>
+    </div>
+    <p class="vc-tagline">The built-in AI trading engine: 50+ symbols, adaptive signal weights, regime-aware thresholds. Default venue for all sessions.</p>
+    <div class="vc-specs">
+      <div class="spec"><div class="spec-label">Symbols</div><div class="spec-value">50+ pairs</div></div>
+      <div class="spec"><div class="spec-label">AI Signals</div><div class="spec-value">12 weighted</div></div>
+      <div class="spec"><div class="spec-label">Regime Engine</div><div class="spec-value">ADX(14)</div></div>
+      <div class="spec"><div class="spec-label">Session Cost</div><div class="spec-value">10 USDC / 30d</div></div>
+      <div class="spec"><div class="spec-label">Burst Session</div><div class="spec-value">0.5 USDC / 24h</div></div>
+      <div class="spec"><div class="spec-label">Mode</div><div class="spec-value">Paper</div></div>
+    </div>
+    <div class="vc-features">
+      <span class="feat">x402 payment</span>
+      <span class="feat">Kelly sizing</span>
+      <span class="feat">Adaptive weights</span>
+      <span class="feat">Circuit breaker</span>
+      <span class="feat">DCA engine</span>
+      <span class="feat">AI reviewer</span>
+    </div>
+    <div class="vc-api">
+      <code>POST /api/v1/session</code> (no venue field needed — internal is default)
+    </div>
+  </div>
+
+  <!-- Coming Soon -->
+  <div class="venue-card" style="opacity:.7">
+    <div class="vc-header">
+      <span class="vc-name">Hyperliquid Perps (Live)</span>
+      <span class="vc-status status-soon">Coming Soon</span>
+    </div>
+    <p class="vc-tagline">Real on-chain execution on Hyperliquid's CLOB. Every trade stamped with a Hyperliquid tx signature. Full non-custodial flow.</p>
+    <div class="vc-specs">
+      <div class="spec"><div class="spec-label">Max Leverage</div><div class="spec-value">50×</div></div>
+      <div class="spec"><div class="spec-label">Markets</div><div class="spec-value">~100 Perps</div></div>
+      <div class="spec"><div class="spec-label">Settlement</div><div class="spec-value">USDC (on-chain)</div></div>
+      <div class="spec"><div class="spec-label">Funding</div><div class="spec-value">Real HL rates</div></div>
+    </div>
+    <div class="vc-features">
+      <span class="feat">On-chain tx hashes</span>
+      <span class="feat">Real CLOB</span>
+      <span class="feat">EIP-712 signing</span>
+      <span class="feat">Bridge integration</span>
+    </div>
+  </div>
+
+  <p style="color:#484f58;margin-top:24px;font-size:.85rem">
+    Live market data: <a href="/api/v1/venues/hyperliquid/markets" style="color:#58a6ff">/api/v1/venues/hyperliquid/markets</a> (no auth required)
+  </p>
+</main>
+<footer>
+  <p>tradingbots.fun — x402-native AI agent trading · <a href="/api/v1/status">API Status</a> · <a href="/venues">Venues</a></p>
+</footer>
+</body>
+</html>"#)
+}
+
 pub async fn serve(
     app_state: AppState,
     port: u16,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let app = Router::new()
         .route("/", get(public_landing_handler))
+        .route("/venues", get(public_venues_handler))
+        .route("/venues/hyperliquid", get(public_venues_handler))
         .route("/dashboard", get(dashboard_handler))
         .route("/app", get(consumer_app_handler))
         .route("/app/agents", get(agent_app_handler))
@@ -9620,6 +10111,24 @@ pub async fn serve(
             "/api/v1/session/:id/hl/account",
             get(api_v1_hl_account_handler),
         )
+        // ── New v0.2.1 read-only session endpoints ───────────────────────────
+        .route(
+            "/api/v1/session/:id/positions",
+            get(api_v1_session_positions_handler),
+        )
+        .route(
+            "/api/v1/session/:id/trades",
+            get(api_v1_session_trades_handler),
+        )
+        .route(
+            "/api/v1/session/:id/latency/stats",
+            get(api_v1_session_latency_stats_handler),
+        )
+        // ── Public venue metadata (no auth) ──────────────────────────────────
+        .route(
+            "/api/v1/venues/hyperliquid/markets",
+            get(api_v1_venues_hyperliquid_markets_handler),
+        )
         .with_state(app_state);
     let addr = format!("0.0.0.0:{}", port);
     log::info!("🌐 Dashboard at http://{}", addr);
@@ -9689,6 +10198,7 @@ mod tests {
             cex_mode: String::new(),
             funded_from_pool: false,
             pool_stake_usd: 0.0,
+            venue: "Hyperliquid Perps (paper)".to_string(),
         }
     }
 

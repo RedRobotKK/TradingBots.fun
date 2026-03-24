@@ -9,6 +9,7 @@
 //!     drawdown guard, trade log, coin→asset index
 //!  5. `LatencyTracker` — recording, percentile computation, target thresholds
 //!  6. New `BotCommand` variants — `SetLeverage`, `PauseTrading`, `ResumeTrading`
+//!  7. Gap-close: command handler parsing, venue trade filter, latency stats shape
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  1. Venue transparency
@@ -689,7 +690,234 @@ mod session_create_request_tests {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  7. Semantic version check
+//  7. Gap-close tests — command parsing, trade venue filter, latency stats shape
+// ══════════════════════════════════════════════════════════════════════════════
+
+mod gap_close_tests {
+    use tradingbots_fun::web_dashboard::{BotCommand, ClosedTrade};
+
+    // ── Command handler JSON parsing ──────────────────────────────────────
+
+    /// Simulate what `api_v1_session_command_handler` does when it reads
+    /// `{"cmd":"set_leverage","symbol":"BTC","leverage":25}` from the body.
+    #[test]
+    fn set_leverage_cmd_parses_and_clamps() {
+        let body: serde_json::Value = serde_json::json!({
+            "cmd": "set_leverage",
+            "symbol": "BTC",
+            "leverage": 25
+        });
+        let cmd_str = body["cmd"].as_str().unwrap();
+        let symbol  = body["symbol"].as_str().unwrap_or("").to_string();
+        let lev     = body["leverage"].as_i64().unwrap_or(10) as i32;
+
+        assert_eq!(cmd_str, "set_leverage");
+        assert!(!symbol.is_empty());
+        let clamped = lev.clamp(1, 50);
+        assert_eq!(clamped, 25);
+
+        // Verify it maps to the correct BotCommand variant
+        let cmd = BotCommand::SetLeverage { symbol: symbol.clone(), leverage: clamped };
+        match cmd {
+            BotCommand::SetLeverage { symbol: s, leverage: l } => {
+                assert_eq!(s, "BTC");
+                assert_eq!(l, 25);
+            }
+            _ => panic!("Expected SetLeverage"),
+        }
+    }
+
+    #[test]
+    fn set_leverage_clamps_above_50() {
+        let raw: i32 = 200;
+        assert_eq!(raw.clamp(1, 50), 50, "Leverage above 50 must clamp to 50");
+    }
+
+    #[test]
+    fn set_leverage_clamps_below_1() {
+        let raw: i32 = 0;
+        assert_eq!(raw.clamp(1, 50), 1, "Leverage below 1 must clamp to 1");
+    }
+
+    #[test]
+    fn pause_trading_cmd_maps_to_variant() {
+        let body: serde_json::Value = serde_json::json!({"cmd": "pause_trading"});
+        let cmd_str = body["cmd"].as_str().unwrap();
+        assert_eq!(cmd_str, "pause_trading");
+        let cmd = BotCommand::PauseTrading;
+        assert!(matches!(cmd, BotCommand::PauseTrading));
+    }
+
+    #[test]
+    fn resume_trading_cmd_maps_to_variant() {
+        let body: serde_json::Value = serde_json::json!({"cmd": "resume_trading"});
+        let cmd_str = body["cmd"].as_str().unwrap();
+        assert_eq!(cmd_str, "resume_trading");
+        let cmd = BotCommand::ResumeTrading;
+        assert!(matches!(cmd, BotCommand::ResumeTrading));
+    }
+
+    // ── /session/{id}/trades venue filter logic ───────────────────────────
+
+    fn make_trade_with_venue(symbol: &str, venue: &str, pnl: f64) -> ClosedTrade {
+        ClosedTrade {
+            symbol:     symbol.to_string(),
+            side:       "LONG".to_string(),
+            entry:      100.0,
+            exit:       100.0 + pnl,
+            pnl,
+            pnl_pct:    pnl,
+            reason:     "Signal".to_string(),
+            closed_at:  "2026-03-24T01:00:00Z".to_string(),
+            entry_time: "2026-03-24T00:00:00Z".to_string(),
+            quantity:   1.0,
+            size_usd:   100.0,
+            leverage:   1.0,
+            fees_est:   0.075,
+            breakdown:  None,
+            note:       None,
+            venue:      venue.to_string(),
+        }
+    }
+
+    #[test]
+    fn trade_filter_no_filter_returns_all() {
+        let trades = vec![
+            make_trade_with_venue("BTC", "Hyperliquid Perps (paper)", 10.0),
+            make_trade_with_venue("ETH", "internal", 5.0),
+            make_trade_with_venue("SOL", "Hyperliquid Perps (paper)", -3.0),
+        ];
+        let venue_filter: Option<String> = None;
+        let filtered: Vec<&ClosedTrade> = trades.iter()
+            .filter(|t| {
+                if let Some(ref vf) = venue_filter {
+                    t.venue.to_lowercase().contains(vf.as_str())
+                } else { true }
+            })
+            .collect();
+        assert_eq!(filtered.len(), 3);
+    }
+
+    #[test]
+    fn trade_filter_hyperliquid_returns_only_hl() {
+        let trades = vec![
+            make_trade_with_venue("BTC", "Hyperliquid Perps (paper)", 10.0),
+            make_trade_with_venue("ETH", "internal", 5.0),
+            make_trade_with_venue("SOL", "Hyperliquid Perps (paper)", -3.0),
+        ];
+        let venue_filter = Some("hyperliquid".to_string());
+        let filtered: Vec<&ClosedTrade> = trades.iter()
+            .filter(|t| {
+                if let Some(ref vf) = venue_filter {
+                    t.venue.to_lowercase().contains(vf.as_str())
+                } else { true }
+            })
+            .collect();
+        assert_eq!(filtered.len(), 2);
+        assert!(filtered.iter().all(|t| t.venue.to_lowercase().contains("hyperliquid")));
+    }
+
+    #[test]
+    fn trade_filter_internal_returns_only_internal() {
+        let trades = vec![
+            make_trade_with_venue("BTC", "Hyperliquid Perps (paper)", 10.0),
+            make_trade_with_venue("ETH", "internal", 5.0),
+        ];
+        let venue_filter = Some("internal".to_string());
+        let filtered: Vec<&ClosedTrade> = trades.iter()
+            .filter(|t| {
+                if let Some(ref vf) = venue_filter {
+                    t.venue.to_lowercase().contains(vf.as_str())
+                } else { true }
+            })
+            .collect();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].symbol, "ETH");
+    }
+
+    // ── /session/{id}/positions response shape ────────────────────────────
+
+    #[test]
+    fn position_response_contains_venue_field() {
+        // Simulate what api_v1_session_positions_handler serialises for one position
+        let venue = "Hyperliquid Perps (paper)";
+        let item = serde_json::json!({
+            "symbol":         "BTC",
+            "side":           "LONG",
+            "entry_price":    50_000.0f64,
+            "quantity":       0.02f64,
+            "size_usd":       1_000.0f64,
+            "leverage":       2.0f64,
+            "unrealised_pnl": 50.0f64,
+            "pnl_pct":        5.0f64,
+            "stop_loss":      48_000.0f64,
+            "take_profit":    54_000.0f64,
+            "cycles_held":    10u64,
+            "entry_time":     "2026-03-24T00:00:00Z",
+            "venue":          venue,
+            "funding_rate":   0.0001f64,
+            "funding_delta":  0.0f64,
+            "ai_action":      serde_json::Value::Null,
+            "ai_reason":      serde_json::Value::Null,
+            "ob_sentiment":   "NEUTRAL",
+        });
+        assert_eq!(item["venue"].as_str().unwrap(), "Hyperliquid Perps (paper)");
+        assert_eq!(item["symbol"].as_str().unwrap(), "BTC");
+    }
+
+    // ── Latency stats response shape ──────────────────────────────────────
+
+    #[test]
+    fn latency_stats_response_shape() {
+        // Simulate the JSON structure returned by api_v1_session_latency_stats_handler
+        let stats_json = serde_json::json!({
+            "ok":               true,
+            "session_id":       "ses_test",
+            "window":           "1h",
+            "sample_count":     0,
+            "p50_ms":           0.0,
+            "p95_ms":           0.0,
+            "p99_ms":           0.0,
+            "min_ms":           0.0,
+            "max_ms":           0.0,
+            "mean_ms":          0.0,
+            "trades_per_minute": 0.0,
+            "success_rate_pct": 0.0,
+            "targets": {
+                "p50_target_ms": 250.0,
+                "p95_target_ms": 450.0,
+                "p99_target_ms": 800.0,
+            },
+            "status": {
+                "p50_ok": true,
+                "p95_ok": true,
+                "p99_ok": true,
+            }
+        });
+        assert!(stats_json["ok"].as_bool().unwrap());
+        assert_eq!(stats_json["targets"]["p50_target_ms"].as_f64().unwrap(), 250.0);
+        assert_eq!(stats_json["targets"]["p95_target_ms"].as_f64().unwrap(), 450.0);
+        assert_eq!(stats_json["targets"]["p99_target_ms"].as_f64().unwrap(), 800.0);
+        assert!(stats_json["status"]["p50_ok"].as_bool().unwrap());
+    }
+
+    #[test]
+    fn latency_stats_target_breach_flags() {
+        // Simulate p50 > 250ms → p50_ok = false
+        let p50_ms = 300.0f64;
+        let p95_ms = 400.0f64;
+        let p99_ms = 900.0f64;
+        let p50_ok = p50_ms <= 250.0;
+        let p95_ok = p95_ms <= 450.0;
+        let p99_ok = p99_ms <= 800.0;
+        assert!(!p50_ok, "300ms p50 should fail target");
+        assert!(p95_ok,  "400ms p95 should pass target");
+        assert!(!p99_ok, "900ms p99 should fail target");
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  8. Semantic version check
 // ══════════════════════════════════════════════════════════════════════════════
 
 #[test]

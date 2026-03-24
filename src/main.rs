@@ -514,6 +514,7 @@ async fn main() -> Result<()> {
             pattern_cache: pattern_cache.clone(),
             hyperliquid_stats: hl.stats(),
             bridge_manager: bridge_manager.clone(),
+            latency_tracker: std::sync::Arc::new(tokio::sync::RwLock::new(crate::latency::LatencyTracker::new("global"))),
         };
         tokio::spawn(async move {
             if let Err(e) = web_dashboard::serve(app_state, 3000).await {
