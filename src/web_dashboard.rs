@@ -402,6 +402,18 @@ pub struct BotSession {
     /// Session paused flag — set by drawdown guard or pause_trading command.
     #[serde(default)]
     pub paused: bool,
+    // ── Identity + paper capital ──────────────────────────────────────────
+    /// Human-readable label for this session (e.g. "AJ", "Daniel").
+    /// Admin-created sessions set this at creation time.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Paper capital allocated to this session (USD). Defaults to 200.0 for
+    /// admin-created sessions; 0.0 for x402 sessions (they share the global pool).
+    #[serde(default)]
+    pub balance_usd: f64,
+    /// Realised P&L accumulated within this session (USD).
+    #[serde(default)]
+    pub session_pnl: f64,
 }
 
 /// A manual trade-execution command queued by the operator or a bot-API session.
@@ -5521,6 +5533,131 @@ async fn admin_reset_stats_handler(
     })).into_response()
 }
 
+/// `POST /api/admin/session` — create a named paper-trading session without x402 payment.
+///
+/// Requires `X-Admin-Key: <ADMIN_KEY>` header (env var `ADMIN_KEY`).
+/// Useful for dev, demos, and seeding named wallets (e.g. "AJ", "Daniel").
+///
+/// Body:
+/// ```json
+/// {
+///   "name":        "AJ",
+///   "balance_usd": 200.0,
+///   "risk_mode":   "aggressive",
+///   "venue":       "internal",
+///   "duration":    "30d"
+/// }
+/// ```
+async fn admin_create_session_handler(
+    State(app): State<AppState>,
+    headers: axum::http::HeaderMap,
+    axum::extract::Json(body): axum::extract::Json<serde_json::Value>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    // ── Validate admin key ────────────────────────────────────────────────
+    let expected_key = std::env::var("ADMIN_KEY").unwrap_or_else(|_| "dev-admin-key".to_string());
+    let provided_key = headers
+        .get("x-admin-key")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    if provided_key != expected_key {
+        return (
+            axum::http::StatusCode::UNAUTHORIZED,
+            axum::response::Json(serde_json::json!({
+                "error": "Invalid or missing X-Admin-Key header"
+            })),
+        ).into_response();
+    }
+
+    // ── Parse body ────────────────────────────────────────────────────────
+    let name        = body.get("name").and_then(|v| v.as_str()).unwrap_or("unnamed").to_string();
+    let balance_usd = body.get("balance_usd").and_then(|v| v.as_f64()).unwrap_or(200.0);
+    let risk_mode   = body.get("risk_mode").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let venue       = body.get("venue").and_then(|v| v.as_str()).unwrap_or("internal").to_string();
+    let duration    = body.get("duration").and_then(|v| v.as_str()).unwrap_or("30d").to_string();
+    let leverage_max = body.get("leverage_max").and_then(|v| v.as_i64()).map(|v| v as i32);
+    let max_drawdown_pct = body.get("max_drawdown_pct").and_then(|v| v.as_f64());
+    let symbols_whitelist: Option<Vec<String>> = body
+        .get("symbols_whitelist")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|s| s.as_str().map(|s| s.to_string())).collect());
+
+    // ── Create session ────────────────────────────────────────────────────
+    let session_id = new_id("ses");
+    let token      = new_id("tok");
+    let now        = chrono::Utc::now();
+    let expires_at = if duration == "24h" {
+        now + chrono::Duration::hours(24)
+    } else {
+        now + chrono::Duration::days(30)
+    };
+    let plan = if duration == "24h" { "admin-burst-24h" } else { "admin-30d" }.to_string();
+
+    let hl_address = if venue == "hyperliquid" {
+        let (addr, _) = crate::hl_wallet::generate_keypair();
+        Some(addr)
+    } else {
+        None
+    };
+
+    let session = BotSession {
+        id:                  session_id.clone(),
+        token:               token.clone(),
+        tx_hash:             "admin-created".to_string(),
+        plan:                plan.clone(),
+        created_at:          now.to_rfc3339(),
+        expires_at:          expires_at.to_rfc3339(),
+        max_drawdown_pct,
+        webhook_url:         None,
+        venue:               venue.clone(),
+        leverage_max,
+        risk_mode:           risk_mode.clone(),
+        symbols_whitelist,
+        performance_fee_pct: None,
+        hyperliquid_address: hl_address.clone(),
+        paused:              false,
+        name:                Some(name.clone()),
+        balance_usd,
+        session_pnl:         0.0,
+    };
+
+    {
+        let mut s = app.bot_state.write().await;
+        s.bot_sessions.insert(session_id.clone(), session);
+    }
+
+    log::info!(
+        "👤 Admin session created: {} (name={} balance=${:.0} risk={} venue={})",
+        session_id,
+        name,
+        balance_usd,
+        risk_mode.as_deref().unwrap_or("balanced"),
+        venue,
+    );
+
+    axum::response::Json(serde_json::json!({
+        "ok":             true,
+        "session_id":     session_id,
+        "token":          token,
+        "name":           name,
+        "balance_usd":    balance_usd,
+        "risk_mode":      risk_mode.unwrap_or_else(|| "balanced".to_string()),
+        "venue":          venue,
+        "plan":           plan,
+        "expires_at":     expires_at.to_rfc3339(),
+        "deposit_address": hl_address,
+        "endpoints": {
+            "status":    format!("/api/v1/session/{}", session_id),
+            "command":   format!("/api/v1/session/{}/command", session_id),
+            "positions": format!("/api/v1/session/{}/positions", session_id),
+            "trades":    format!("/api/v1/session/{}/trades", session_id),
+            "latency":   format!("/api/v1/session/{}/latency/stats", session_id),
+        }
+    })).into_response()
+}
+
 /// `GET /admin/users` — table of all tenants with key stats.
 async fn admin_users_handler(
     State(app): State<AppState>,
@@ -10063,6 +10200,7 @@ pub async fn serve(
         .route("/admin/users", get(admin_users_handler))
         .route("/admin/wallets", get(admin_wallets_handler))
         .route("/api/admin/reset-stats", post(admin_reset_stats_handler))
+        .route("/api/admin/session", post(admin_create_session_handler))
         // ── Apple Pay domain verification ───────────────────────────────────
         .route(
             "/.well-known/apple-developer-merchantid-domain-association",
