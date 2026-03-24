@@ -66,3 +66,5 @@ pub mod tenant;
 pub mod thesis;
 pub mod trade_log;
 pub mod web_dashboard;
+pub mod connectors;
+pub mod latency;

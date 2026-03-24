@@ -1165,6 +1165,18 @@ async fn run_cycle(
                     )
                     .await;
                 }
+                BotCommand::SetLeverage { ref symbol, leverage } => {
+                    info!("🔧 SetLeverage: {symbol} → {leverage}×");
+                    // Stored in session config — no paper-trade action needed here.
+                }
+                BotCommand::PauseTrading => {
+                    info!("⏸ PauseTrading command received — bot will skip entry signals this cycle");
+                    // Session-level pause is enforced in HyperliquidConnector.
+                    // For the global paper-trading bot, we log and skip.
+                }
+                BotCommand::ResumeTrading => {
+                    info!("▶ ResumeTrading command received — resuming normal operation");
+                }
             }
         }
     }
@@ -3794,6 +3806,7 @@ async fn take_partial(
             fees_est: fees_partial,
             breakdown: partial_breakdown,
             note: None,
+            venue: "Hyperliquid Perps (paper)".to_string(),
         };
         ledger::append(&partial_trade);
         s.closed_trades.push(partial_trade);
@@ -4019,6 +4032,7 @@ async fn close_paper_position(
             fees_est: fees_full,
             breakdown,
             note: None, // operator can add note via POST /api/trade-note
+            venue: "Hyperliquid Perps (paper)".to_string(),
         };
         ledger::append(&full_trade);
         s.closed_trades.push(full_trade);

@@ -57,6 +57,7 @@ mod correlation_tests {
             cex_mode: String::new(),
             funded_from_pool: false,
             pool_stake_usd: 0.0,
+            venue: "Hyperliquid Perps (paper)".to_string(),
         }
     }
 
@@ -326,6 +327,7 @@ mod trade_journal_tests {
             fees_est: 0.075,
             breakdown: None,
             note: None,
+            venue: "Hyperliquid Perps (paper)".to_string(),
         }
     }
 

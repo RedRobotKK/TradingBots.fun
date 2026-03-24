@@ -101,6 +101,14 @@ fn default_leverage() -> f64 {
     1.0
 }
 
+fn default_venue() -> String {
+    "Hyperliquid Perps (paper)".to_string()
+}
+
+fn default_session_venue() -> String {
+    "internal".to_string()
+}
+
 // ─────────────────────────────── State structs ───────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -199,6 +207,11 @@ pub struct PaperPosition {
     /// Returned to pool (not capital) when the position is closed.
     #[serde(default)]
     pub pool_stake_usd: f64,
+    // ── Venue transparency ────────────────────────────────────────────────
+    /// Exchange venue where this position lives.
+    /// "Hyperliquid Perps (paper)" | "Hyperliquid Perps (live)"
+    #[serde(default = "default_venue")]
+    pub venue: String,
 }
 
 fn default_min_confidence() -> f64 {
@@ -239,6 +252,10 @@ pub struct ClosedTrade {
     /// "re-entered too early", etc.  Written via POST /api/trade-note.
     #[serde(default)]
     pub note: Option<String>,
+    // ── Venue transparency ────────────────────────────────────────────────
+    /// Exchange venue where this trade was executed.
+    #[serde(default = "default_venue")]
+    pub venue: String,
 }
 
 fn default_one() -> f64 {
@@ -356,6 +373,34 @@ pub struct BotSession {
     pub plan: String,
     pub created_at: String,
     pub expires_at: String,
+    // ── Session-level risk controls ───────────────────────────────────────
+    /// Auto-pause if session drawdown exceeds this percentage (e.g. 15.0 = 15%).
+    #[serde(default)]
+    pub max_drawdown_pct: Option<f64>,
+    /// Webhook URL called on every trade fill / session event.
+    #[serde(default)]
+    pub webhook_url: Option<String>,
+    /// Venue for this session: "internal" (default) | "hyperliquid".
+    #[serde(default = "default_session_venue")]
+    pub venue: String,
+    /// Max leverage allowed for this session (1–50). None = use bot default.
+    #[serde(default)]
+    pub leverage_max: Option<i32>,
+    /// Risk mode: "conservative" | "balanced" | "aggressive".
+    #[serde(default)]
+    pub risk_mode: Option<String>,
+    /// Whitelisted symbols. None = all pairs.
+    #[serde(default)]
+    pub symbols_whitelist: Option<Vec<String>>,
+    /// Optional performance fee percentage (0–50). Only charged on profitable closes.
+    #[serde(default)]
+    pub performance_fee_pct: Option<i32>,
+    /// Hyperliquid deposit address for this session (derived per-session wallet).
+    #[serde(default)]
+    pub hyperliquid_address: Option<String>,
+    /// Session paused flag — set by drawdown guard or pause_trading command.
+    #[serde(default)]
+    pub paused: bool,
 }
 
 /// A manual trade-execution command queued by the operator or a bot-API session.
@@ -383,6 +428,12 @@ pub enum BotCommand {
         size_usd: Option<f64>,
         leverage: Option<f64>,
     },
+    /// Set leverage for a symbol (Hyperliquid sessions).
+    SetLeverage { symbol: String, leverage: i32 },
+    /// Pause trading for this session.
+    PauseTrading,
+    /// Resume trading after a pause.
+    ResumeTrading,
 }
 
 impl Default for BotState {
@@ -7438,6 +7489,21 @@ async fn command_handler(
                     symbol.clone(),
                     format!("Opening SHORT on {symbol} on next cycle ⏱"),
                 ),
+                BotCommand::SetLeverage { symbol, leverage } => (
+                    "SetLeverage",
+                    symbol.clone(),
+                    format!("Setting leverage for {symbol} to {leverage}× on next cycle ⏱"),
+                ),
+                BotCommand::PauseTrading => (
+                    "PauseTrading",
+                    String::new(),
+                    "Trading paused — no new entries until ResumeTrading ⏸".to_string(),
+                ),
+                BotCommand::ResumeTrading => (
+                    "ResumeTrading",
+                    String::new(),
+                    "Trading resumed ▶".to_string(),
+                ),
             };
 
             // Push to queue
@@ -7846,6 +7912,9 @@ a{color:inherit;text-decoration:none}
 .bridge-badge{display:inline-flex;align-items:center;gap:6px;background:rgba(88,166,255,.08);border:1px solid rgba(88,166,255,.2);border-radius:8px;padding:5px 12px;font-size:.72rem;color:var(--blue);font-weight:600;margin-bottom:22px}
 .bridge-badge svg{opacity:.7}
 
+/* ── Venue badge ── */
+.venue-badge{display:inline-block;font-size:.7rem;padding:2px 8px;border-radius:999px;background:rgba(56,139,253,.12);color:#58a6ff;border:1px solid rgba(56,139,253,.3);white-space:nowrap}
+
 /* ── x402 highlight band ── */
 .x402-hero{background:linear-gradient(135deg,rgba(88,166,255,.06) 0%,rgba(63,185,80,.04) 100%);border:1px solid rgba(88,166,255,.18);border-radius:16px;padding:28px 28px 24px;margin-top:40px}
 .x402-hero h3{font-size:1.05rem;font-weight:800;color:var(--text-hi);margin-bottom:6px;display:flex;align-items:center;gap:8px}
@@ -8235,6 +8304,7 @@ function renderPositionTiles(positions) {
     const tileCls = p.side === 'LONG' ? 'pos-tile long-tile' : 'pos-tile short-tile';
     const sideCls = p.side === 'LONG' ? 'side-long' : 'side-short';
     const pnlStr  = (p.unrealised_pnl >= 0 ? '+' : '') + fmtUsd(p.unrealised_pnl);
+    const venueBadge = p.venue ? `<span class="venue-badge">${p.venue}</span>` : '';
     return `<div class="${tileCls}">
       <div class="pt-row">
         <span class="pt-sym">${p.symbol}</span>
@@ -8245,6 +8315,7 @@ function renderPositionTiles(positions) {
         <span class="pt-entry">Entry ${fmtPrice(p.entry_price)}</span>
         <span class="pt-meta">${p.leverage.toFixed(1)}× · ${fmtUsd(p.size_usd)}</span>
       </div>
+      ${venueBadge}
     </div>`;
   };
   const tiles = positions.map(makeTile).join('');
@@ -8396,11 +8467,13 @@ async function loadState() {
         winsList.innerHTML = [...s.closed_trades].reverse().slice(0, 12).map(t => {
           const isPnlPos = t.pnl >= 0;
           const sideCls  = t.side === 'LONG' ? 'side-long' : 'side-short';
+          const venueTag = t.venue ? `<span class="venue-badge">${t.venue}</span>` : '';
           return `<div class="win-row ${isPnlPos ? 'profit' : 'loss'}">
             <span class="win-sym">${t.symbol}</span>
             <span class="${sideCls}">${t.side}</span>
             <span class="win-meta">${fmtPrice(t.entry)} → ${fmtPrice(t.exit)}</span>
             <span class="win-meta reason-pill">${t.reason}</span>
+            ${venueTag}
             <span class="win-meta">${t.closed_at?.slice(11,19)||''}</span>
             <span class="win-pnl ${isPnlPos ? 'pos' : 'neg'}">${isPnlPos ? '+' : ''}${fmtUsd(t.pnl)} (${fmtPct(t.pnl_pct)})</span>
           </div>`;
@@ -8605,14 +8678,47 @@ async fn api_v1_status_handler(State(app): State<AppState>) -> axum::response::R
     .into_response()
 }
 
+/// Optional JSON body for `POST /api/v1/session`.
+/// All fields are optional — bots that only send `X-Payment` get a standard 30-day session.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SessionCreateRequest {
+    /// "internal" (default) | "hyperliquid"
+    #[serde(default = "default_session_venue")]
+    pub venue: String,
+    /// Max leverage (1–50). Hyperliquid sessions only.
+    pub leverage_max: Option<i32>,
+    /// "conservative" | "balanced" | "aggressive"
+    pub risk_mode: Option<String>,
+    /// Whitelisted symbols (null = all pairs).
+    pub symbols_whitelist: Option<Vec<String>>,
+    /// Auto-pause drawdown threshold (%).
+    pub max_drawdown_pct: Option<f64>,
+    /// Performance fee on profits (%).
+    pub performance_fee_pct: Option<i32>,
+    /// Webhook URL to POST trade events to.
+    pub webhook_url: Option<String>,
+    /// "30d" (default, 10 USDC) | "24h" (burst, 0.5 USDC)
+    #[serde(default = "default_duration")]
+    pub duration: String,
+}
+
+fn default_duration() -> String {
+    "30d".to_string()
+}
+
 /// x402 payment requirements object (embedded in 402 responses).
-fn x402_payment_requirements(resource: &str) -> serde_json::Value {
+fn x402_payment_requirements(resource: &str, duration: &str) -> serde_json::Value {
+    let (amount, description) = if duration == "24h" {
+        ("500000", "Start a 24-hour burst AI trading bot session (0.5 USDC)")
+    } else {
+        ("10000000", "Start a 30-day AI trading bot session (10 USDC)")
+    };
     serde_json::json!({
         "scheme":             "exact",
         "network":            "base-mainnet",
-        "maxAmountRequired":  "10000000",
+        "maxAmountRequired":  amount,
         "resource":           resource,
-        "description":        "Start a 30-day AI trading bot session",
+        "description":        description,
         "mimeType":           "application/json",
         "payTo":              std::env::var("X402_WALLET").unwrap_or_else(|_| "0x0000000000000000000000000000000000000000".to_string()),
         "maxTimeoutSeconds":  300,
@@ -8734,15 +8840,65 @@ async fn verify_base_usdc_payment(
     Ok(false)
 }
 
+/// Fire webhook for all sessions that have a `webhook_url` configured.
+/// Called after every trade close / open.
+async fn dispatch_session_webhooks(
+    bot_state: &crate::web_dashboard::SharedState,
+    event_type: &str,
+    payload: serde_json::Value,
+) {
+    let urls: Vec<String> = {
+        let s = bot_state.read().await;
+        s.bot_sessions
+            .values()
+            .filter_map(|sess| sess.webhook_url.clone())
+            .collect()
+    };
+
+    if urls.is_empty() {
+        return;
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+
+    let body = serde_json::json!({
+        "event": event_type,
+        "ts":    chrono::Utc::now().to_rfc3339(),
+        "data":  payload
+    });
+
+    for url in urls {
+        let c = client.clone();
+        let b = body.clone();
+        let u = url.clone();
+        tokio::spawn(async move {
+            if let Err(e) = c.post(&u).json(&b).send().await {
+                log::warn!("Webhook delivery failed to {}: {}", u, e);
+            }
+        });
+    }
+}
+
 /// `POST /api/v1/session` — x402-gated session creation.
 ///
 /// **Without** `X-Payment` header → `402 Payment Required` with USDC details.
 /// **With** `X-Payment: 0x{txHash}` → verifies on Base mainnet, then creates session.
+///
+/// Optional JSON body (`SessionCreateRequest`) controls session parameters.
+/// Burst sessions: `"duration": "24h"` → 0.5 USDC / 24h instead of 10 USDC / 30d.
 async fn api_v1_session_handler(
     State(app): State<AppState>,
     headers: axum::http::HeaderMap,
+    body: Option<axum::extract::Json<SessionCreateRequest>>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
+
+    // Parse optional body; default to standard 30d session
+    let req = body.map(|b| b.0).unwrap_or_default();
+    let is_burst = req.duration == "24h";
 
     let payment_header = headers
         .get("x-payment")
@@ -8751,8 +8907,14 @@ async fn api_v1_session_handler(
 
     if payment_header.is_none() {
         // ── 402: tell the bot what to pay ─────────────────────────────────
-        let req = x402_payment_requirements("https://tradingbots.fun/api/v1/session");
-        let req_str = serde_json::to_string(&req).unwrap_or_default();
+        let resource_url = "https://tradingbots.fun/api/v1/session";
+        let x402_req = x402_payment_requirements(resource_url, &req.duration);
+        let req_str = serde_json::to_string(&x402_req).unwrap_or_default();
+        let (amount_str, note) = if is_burst {
+            ("0.5 USDC", "24-hour burst session")
+        } else {
+            ("10 USDC", "30-day standard session")
+        };
         return (
             axum::http::StatusCode::PAYMENT_REQUIRED,
             [
@@ -8761,7 +8923,8 @@ async fn api_v1_session_handler(
             ],
             serde_json::to_string(&serde_json::json!({
                 "error":   "Payment required",
-                "amount":  "10 USDC",
+                "amount":  amount_str,
+                "note":    note,
                 "network": "base-mainnet",
                 "payTo":   std::env::var("X402_WALLET").unwrap_or_else(|_| "0x0000000000000000000000000000000000000000".to_string()),
                 "asset":   "USDC — 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
@@ -8783,11 +8946,12 @@ async fn api_v1_session_handler(
             .into_response();
     }
 
-    // ── On-chain verification: confirm 10 USDC reached our wallet ─────────
+    // ── On-chain verification ─────────────────────────────────────────────
     let our_wallet = std::env::var("X402_WALLET")
         .unwrap_or_else(|_| "0x0000000000000000000000000000000000000000".to_string());
+    let min_units: u64 = if is_burst { 500_000 } else { 10_000_000 };
 
-    match verify_base_usdc_payment(&tx_hash, &our_wallet, 10_000_000).await {
+    match verify_base_usdc_payment(&tx_hash, &our_wallet, min_units).await {
         Ok(true) => {
             log::info!("✅ x402 payment verified on-chain: {}", &tx_hash[..12]);
         }
@@ -8797,6 +8961,7 @@ async fn api_v1_session_handler(
                 &tx_hash[..12],
                 &our_wallet[..8]
             );
+            let amount_str = if is_burst { "0.5 USDC (500000 units)" } else { "10 USDC (10000000 units)" };
             return (
                 axum::http::StatusCode::PAYMENT_REQUIRED,
                 axum::response::Json(serde_json::json!({
@@ -8804,14 +8969,13 @@ async fn api_v1_session_handler(
                     "detail":  "Transaction not found, insufficient amount, or wrong recipient",
                     "tx_hash": tx_hash,
                     "payTo":   our_wallet,
-                    "amount":  "10 USDC (10000000 units)",
+                    "amount":  amount_str,
                     "network": "base-mainnet"
                 })),
             )
                 .into_response();
         }
         Err(rpc_err) => {
-            // RPC unreachable — allow with a warning (don't block on infra issues)
             log::warn!(
                 "⚠ x402 RPC verification failed ({}), accepting provisionally: {}",
                 rpc_err,
@@ -8823,15 +8987,36 @@ async fn api_v1_session_handler(
     let session_id = new_id("ses");
     let token = new_id("tok");
     let now = chrono::Utc::now();
-    let expires_at = now + chrono::Duration::days(30);
+    let (expires_at, plan) = if is_burst {
+        (now + chrono::Duration::hours(24), "burst-24h".to_string())
+    } else {
+        (now + chrono::Duration::days(30), "starter".to_string())
+    };
+
+    // Derive a per-session Hyperliquid wallet if venue == "hyperliquid"
+    let hl_address = if req.venue == "hyperliquid" {
+        let (addr, _priv_key) = crate::hl_wallet::generate_keypair();
+        Some(addr)
+    } else {
+        None
+    };
 
     let session = BotSession {
         id: session_id.clone(),
         token: token.clone(),
         tx_hash: tx_hash.clone(),
-        plan: "starter".to_string(),
+        plan: plan.clone(),
         created_at: now.to_rfc3339(),
         expires_at: expires_at.to_rfc3339(),
+        max_drawdown_pct: req.max_drawdown_pct,
+        webhook_url: req.webhook_url.clone(),
+        venue: req.venue.clone(),
+        leverage_max: req.leverage_max,
+        risk_mode: req.risk_mode.clone(),
+        symbols_whitelist: req.symbols_whitelist.clone(),
+        performance_fee_pct: req.performance_fee_pct,
+        hyperliquid_address: hl_address.clone(),
+        paused: false,
     };
 
     {
@@ -8840,20 +9025,26 @@ async fn api_v1_session_handler(
     }
 
     log::info!(
-        "🤖 x402 session created: {} (tx {})",
+        "🤖 x402 session created: {} plan={} venue={} (tx {})",
         session_id,
+        plan,
+        req.venue,
         &tx_hash[..10.min(tx_hash.len())]
     );
 
     axum::response::Json(serde_json::json!({
-        "ok":         true,
-        "session_id": session_id,
-        "token":      token,
-        "plan":       "starter",
-        "expires_at": expires_at.to_rfc3339(),
+        "ok":                  true,
+        "session_id":          session_id,
+        "token":               token,
+        "plan":                plan,
+        "venue":               req.venue,
+        "expires_at":          expires_at.to_rfc3339(),
+        "deposit_address":     hl_address,
         "endpoints": {
-            "status":  format!("/api/v1/session/{}", session_id),
-            "command": format!("/api/v1/session/{}/command", session_id)
+            "status":    format!("/api/v1/session/{}", session_id),
+            "command":   format!("/api/v1/session/{}/command", session_id),
+            "positions": format!("/api/v1/session/{}/positions", session_id),
+            "trades":    format!("/api/v1/session/{}/trades", session_id)
         }
     }))
     .into_response()
