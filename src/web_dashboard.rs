@@ -591,7 +591,7 @@ async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
     let pos_cards: String = if s.positions.is_empty() {
         r#"<div class="empty-state"><div class="radar"></div><p>No open positions — scanning for signals…</p></div>"#.to_string()
     } else {
-        s.positions.iter().map(|p| {
+        s.positions.iter().enumerate().map(|(pos_idx, p)| {
             let r_mult = if p.r_dollars_risked > 1e-8 { p.unrealised_pnl / p.r_dollars_risked } else { 0.0 };
             let pnl_colour = if p.unrealised_pnl >= 0.0 { "#3fb950" } else { "#f85149" };
             let border_colour = if p.unrealised_pnl > 0.0 { "#238636" } else if p.unrealised_pnl < -p.r_dollars_risked * 0.5 { "#da3633" } else { "#444c56" };
@@ -752,7 +752,7 @@ async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
                 _ => String::new(),
             };
 
-            format!(r#"<div class="pos-flip-wrap" id="pf-{sym_id}" data-pnl="{raw_pnl:.4}"><div class="pos-flip-inner">
+            format!(r#"<div class="pos-flip-wrap" id="pf-{sym_id}" data-pnl="{raw_pnl:.4}" data-idx="{pos_idx}"><div class="pos-flip-inner">
 <div class="pos-card" style="border-left:3px solid {border}" id="pos-{sym_id}" onclick="flipPos('{sym_id}')">
   <div class="pos-header">
     <span class="pos-sym">{logo}{sym}</span>{name}{dca}
@@ -1321,7 +1321,7 @@ var METRIC_INFO={
     fmt:function(v){return String(v);},
     no_gauge:true,
     formula:'Live count from current session state',
-    notes:['Open = positions currently held. No hard count cap — the AI budgets size via Kelly and portfolio heat (15% max equity at risk), so a dozen or more concurrent positions are normal.','Closed = completed trades this session — partial closes count as separate entries.','Session resets on restart — the trades_YYYY.csv ledger captures all-time history.','More closed trades → more reliable metrics. Kelly activates at 5; metrics become statistically meaningful at 10+.'],
+    notes:['Open = positions currently held. Hard cap is 25 — the AI also budgets via Kelly and portfolio heat (10% max equity at risk), so positions are fewer and better-sized.','Closed = completed trades this session — partial closes count as separate entries. In-memory buffer holds last 500; full history lives in the trades CSV ledger.','Session resets on restart — the trades_YYYY.csv ledger captures all-time history.','More closed trades → more reliable metrics. Kelly activates at 5; metrics become statistically meaningful at 10+.'],
     verdict:function(){return['#8b949e','ℹ️ These counts grow as the bot trades. The closed count directly drives the quality of Sharpe, Sortino, Kelly, and Expectancy calculations — the more trades, the more trustworthy the numbers.'];}
   },
   cycles:{
@@ -1739,11 +1739,12 @@ tr:hover td{{background:rgba(255,255,255,.025)}}
   <div class="section-title">
     <span class="section-title-left"><span class="live-ring"></span> Active Positions</span>
     <span style="display:flex;align-items:center;gap:8px">
-      <button id="sort-pos-btn" onclick="sortPositions()" title="Toggle sort order"
+      <button id="sort-pos-btn" onclick="sortPositions()" title="Cycle: Best first → Worst first → Split W/L"
         style="background:#1c2026;border:1px solid #444c56;color:#cdd9e5;border-radius:6px;
                padding:2px 10px;font-size:.75em;cursor:pointer;line-height:1.6">
         ↕ Sort P&amp;L
       </button>
+      <span id="wl-badge" class="badge" style="font-size:.72em"></span>
       <span class="badge">{open_n} open · cap {pos_cap}</span>
     </span>
   </div>
@@ -1820,24 +1821,59 @@ function flipPos(id){{
   wrap.classList.toggle('flipped');
 }}
 
-/* ── Position P&L sort toggle ───────────────────────────────────────────
-   Alternates between worst-first (losers on top so you notice them) and
-   best-first (winners on top to celebrate).  State persists across auto-
-   refreshes by writing to window._posSortAsc.                           */
-var _posSortAsc = true; // true = worst first (ascending P&L)
+/* ── Position P&L sort (4-mode cycle) ───────────────────────────────────
+   0 = entry time order (default)
+   1 = best first (biggest winners at top)
+   2 = worst first (biggest losers at top — notice the pain early)
+   3 = split: all winners first (sorted desc), then all losers (sorted asc)
+   Mode persists in _posSortMode across calls.                           */
+var _posSortMode = 0;
 function sortPositions(){{
   var grid = document.getElementById('pos-grid');
   if(!grid) return;
+  _posSortMode = (_posSortMode + 1) % 4;
   var cards = Array.from(grid.querySelectorAll('.pos-flip-wrap'));
-  _posSortAsc = !_posSortAsc;
-  cards.sort(function(a,b){{
-    var pa = parseFloat(a.getAttribute('data-pnl')||'0');
-    var pb = parseFloat(b.getAttribute('data-pnl')||'0');
-    return _posSortAsc ? pa - pb : pb - pa;
-  }});
-  cards.forEach(function(c){{ grid.appendChild(c); }});
   var btn = document.getElementById('sort-pos-btn');
-  if(btn) btn.textContent = _posSortAsc ? '↑ Worst first' : '↓ Best first';
+  var badge = document.getElementById('wl-badge');
+
+  if(_posSortMode === 0) {{
+    /* restore original DOM order (time — data-idx set at render) */
+    cards.sort(function(a,b){{
+      return parseInt(a.getAttribute('data-idx')||'0') - parseInt(b.getAttribute('data-idx')||'0');
+    }});
+    cards.forEach(function(c){{ grid.appendChild(c); }});
+    if(btn) btn.textContent = '↕ Sort P&L';
+    if(badge) badge.textContent = '';
+  }} else if(_posSortMode === 1) {{
+    /* Best first (highest P&L) */
+    cards.sort(function(a,b){{
+      return parseFloat(b.getAttribute('data-pnl')||'0') - parseFloat(a.getAttribute('data-pnl')||'0');
+    }});
+    cards.forEach(function(c){{ grid.appendChild(c); }});
+    if(btn) btn.textContent = '↓ Best first';
+    var winners = cards.filter(function(c){{ return parseFloat(c.getAttribute('data-pnl')||'0') >= 0; }}).length;
+    var losers  = cards.length - winners;
+    if(badge) {{ badge.textContent = '🟢 ' + winners + ' W · 🔴 ' + losers + ' L'; badge.style.color='#cdd9e5'; }}
+  }} else if(_posSortMode === 2) {{
+    /* Worst first (biggest losers at top) */
+    cards.sort(function(a,b){{
+      return parseFloat(a.getAttribute('data-pnl')||'0') - parseFloat(b.getAttribute('data-pnl')||'0');
+    }});
+    cards.forEach(function(c){{ grid.appendChild(c); }});
+    if(btn) btn.textContent = '↑ Worst first';
+    var winners2 = cards.filter(function(c){{ return parseFloat(c.getAttribute('data-pnl')||'0') >= 0; }}).length;
+    var losers2  = cards.length - winners2;
+    if(badge) {{ badge.textContent = '🟢 ' + winners2 + ' W · 🔴 ' + losers2 + ' L'; badge.style.color='#cdd9e5'; }}
+  }} else {{
+    /* Split: winners first (sorted by P&L desc), then losers (sorted by P&L asc = worst last) */
+    var winCards  = cards.filter(function(c){{ return parseFloat(c.getAttribute('data-pnl')||'0') >= 0; }});
+    var loseCards = cards.filter(function(c){{ return parseFloat(c.getAttribute('data-pnl')||'0') < 0; }});
+    winCards.sort(function(a,b){{  return parseFloat(b.getAttribute('data-pnl')||'0') - parseFloat(a.getAttribute('data-pnl')||'0'); }});
+    loseCards.sort(function(a,b){{ return parseFloat(a.getAttribute('data-pnl')||'0') - parseFloat(b.getAttribute('data-pnl')||'0'); }});
+    winCards.concat(loseCards).forEach(function(c){{ grid.appendChild(c); }});
+    if(btn) btn.textContent = '⊞ W | L split';
+    if(badge) {{ badge.textContent = '🟢 ' + winCards.length + ' winning · 🔴 ' + loseCards.length + ' losing'; badge.style.color='#cdd9e5'; }}
+  }}
 }}
 
 /* ── Closed trade click-to-expand ─────────────────────────────────────── */
@@ -2438,7 +2474,7 @@ window.doResetStats = function() {{
         cb_label = cb_label,
         cb_desc = cb_desc,
         open_n = s.positions.len(),
-        pos_cap = 40,
+        pos_cap = 25,
         total_closed = s.closed_trades.len(),
         cycles = s.cycle_count,
         cand_n = s.candidates.len(),

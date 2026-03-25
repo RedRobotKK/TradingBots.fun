@@ -134,30 +134,25 @@ fn detect_regime(ind: &TechnicalIndicators) -> Regime {
 
 /// Confidence-scaled leverage, capped by market regime.
 ///
-/// Ranging markets: max 3× (tighter stops offset the higher leverage)
-/// Neutral markets: max 3× (balanced risk while win rate builds)
-/// Trending markets: max 5× (momentum carries positions; higher conviction warranted)
+/// All regimes now capped at 3× to prevent catastrophic notional exposure.
+/// Live observation: 5× leverage + DCA×3 produced $491k notional on a single
+/// altcoin (GRIFFAIN) on a $1M account — nearly 50% of equity in one position.
+/// With DCA budget also tightened, 3× max keeps any single position's notional
+/// within ~8-10% of total equity at realistic position sizes.
 ///
-/// Minimum entry confidence is 0.60 (gated in main.rs).
-/// Confidence scaling within the regime cap:
-///   0.60–0.70 → 2×  (minimum — just above gate)
-///   0.70–0.82 → 3×
-///   0.82–0.90 → 4×
-///   0.90+     → regime max
+/// Confidence scaling within the 3× cap:
+///   <0.70 → 2×  (minimum — just above entry gate)
+///   0.70+ → 3×  (full conviction / trending)
 pub fn calc_leverage(confidence: f64, regime: Regime) -> f64 {
     let regime_cap: f64 = match regime {
-        Regime::Ranging => 3.0,
-        Regime::Neutral => 3.0,
-        Regime::Trending => 5.0,
+        Regime::Ranging => 2.0,  // was 3.0 — mean-reversion entries need tighter notional
+        Regime::Neutral => 2.0,  // was 3.0
+        Regime::Trending => 3.0, // was 5.0 — primary fix for over-margining
     };
     let raw: f64 = if confidence < 0.70 {
         2.0
-    } else if confidence < 0.82 {
-        3.0
-    } else if confidence < 0.90 {
-        4.0
     } else {
-        5.0
+        3.0 // collapsed 3/4/5 tiers — max is 3× regardless of confidence
     };
     raw.min(regime_cap)
 }
@@ -1345,39 +1340,41 @@ mod tests {
     }
 
     #[test]
-    fn leverage_trending_max_5x() {
+    fn leverage_trending_max_3x() {
+        // Capped at 3× (was 5×) — live data showed $491k notional single positions
         assert!(
-            (calc_leverage(0.95, Regime::Trending) - 5.0).abs() < 1e-6,
-            "high confidence trending → 5.0× leverage"
+            (calc_leverage(0.95, Regime::Trending) - 3.0).abs() < 1e-6,
+            "high confidence trending → 3.0× leverage (capped from 5.0×)"
         );
     }
 
     #[test]
-    fn leverage_ranging_capped_at_3x() {
-        // Even at max confidence, Ranging caps at 3×
+    fn leverage_ranging_capped_at_2x() {
+        // Ranging capped at 2× (was 3×) — mean-reversion requires tighter notional
         assert!(
-            (calc_leverage(0.95, Regime::Ranging) - 3.0).abs() < 1e-6,
-            "ranging regime caps leverage at 3.0×"
+            (calc_leverage(0.95, Regime::Ranging) - 2.0).abs() < 1e-6,
+            "ranging regime caps leverage at 2.0×"
         );
     }
 
     #[test]
-    fn leverage_neutral_capped_at_3x() {
+    fn leverage_neutral_capped_at_2x() {
         assert!(
-            (calc_leverage(0.95, Regime::Neutral) - 3.0).abs() < 1e-6,
-            "neutral regime caps leverage at 3.0×"
+            (calc_leverage(0.95, Regime::Neutral) - 2.0).abs() < 1e-6,
+            "neutral regime caps leverage at 2.0×"
         );
     }
 
     #[test]
     fn leverage_mid_confidence() {
+        // Both mid and high confidence now resolve to 3× in trending (collapsed tiers)
         assert!(
             (calc_leverage(0.78, Regime::Trending) - 3.0).abs() < 1e-6,
-            "confidence 0.70–0.82 → 3.0× leverage"
+            "confidence 0.70+ → 3.0× in trending"
         );
         assert!(
-            (calc_leverage(0.85, Regime::Trending) - 4.0).abs() < 1e-6,
-            "confidence 0.82–0.90 → 4.0× leverage"
+            (calc_leverage(0.85, Regime::Trending) - 3.0).abs() < 1e-6,
+            "confidence 0.85+ → 3.0× in trending (no longer 4.0×)"
         );
     }
 

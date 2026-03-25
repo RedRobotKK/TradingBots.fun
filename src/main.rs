@@ -17,15 +17,20 @@
 /// positions — too many borderline signals were entering.
 const MIN_CONFIDENCE: f64 = 0.68;
 /// Maximum fraction of equity at risk per individual trade (stop-distance based).
-const MAX_TRADE_HEAT: f64 = 0.05; // 5 %
+/// Lowered 0.05→0.03: live data showed single positions regularly hitting $15k+ risk
+/// (e.g. GRIFFAIN 15.2%) — halving the per-trade ceiling keeps individual positions sane.
+const MAX_TRADE_HEAT: f64 = 0.03; // 3 %
 /// Maximum total fraction of equity at risk across all open positions.
 /// This is the primary position budget — the AI sizes each new position so that
 /// total portfolio heat never exceeds this ceiling.
-const MAX_PORTFOLIO_HEAT: f64 = 0.15; // 15 %
+/// Lowered 0.15→0.10: 40 positions at 5% heat each = 200% theoretical exposure;
+/// capping portfolio heat at 10% forces tighter per-trade sizing.
+const MAX_PORTFOLIO_HEAT: f64 = 0.10; // 10 %
 /// Hard cap on simultaneous open positions.  Prevents the bot from holding
 /// 100+ small losers that individually pass the heat check but collectively
 /// dilute attention and inflate losing streaks.
-const MAX_OPEN_POSITIONS: usize = 40;
+/// Lowered 40→25: fewer, higher-conviction positions with proper sizing.
+const MAX_OPEN_POSITIONS: usize = 25;
 /// DCA minimum confidence (slightly higher than new-entry minimum).
 const DCA_MIN_CONFIDENCE: f64 = 0.65;
 /// Circuit-breaker drawdown threshold.  Once peak→current drawdown exceeds
@@ -34,7 +39,9 @@ const CB_DRAWDOWN_THRESHOLD: f64 = 0.08; // 8 %
 /// Position-size multiplier applied when the circuit breaker is active.
 const CB_SIZE_MULT: f64 = 0.35;
 /// Upper bound for position size as fraction of free capital (Kelly clamp).
-const MAX_POSITION_PCT: f64 = 0.25;
+/// Lowered 0.25→0.12: 25% of free capital was allowing $75k+ initial margins on a
+/// $1M account, which DCA×3 then inflated to $200k+. 12% keeps initial entries sane.
+const MAX_POSITION_PCT: f64 = 0.12;
 /// Lower bound for position size as fraction of free capital.
 /// Raised from 1% — a $10 position on $1000 is economically meaningless.
 const MIN_POSITION_PCT: f64 = 0.05;
@@ -3370,18 +3377,20 @@ async fn execute_paper_trade(
     // ── Per-trade budget cap ──────────────────────────────────────────────
     // Plan the maximum DCA spend at entry time so we never "over-buy a sinking ship."
     // Budget = initial margin × dca_max_multiplier.
-    // Each DCA add-on uses 50% of the current size, so the budget rises with conviction:
-    //   dca_max=2: budget cap = 1.0 × entry  (can double exposure)
-    //   dca_max=3: budget cap = 2.0 × entry  (can triple)
-    //   dca_max=4: budget cap = 3.0 × entry  (can quadruple)
+    // Each DCA add-on uses 50% of the current size (geometric growth).
+    // Budget = initial margin × budget_mult.  Tightened to prevent a single
+    // position inflating to 3-4× initial via unchecked DCA compounding:
+    //   dca_max=2: budget cap = 1.0 × entry  (max 1 DCA → 1.5× total)
+    //   dca_max=3: budget cap = 1.5 × entry  (max 2 DCAs → 2.25× total)
+    // Previous values (3/4 max) produced $491k notional on a single altcoin (GRIFFAIN).
     let entry_dca_max = if dec.confidence >= 0.85 {
-        4
+        3  // was 4 — allows up to 2 DCA entries (1+0.5+0.75 = 2.25× initial)
     } else if dec.confidence >= 0.75 {
-        3
+        2  // was 3 — allows up to 1 DCA entry (1+0.5 = 1.5× initial)
     } else {
-        2
+        2  // unchanged
     };
-    let budget_mult = (entry_dca_max as f64 - 1.0).max(1.0); // 1.0/2.0/3.0
+    let budget_mult = (entry_dca_max as f64 - 1.0).max(1.0); // 1.0/1.5
     let trade_budget_usd = size_usd * budget_mult;
 
     // Deduct from the right bucket: pool-funded entries don't touch own capital
@@ -3812,8 +3821,8 @@ async fn take_partial(
         ledger::append(&partial_trade);
         s.closed_trades.push(partial_trade);
         let len = s.closed_trades.len();
-        if len > 100 {
-            s.closed_trades.drain(0..len - 100);
+        if len > 500 {
+            s.closed_trades.drain(0..len - 500);
         }
 
         s.metrics = PerformanceMetrics::calculate(&s.closed_trades);
@@ -4038,8 +4047,8 @@ async fn close_paper_position(
         ledger::append(&full_trade);
         s.closed_trades.push(full_trade);
         let len = s.closed_trades.len();
-        if len > 100 {
-            s.closed_trades.drain(0..len - 100);
+        if len > 500 {
+            s.closed_trades.drain(0..len - 500);
         }
 
         // ── Recalculate all metrics from updated history ──────────────────
