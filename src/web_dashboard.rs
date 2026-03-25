@@ -2431,6 +2431,12 @@ window.doResetStats = function() {{
 }})();
 </script>
 
+<!-- ── Build signature ───────────────────────────────────────────────── -->
+<div style="position:fixed;bottom:6px;right:10px;font-size:.62rem;color:#444c56;
+            letter-spacing:.3px;pointer-events:none;z-index:9999;font-family:monospace">
+  v{pkg_version} · {git_hash}
+</div>
+
 </body></html>"#,
         last_update = s.last_update,
         equity = equity,
@@ -2496,6 +2502,8 @@ window.doResetStats = function() {{
         cb_int = cb_int,
         wr_float = wr_float,
         tracking_js = crate::funnel::client_tracking_script(),
+        pkg_version = env!("CARGO_PKG_VERSION"),
+        git_hash    = env!("GIT_COMMIT_HASH"),
     ))
 }
 
@@ -2617,14 +2625,21 @@ fn consumer_shell_open(title: &str, active: &str) -> String {
     )
 }
 
-fn consumer_shell_close() -> &'static str {
-    r#"</div>
+fn consumer_shell_close() -> String {
+    format!(r#"</div>
 <footer style="text-align:center;padding:32px 16px 80px;font-size:.72rem;color:#484f58;
                border-top:1px solid #21262d;margin-top:24px">
   &copy; 2026 TradingBots Ltd. &nbsp;&middot;&nbsp;
   <a href="https://tradingbots.fun" style="color:#484f58;text-decoration:none">tradingbots.fun</a> &nbsp;&middot;&nbsp;
   <a href="/app/onboarding" style="color:#484f58;text-decoration:none">Terms &amp; Risk Disclosure</a>
-</footer>
+  &nbsp;&middot;&nbsp;
+  <span style="font-family:monospace;font-size:.68rem;color:#3a3f47">
+    v{pkg_ver} &middot; {git_rev}
+  </span>
+</footer>"#,
+        pkg_ver = env!("CARGO_PKG_VERSION"),
+        git_rev = env!("GIT_COMMIT_HASH"),
+    )
 
 <!-- ── Floating AI Command Bar ──────────────────────────────────────────── -->
 <style>
@@ -3224,7 +3239,7 @@ async fn consumer_app_handler(
         ad_block        = ad_block,
         pattern_card    = pattern_card,
     ));
-    html.push_str(consumer_shell_close());
+    html.push_str(&consumer_shell_close());
     axum::response::Html(html).into_response()
 }
 
@@ -3723,7 +3738,7 @@ async fn consumer_history_handler(
         total = total,
         rows  = rows,
     ));
-    html.push_str(consumer_shell_close());
+    html.push_str(&consumer_shell_close());
     axum::response::Html(html).into_response()
 }
 
@@ -3816,7 +3831,7 @@ fn consumer_tax_page() -> axum::response::Html<String> {
         total_rows = total_rows,
         year_cards = year_cards,
     ));
-    html.push_str(consumer_shell_close());
+    html.push_str(&consumer_shell_close());
     axum::response::Html(html)
 }
 
@@ -5169,7 +5184,7 @@ async fn consumer_settings_handler(
             ""
         },
     ));
-    html.push_str(consumer_shell_close());
+    html.push_str(&consumer_shell_close());
     axum::response::Html(html).into_response()
 }
 
