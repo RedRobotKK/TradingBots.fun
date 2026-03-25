@@ -9259,6 +9259,9 @@ async fn api_v1_session_handler(
         performance_fee_pct: req.performance_fee_pct,
         hyperliquid_address: hl_address.clone(),
         paused: false,
+        name: None,           // x402 sessions are anonymous
+        balance_usd: 0.0,     // x402 sessions share the global pool, not a personal allocation
+        session_pnl: 0.0,
     };
 
     {
@@ -9920,7 +9923,7 @@ async fn api_v1_session_trades_handler(
 /// available perps. **No authentication required** — public endpoint for
 /// agents doing pre-trade research.
 async fn api_v1_venues_hyperliquid_markets_handler(
-    State(app): State<AppState>,
+    State(_app): State<AppState>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
     // Fetch from Hyperliquid info API
@@ -9944,7 +9947,7 @@ async fn api_v1_venues_hyperliquid_markets_handler(
         .await;
 
     // Get funding rates
-    let funding_result = client
+    let _funding_result = client
         .post("https://api.hyperliquid.xyz/info")
         .json(&serde_json::json!({"type": "fundingHistory", "coin": "BTC", "startTime": chrono::Utc::now().timestamp_millis() - 3_600_000}))
         .send()
