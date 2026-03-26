@@ -117,8 +117,8 @@ impl Default for SignalWeights {
         SignalWeights {
             rsi: 0.16,            // +0.02 — mean-reversion works
             bollinger: 0.13,      // +0.02 — regime-aware, marginal boost
-            macd: 0.05,           // -0.07 — harmful at 15m, further reduced (T-stat -4.02)
-            ema_cross: 0.05,      // -0.08 — reduced; gap filter added in decision.rs (T-stat -6.00)
+            macd: 0.03,           // -0.07 — harmful at 5m, reduced to near-floor (T-stat -4.02)
+            ema_cross: 0.03,      // -0.08 — reduced to near-floor; gap filter in decision.rs (T-stat -6.00)
             order_flow: 0.14,     // +0.03 — real order-book data outperforms candle proxy
             z_score: 0.16,        // +0.09 — highest T-stat, significantly boosted
             volume: 0.03,         // -0.03 — directional removed; amplifier role kept
@@ -367,16 +367,17 @@ impl SignalWeights {
     }
 
     pub fn clamp_and_normalise(&mut self) {
-        // Core technical signals: floor 0.04, ceiling 0.35
-        // (These have meaningful real-time data each cycle)
-        for w in [
-            &mut self.rsi,
-            &mut self.bollinger,
-            &mut self.macd,
-            &mut self.ema_cross,
-        ] {
+        // Core technical signals: floor 0.04, ceiling 0.35 (RSI, Bollinger)
+        for w in [&mut self.rsi, &mut self.bollinger] {
             *w = w.clamp(0.04, 0.35);
         }
+        // MACD and EMA cross: floors lowered to 0.02 so the learner can push
+        // them toward zero.  Backtest T-stats (-4.02 and -6.00) show consistent
+        // harm at 5m timeframe; the live bot has already driven both to their
+        // previous 0.04 floor.  Allowing further reduction lets the learner
+        // correctly down-weight these harmful signals over 200-300 more trades.
+        self.macd = self.macd.clamp(0.02, 0.25);
+        self.ema_cross = self.ema_cross.clamp(0.02, 0.25);
 
         // Order flow: floored at 0.04 like other core signals, but ceiling is
         // capped at 0.20 to prevent it crowding out the full signal set.

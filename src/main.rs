@@ -13,9 +13,9 @@
 
 // ─────────────────────────── Risk constants ───────────────────────────────────
 /// Minimum signal confidence for new entries. Below this the trade is skipped.
-/// Raised from 0.60 → 0.68 after live data showed 20% win rate with 115 open
-/// positions — too many borderline signals were entering.
-const MIN_CONFIDENCE: f64 = 0.68;
+/// Raised 0.60→0.68 after live data showed 20% win rate with 115 open positions.
+/// Raised 0.68→0.72: 59% win rate at 0.68 is below break-even; 0.72 targets 65%+.
+const MIN_CONFIDENCE: f64 = 0.72;
 /// Maximum fraction of equity at risk per individual trade (stop-distance based).
 /// Set at 5%: stop_dist_pct × margin × leverage / equity ≤ 0.05.
 const MAX_TRADE_HEAT: f64 = 0.05; // 5 %
@@ -32,12 +32,18 @@ const MAX_PORTFOLIO_HEAT: f64 = 0.10; // 10 %
 /// drifting positions tying up capital. 20 forces higher conviction entries.
 const MAX_OPEN_POSITIONS: usize = 20;
 /// DCA minimum confidence (slightly higher than new-entry minimum).
-const DCA_MIN_CONFIDENCE: f64 = 0.65;
+const DCA_MIN_CONFIDENCE: f64 = 0.68;
 /// Circuit-breaker drawdown threshold.  Once peak→current drawdown exceeds
 /// this fraction, all new position sizes are scaled down by `CB_SIZE_MULT`.
-const CB_DRAWDOWN_THRESHOLD: f64 = 0.08; // 8 %
+const CB_DRAWDOWN_THRESHOLD: f64 = 0.08; // 8% — CB turns ON above this
+/// Hysteresis reset threshold: CB turns OFF only when drawdown recovers below
+/// this level.  Lower than CB_DRAWDOWN_THRESHOLD to avoid flapping at the edge.
+const CB_RESET_THRESHOLD: f64 = 0.05; // 5% — CB turns OFF below this
 /// Position-size multiplier applied when the circuit breaker is active.
-const CB_SIZE_MULT: f64 = 0.35;
+/// Raised 0.35→0.50: 0.35× made recovery mathematically near-impossible
+/// (needed 2.86× more wins to break even).  0.50× is still protective but
+/// allows meaningful position sizes during drawdown recovery.
+const CB_SIZE_MULT: f64 = 0.50;
 /// Upper bound for position size as fraction of free capital (Kelly clamp).
 /// At 15% of free capital, a $1M account risks $150k per position before DCA.
 /// Used as the default cap when no env override is set.
@@ -1621,13 +1627,13 @@ async fn run_cycle(
                 );
             } else {
                 // R-multiple partial profit tranches
-                // Tranche 0: 1/4 out at 0.75R (or 0.5R if book is adverse) — harvest early profit
-                //            Lowered 1.0→0.75: BERA@0.85R, VINE@0.77R were sitting at risk
-                //            with no tranche banked. Take the ¼ slice sooner so reversals
-                //            don't give back open profit before the first harvest.
+                // Tranche 0: 1/4 out at 1.25R (or 0.75R if book is adverse) — let winners breathe
+                //            Raised 0.75→1.25: harvesting at 0.75R was too early; real trending
+                //            moves need room to develop before the first slice is taken.
+                //            Adverse-book early partial also raised 0.50→0.75 for same reason.
                 // Tranche 1: 1/3 out at 2R — take more off as the trade extends
                 // Tranche 2: 1/3 out at 4R — capture deep runner profits
-                let early_partial_r = if mildly_adverse { 0.5 } else { 0.75 };
+                let early_partial_r = if mildly_adverse { 0.75 } else { 1.25 };
                 if r_mult >= early_partial_r && pos.tranches_closed == 0 {
                     if mildly_adverse {
                         info!(
@@ -2840,7 +2846,7 @@ async fn analyse_symbol(
 ///   1. If half-Kelly available (≥5 trades): Kelly × confidence_scale × Sharpe_mult
 ///   2. Fallback confidence tiers × Sharpe_mult
 ///
-/// The circuit-breaker multiplier (`CB_SIZE_MULT = 0.35`) is applied here when
+/// The circuit-breaker multiplier (`CB_SIZE_MULT = 0.50`) is applied here when
 /// the peak→current equity drawdown exceeds `CB_DRAWDOWN_THRESHOLD` (8%).
 ///
 /// Result is clamped to [`MIN_POSITION_PCT`, `MAX_POSITION_PCT`].
@@ -2943,7 +2949,7 @@ fn portfolio_heat(positions: &[PaperPosition], equity: f64) -> f64 {
 ///   - **Opposite side, confidence ≥ MIN_CONFIDENCE**: close current, open new.
 ///
 /// For a new position, all four guards must pass:
-///   1. `confidence ≥ MIN_CONFIDENCE` (0.68)
+///   1. `confidence ≥ MIN_CONFIDENCE` (0.72)
 ///   2. Sufficient free capital (`size_usd ≥ $2`)
 ///   3. Per-trade heat ≤ `MAX_TRADE_HEAT` (2% of equity) — scales down if over
 ///   4. Portfolio heat < `MAX_PORTFOLIO_HEAT` (15% of equity)
@@ -2954,7 +2960,8 @@ fn portfolio_heat(positions: &[PaperPosition], equity: f64) -> f64 {
 /// before opening another, regardless of direction.
 ///
 /// Circuit breaker: if peak→current drawdown > `CB_DRAWDOWN_THRESHOLD` (8%),
-/// position size is multiplied by `CB_SIZE_MULT` (0.35).
+/// position size is multiplied by `CB_SIZE_MULT` (0.50), with hysteresis
+/// reset at `CB_RESET_THRESHOLD` (5%).
 #[allow(clippy::too_many_arguments)]
 async fn execute_paper_trade(
     symbol: &str,
@@ -3156,7 +3163,7 @@ async fn execute_paper_trade(
     // Uses rolling 7-day peak (not all-time) so a single lucky spike long
     // ago doesn't permanently throttle sizing.  When drawdown from the
     // 7-day high exceeds CB_DRAWDOWN_THRESHOLD (8%), new position sizes are
-    // scaled to CB_SIZE_MULT (0.35×).
+    // scaled to CB_SIZE_MULT (0.50×).
     let rolling_peak = s
         .equity_window
         .iter()
@@ -3167,7 +3174,16 @@ async fn execute_paper_trade(
     } else {
         0.0
     };
-    let in_cb = drawdown > CB_DRAWDOWN_THRESHOLD;
+    // Hysteresis: CB turns ON at CB_DRAWDOWN_THRESHOLD (8%) but only turns OFF
+    // once drawdown recovers below CB_RESET_THRESHOLD (5%).  This prevents the
+    // bot from flapping between full-size and reduced-size on every cycle when
+    // equity hovers near the 8% boundary.
+    let was_in_cb = s.cb_active;
+    let in_cb = if was_in_cb {
+        drawdown > CB_RESET_THRESHOLD      // already in CB: stay until fully recovered
+    } else {
+        drawdown > CB_DRAWDOWN_THRESHOLD   // not in CB: only enter on new breach
+    };
 
     // ── BTC swing timing gate ─────────────────────────────────────────────
     // Trades "follow BTC" — when BTC is making a big move AGAINST our intended
@@ -4581,7 +4597,7 @@ mod tests {
 
     #[test]
     fn position_size_pct_circuit_breaker_reduces_size() {
-        // CB active → CB_SIZE_MULT (0.35) applied on top of everything else.
+        // CB active → CB_SIZE_MULT (0.50) applied on top of everything else.
         let metrics = PerformanceMetrics::default();
         let normal = position_size_pct(0.85, &metrics, false, MIN_POSITION_PCT, MAX_POSITION_PCT);
         let cb = position_size_pct(0.85, &metrics, true, MIN_POSITION_PCT, MAX_POSITION_PCT);
