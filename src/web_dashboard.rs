@@ -557,6 +557,50 @@ async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
         format!("{:.2}", m.profit_factor)
     };
 
+    // ── Portfolio heat and avg open-R ─────────────────────────────────────
+    // heat_pct: what fraction of total equity is currently locked as margin.
+    let heat_pct = if equity > 0.0 {
+        (committed / equity * 100.0).clamp(0.0, 100.0)
+    } else {
+        0.0
+    };
+    // avg_open_r: mean R-multiple across all live positions.
+    //   > 0  → book is net profitable on open risk
+    //   < 0  → book is net underwater
+    let (avg_open_r, avg_open_r_str) = if s.positions.is_empty() {
+        (0.0f64, "—".to_string())
+    } else {
+        let avg = s
+            .positions
+            .iter()
+            .map(|p| {
+                if p.r_dollars_risked > 1e-8 {
+                    p.unrealised_pnl / p.r_dollars_risked
+                } else {
+                    0.0
+                }
+            })
+            .sum::<f64>()
+            / s.positions.len() as f64;
+        let sign = if avg >= 0.0 { "+" } else { "" };
+        (avg, format!("{sign}{avg:.2}R"))
+    };
+    let avg_r_colour = if avg_open_r > 0.5 {
+        "#3fb950"
+    } else if avg_open_r >= 0.0 {
+        "#8b949e"
+    } else {
+        "#f85149"
+    };
+    // slots_colour: traffic-light for how full the position book is.
+    let slots_colour = if s.positions.len() >= 18 {
+        "#f85149" // nearly full — no room for new entries
+    } else if s.positions.len() >= 12 {
+        "#e3b341" // moderately loaded
+    } else {
+        "#3fb950" // plenty of capacity
+    };
+
     // ── Equity hero P&L class (drives colour glow) ────────────────────────
     // CB active overrides colour → flashing red border.
     // Otherwise green when profitable, red when losing, neutral near break-even.
@@ -568,6 +612,36 @@ async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
         "equity-hero pnl-neg"
     } else {
         "equity-hero" // neutral — near break-even
+    };
+
+    // ── Wallet display for equity hero ────────────────────────────────────
+    // Single wallet → show truncated address linking to admin users.
+    // Multiple wallets → show aggregate count with link to admin users.
+    let (wallet_label, wallet_href) = {
+        let tenants = app.tenants.read().await;
+        let all: Vec<_> = tenants.all().collect();
+        // Filter to tenants that actually have an HL wallet set up
+        let with_wallet: Vec<_> = all
+            .iter()
+            .filter(|h| h.config.hl_wallet_address.is_some())
+            .collect();
+        let n = with_wallet.len();
+        let label = if n == 0 {
+            "No wallet connected".to_string()
+        } else if n == 1 {
+            with_wallet[0]
+                .config
+                .hl_wallet_address
+                .as_deref()
+                .map(|w| {
+                    let len = w.len();
+                    format!("{}…{}", &w[..6.min(len)], &w[len.saturating_sub(4)..])
+                })
+                .unwrap_or_else(|| "—".to_string())
+        } else {
+            format!("{n} wallets (aggregate)")
+        };
+        (label, "/admin/users")
     };
 
     // ── AI status bar HTML ─────────────────────────────────────────────────
@@ -1317,12 +1391,30 @@ var METRIC_INFO={
     }
   },
   openClosed:{
-    name:'Open / Total Closed Trades',
-    fmt:function(v){return String(v);},
+    name:'Position Slots Used',
+    fmt:function(v){return String(v)+' / 20';},
     no_gauge:true,
-    formula:'Live count from current session state',
-    notes:['Open = positions currently held. Hard cap is 25 — the AI also budgets via Kelly and portfolio heat (10% max equity at risk), so positions are fewer and better-sized.','Closed = completed trades this session — partial closes count as separate entries. In-memory buffer holds last 500; full history lives in the trades CSV ledger.','Session resets on restart — the trades_YYYY.csv ledger captures all-time history.','More closed trades → more reliable metrics. Kelly activates at 5; metrics become statistically meaningful at 10+.'],
-    verdict:function(){return['#8b949e','ℹ️ These counts grow as the bot trades. The closed count directly drives the quality of Sharpe, Sortino, Kelly, and Expectancy calculations — the more trades, the more trustworthy the numbers.'];}
+    formula:'Open positions ÷ max concurrent positions (hard cap = 20)',
+    notes:['Hard cap is 20 — lowered from 25 after live data showed 40 open positions averaging only 0.12R. Fewer, higher-conviction entries outperform a full book of drifting trades.','🟢 Green (< 12): plenty of capacity. The bot can take new signals freely.','🟡 Yellow (12–17): moderately loaded. New entries are still allowed but the Kelly budget is tightening.','🔴 Red (18–20): near full. Only very high-conviction signals will get through the Kelly + heat filters.','When full, the bot continues managing existing positions (trailing stops, tranches, DCA) but will not open new entries.'],
+    verdict:function(v){
+      if(v>=18)return['#f85149','🔴 Near capacity ('+v+'/20). The bot is managing a full book — no new entries until positions close. All open positions are still being actively managed.'];
+      if(v>=12)return['#e3b341','🟡 Moderately loaded ('+v+'/20). New high-conviction entries are still possible. Monitor portfolio heat and Kelly to ensure adequate capital per position.'];
+      return['#3fb950','🟢 Good capacity ('+v+'/20). The bot has room to take new entries as signals appear. Position sizing is determined by Kelly × Sharpe × confidence, not the slot count.'];
+    }
+  },
+  avgR:{
+    name:'Average Open R-Multiple',
+    fmt:function(v){return v===0?'—':(v>=0?'+':'')+parseFloat(v).toFixed(2)+'R';},
+    no_gauge:true,
+    formula:'Mean(unrealised_pnl ÷ r_dollars_risked) across all open positions',
+    notes:['R-multiple = unrealised P&L ÷ initial dollars risked on this trade. 1R = made back your original risk. -1R = at the stop-loss.','Positive avg R = the open book is net profitable on risk taken. Negative = net underwater.','This updates every poll cycle as prices move — a dip to -0.5R avg is normal in trending markets.','Individual positions showing -0.9R to -1.1R are near/at their stop and will close automatically.','Use this alongside Portfolio Heat to gauge risk quality: high heat + negative avg R = meaningful exposure to loss.'],
+    verdict:function(v){
+      if(v>1.0)return['#3fb950','🟢 Excellent open book. Average position is more than 1R in profit — that is strong performance. Trail stops to protect these gains.'];
+      if(v>0.3)return['#3fb950','🟢 Positive open book. Average position is in profit. The bot is working as expected.'];
+      if(v>-0.3)return['#8b949e','⚯ Near break-even across open positions. Normal for early-stage positions or ranging markets.'];
+      if(v>-0.7)return['#e3b341','🟡 Open book underwater. Positions are average -0.3R to -0.7R. Not alarming — stops protect against further loss — but watch for DCA opportunities.'];
+      return['#f85149','🔴 Open book significantly underwater (avg < -0.7R). Positions are near their stops. The circuit breaker drawdown metric will reflect this if equity drops materially.'];
+    }
   },
   cycles:{
     name:'Bot Cycles Completed',
@@ -1472,14 +1564,30 @@ body{{background:var(--bg);color:var(--text);
               display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;
               box-shadow:0 0 0 1px rgba(88,166,255,.04),0 8px 32px rgba(0,0,0,.4),
                          inset 0 1px 0 rgba(255,255,255,.04)}}
-.equity-hero .eq-left{{display:flex;flex-direction:column;gap:4px}}
+.equity-hero .eq-left{{display:flex;flex-direction:column;gap:0;width:100%}}
+.eq-top-row{{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}}
+.eq-eyebrow{{font-size:.60em;color:var(--muted);letter-spacing:.9px;text-transform:uppercase;
+             margin-bottom:4px;font-weight:500}}
 .equity-hero .eq-val{{font-size:2.1em;font-weight:800;line-height:1;letter-spacing:-.02em;
                        background:linear-gradient(135deg,#e6edf3 30%,#58a6ff);
                        -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}}
-.equity-hero .eq-label{{font-size:.68em;color:var(--muted);letter-spacing:.3px}}
-.equity-hero .pnl-badge{{padding:7px 14px;border-radius:22px;font-size:.9em;font-weight:700;
+.equity-hero .pnl-badge{{padding:6px 13px;border-radius:22px;font-size:.82em;font-weight:700;
                           letter-spacing:.2px}}
-.eq-right{{display:flex;align-items:center;gap:16px;flex:1;justify-content:flex-end;min-width:0}}
+.eq-breakdown{{display:flex;flex-direction:column;gap:4px;margin-top:13px;
+               border-top:1px solid rgba(255,255,255,.07);padding-top:11px}}
+.eq-row{{display:flex;align-items:center;gap:8px;font-size:.74em;padding:2px 0}}
+.eq-row-icon{{font-size:.95em;line-height:1;width:18px;text-align:center;flex-shrink:0}}
+.eq-row-label{{color:#8b949e;flex:1;letter-spacing:.1px}}
+.eq-row-val{{font-weight:700;color:#e6edf3;font-variant-numeric:tabular-nums;
+             font-family:ui-monospace,monospace}}
+.eq-wallet-row{{display:flex;align-items:center;gap:7px;margin-top:12px;
+                padding:6px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.07);
+                background:rgba(255,255,255,.02);text-decoration:none;color:#8b949e;
+                font-size:.70em;letter-spacing:.2px;transition:border-color .15s,color .15s;
+                font-family:ui-monospace,monospace}}
+.eq-wallet-row:hover{{border-color:rgba(88,166,255,.35);color:#58a6ff}}
+.eq-wallet-addr{{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
+.eq-right{{display:flex;align-items:flex-start;padding-top:4px;min-width:0}}
 /* ── Metric strip ── */
 .metrics{{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:12px}}
 @media(min-width:500px){{.metrics{{grid-template-columns:repeat(3,1fr)}}}}
@@ -1658,16 +1766,58 @@ tr:hover td{{background:rgba(255,255,255,.025)}}
 
 <div id="equity-hero" class="{hero_class}">
   <div class="eq-left">
-    <div class="eq-label">Total Equity</div>
-    <div id="equity-val" class="eq-val">${equity:.2}</div>
-    <div id="equity-label" class="eq-label" style="margin-top:3px">Free $<span id="equity-free">{capital:.2}</span>
-      &nbsp;·&nbsp; <span title="House-money pool: accumulated profits available for re-deployment" style="color:{pool_col_op}">🏦 $<span id="op-pool">{pool_bal:.2}</span></span></div>
-    <div id="pnl-badge" class="pnl-badge" style="color:{pnl_colour};border:1px solid {pnl_colour}40;background:{pnl_colour}15;margin-top:8px;display:inline-block">
-      {pnl_sign}${total_pnl:.2} &nbsp; {pnl_sign}{total_pnl_pct:.2}%
+
+    <!-- Title + big number -->
+    <div class="eq-top-row">
+      <div>
+        <div class="eq-eyebrow">Total Equity</div>
+        <div id="equity-val" class="eq-val">${equity:.2}</div>
+      </div>
+      <div class="eq-right">
+        {sparkline_svg}
+      </div>
     </div>
-  </div>
-  <div class="eq-right">
-    {sparkline_svg}
+
+    <!-- P&L badge -->
+    <div id="pnl-badge" class="pnl-badge" style="color:{pnl_colour};border:1px solid {pnl_colour}40;background:{pnl_colour}15;margin-top:8px;display:inline-flex;align-items:center;gap:8px">
+      <span>{pnl_sign}${total_pnl:.2}</span>
+      <span style="opacity:.6">|</span>
+      <span>{pnl_sign}{total_pnl_pct:.2}% all-time</span>
+    </div>
+
+    <!-- Three-row capital breakdown -->
+    <div class="eq-breakdown">
+      <div class="eq-row" title="Cash sitting idle — not in any open trade. This is what you can withdraw right now without closing anything.">
+        <span class="eq-row-icon">💵</span>
+        <span class="eq-row-label">Withdrawable</span>
+        <span class="eq-row-val" id="equity-free">${capital:.2}</span>
+      </div>
+      <div class="eq-row" title="Margin locked in open positions plus unrealised P&L. This becomes withdrawable when positions close.">
+        <span class="eq-row-icon">📊</span>
+        <span class="eq-row-label">In Trades</span>
+        <span class="eq-row-val" id="equity-in-trades">${in_trades:.2}</span>
+      </div>
+      <div class="eq-row" style="color:{pool_col_op}" title="Profits accumulated from closed trades. The bot uses this pool first for new entries — so it risks the market's money before your original capital.">
+        <span class="eq-row-icon">🏦</span>
+        <span class="eq-row-label">Profit Pool</span>
+        <span class="eq-row-val" id="op-pool">${pool_bal:.2}</span>
+      </div>
+    </div>
+
+    <!-- Wallet row -->
+    <a href="{wallet_href}" class="eq-wallet-row" title="View all wallets in admin panel">
+      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+           stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="opacity:.5;flex-shrink:0">
+        <rect x="1" y="4" width="14" height="10" rx="2"/>
+        <path d="M1 7h14"/><circle cx="11.5" cy="11" r="1" fill="currentColor" stroke="none"/>
+      </svg>
+      <span class="eq-wallet-addr">{wallet_label}</span>
+      <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+           stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="opacity:.35;flex-shrink:0;margin-left:auto">
+        <path d="M6 3l5 5-5 5"/>
+      </svg>
+    </a>
+
   </div>
 </div>
 
@@ -1711,8 +1861,11 @@ tr:hover td{{background:rgba(255,255,255,.025)}}
     <div class="mv" style="color:{cbc}">{cb_label}</div>
     <div class="ml">{cb_desc} <span class="ml-hint">tap to explain</span></div></div>
   <div class="metric" onclick="showMetric('openClosed',{open_n})">
-    <div class="mv">{open_n} / {total_closed}</div>
-    <div class="ml">Open / Closed <span class="ml-hint">tap to explain</span></div></div>
+    <div class="mv" style="color:{slots_colour}">{open_n}<span style="font-size:.65em;color:var(--muted)"> / {pos_cap}</span></div>
+    <div class="ml">Slots Used <span class="ml-hint">tap to explain</span></div></div>
+  <div class="metric" onclick="showMetric('avgR',0)" style="cursor:pointer">
+    <div class="mv" style="color:{avg_r_colour}">{avg_open_r_str}</div>
+    <div class="ml">Avg Open R <span class="ml-hint">tap to explain</span></div></div>
   <div class="metric" onclick="showMetric('cycles',{cycles})">
     <div class="mv">{cycles}</div>
     <div class="ml">Cycles <span class="ml-hint">tap to explain</span></div></div>
@@ -1728,7 +1881,7 @@ tr:hover td{{background:rgba(255,255,255,.025)}}
   <div class="status-inner">
     <span class="st-text" id="bot-status">{status}</span>
     <span style="font-size:.75em;color:var(--muted);white-space:nowrap">
-      {open_n} pos · ${committed:.0} · Sharpe {sharpe:.2}
+      {open_n}/{pos_cap} slots · {avg_open_r_str} avg R · {heat_pct:.0}% heat · Sharpe {sharpe:.2}
     </span>
   </div>
   <div class="prog-track"><div class="prog-fill"></div></div>
@@ -1918,8 +2071,10 @@ function toggleDetail(id){{
     if(ev)ev.textContent='$'+equity.toFixed(2);
 
     var ef=$id('equity-free');
-    if(ef)ef.textContent=s.capital.toFixed(2);
-    var op=$id('op-pool');if(op){{op.textContent=(s.house_money_pool||0).toFixed(2);op.parentElement.style.color=(s.house_money_pool||0)>0?'#3fb950':'#8b949e';}}
+    if(ef)ef.textContent='$'+s.capital.toFixed(2);
+    var it=$id('equity-in-trades');
+    if(it)it.textContent='$'+(committed+unrealised).toFixed(2);
+    var op=$id('op-pool');if(op){{op.textContent='$'+(s.house_money_pool||0).toFixed(2);op.closest('.eq-row').style.color=(s.house_money_pool||0)>0?'#3fb950':'#8b949e';}}
 
     var pb=$id('pnl-badge');
     if(pb){{
@@ -2441,7 +2596,10 @@ window.doResetStats = function() {{
         last_update = s.last_update,
         equity = equity,
         capital = s.capital,
+        in_trades = committed + unrealised,
         pool_bal = s.house_money_pool,
+        wallet_label = wallet_label,
+        wallet_href = wallet_href,
         pool_col_op = if s.house_money_pool > 0.0 {
             "#3fb950"
         } else {
@@ -2480,11 +2638,15 @@ window.doResetStats = function() {{
         cb_label = cb_label,
         cb_desc = cb_desc,
         open_n = s.positions.len(),
-        pos_cap = 25,
+        pos_cap = 20, // updated from 25 — matches MAX_OPEN_POSITIONS in main.rs
         total_closed = s.closed_trades.len(),
         cycles = s.cycle_count,
         cand_n = s.candidates.len(),
         committed = committed,
+        heat_pct = heat_pct,
+        avg_open_r_str = avg_open_r_str,
+        avg_r_colour = avg_r_colour,
+        slots_colour = slots_colour,
         status = s.status,
         pos_cards = pos_cards,
         wh = wh,
@@ -2639,7 +2801,7 @@ fn consumer_shell_close() -> String {
 </footer>"#,
         pkg_ver = env!("CARGO_PKG_VERSION"),
         git_rev = env!("GIT_COMMIT_HASH"),
-    )
+    ) + r#"
 
 <!-- ── Floating AI Command Bar ──────────────────────────────────────────── -->
 <style>

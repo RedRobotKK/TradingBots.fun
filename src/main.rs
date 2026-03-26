@@ -29,8 +29,9 @@ const MAX_PORTFOLIO_HEAT: f64 = 0.10; // 10 %
 /// Hard cap on simultaneous open positions.  Prevents the bot from holding
 /// 100+ small losers that individually pass the heat check but collectively
 /// dilute attention and inflate losing streaks.
-/// Lowered 40→25: fewer, higher-conviction positions with proper sizing.
-const MAX_OPEN_POSITIONS: usize = 25;
+/// Lowered 40→25→20: live data with 40 open showed avg R=0.12 — too many
+/// drifting positions tying up capital. 20 forces higher conviction entries.
+const MAX_OPEN_POSITIONS: usize = 20;
 /// DCA minimum confidence (slightly higher than new-entry minimum).
 const DCA_MIN_CONFIDENCE: f64 = 0.65;
 /// Circuit-breaker drawdown threshold.  Once peak→current drawdown exceeds
@@ -1483,11 +1484,13 @@ async fn run_cycle(
             // more breathing room because we've explicitly decided to stay in.
             // Base: 240 cycles (2h) flat / 360 cycles (3h) chronic loss.
             // With 1 DCA: 2× → 480 flat / 720 chronic.
-            // With 2+ DCA: 3× → 720 flat / 1080 chronic.
+            // Reduced 2+DCA multiplier 3→2: live data showed 9h leash on DCA'd losers
+            // (e.g. POPCAT DCA×3, AIXBT DCA×2) holding $50k+ in dead positions.
+            // 6h max patience keeps capital moving.
             let time_mult = match pos.dca_count {
                 0 => 1,
                 1 => 2, // 1 DCA → double the patience window
-                _ => 3, // 2+ DCA → triple it
+                _ => 2, // 2+ DCA → same 2× cap (was 3×; 9h was too long)
             };
             let truly_flat = pos.cycles_held >= 240 * time_mult && r_mult.abs() < 0.20;
             let chronic_loss = pos.cycles_held >= 360 * time_mult
@@ -1615,10 +1618,13 @@ async fn run_cycle(
                 );
             } else {
                 // R-multiple partial profit tranches
-                // Tranche 0: 1/4 out at 1R (or 0.5R if book is adverse) — harvest early profit
+                // Tranche 0: 1/4 out at 0.75R (or 0.5R if book is adverse) — harvest early profit
+                //            Lowered 1.0→0.75: BERA@0.85R, VINE@0.77R were sitting at risk
+                //            with no tranche banked. Take the ¼ slice sooner so reversals
+                //            don't give back open profit before the first harvest.
                 // Tranche 1: 1/3 out at 2R — take more off as the trade extends
                 // Tranche 2: 1/3 out at 4R — capture deep runner profits
-                let early_partial_r = if mildly_adverse { 0.5 } else { 1.0 };
+                let early_partial_r = if mildly_adverse { 0.5 } else { 0.75 };
                 if r_mult >= early_partial_r && pos.tranches_closed == 0 {
                     if mildly_adverse {
                         info!(
@@ -2454,7 +2460,10 @@ fn evaluate_ai_close_guard(pos: &PaperPosition) -> GuardrailOutcome {
     let false_breakout =
         peak_r >= 0.10 && r < -0.05 && (15..60).contains(&hold_mins) && pos.dca_count == 0;
     let momentum_stall = hold_mins >= 60 && r.abs() < 0.10 && pos.dca_count >= 1;
-    let dca_remaining = 2u8.saturating_sub(pos.dca_count);
+    // Reduced max DCA 2→1: live data showed DCA×2/×3 building $50k+ positions
+    // (POPCAT DCA×3 = $63k, AIXBT DCA×2 = $53k).  One add-on is enough to
+    // average down; a second just compounds the loss when the thesis is wrong.
+    let dca_remaining = 1u8.saturating_sub(pos.dca_count);
 
     if false_breakout {
         return GuardrailOutcome {
@@ -2785,10 +2794,12 @@ async fn analyse_symbol(
             hl,
             fee_bps,
             config.paper_trading,
+            config.min_position_pct,
+            config.max_position_pct,
         )
         .await;
     } else if !config.paper_trading && dec.action != "SKIP" {
-        let account = hl.get_account().await?;
+        let account = hl.get_account(config.daily_loss_limit, config.min_health_factor).await?;
         if risk::should_trade(&dec, &account)? {
             let capital = bot_state.read().await.capital;
             match hl.place_order(symbol, &dec, capital, fee_bps).await {
@@ -2836,6 +2847,8 @@ fn position_size_pct(
     confidence: f64,
     metrics: &PerformanceMetrics,
     in_circuit_breaker: bool,
+    min_position_pct: f64,
+    max_position_pct: f64,
 ) -> f64 {
     let sharpe_mult = metrics.size_multiplier();
     let kelly = metrics.kelly_fraction();
@@ -2861,7 +2874,7 @@ fn position_size_pct(
     } else {
         1.0
     };
-    (base * sharpe_mult * cb_mult).clamp(MIN_POSITION_PCT, MAX_POSITION_PCT)
+    (base * sharpe_mult * cb_mult).clamp(min_position_pct, max_position_pct)
 }
 
 /// Fraction of equity at risk for this specific trade (stop-loss based).
@@ -2958,6 +2971,9 @@ async fn execute_paper_trade(
     hl: &Arc<exchange::HyperliquidClient>,
     fee_bps: u32,
     paper: bool,
+    // Position sizing bounds from config (MIN_POSITION_PCT / MAX_POSITION_PCT env vars).
+    min_position_pct: f64,
+    max_position_pct: f64,
 ) {
     let target_side = if dec.action == "BUY" { "LONG" } else { "SHORT" };
 
@@ -3219,7 +3235,7 @@ async fn execute_paper_trade(
         }
     }
 
-    let pct = position_size_pct(dec.confidence, &metrics, in_cb);
+    let pct = position_size_pct(dec.confidence, &metrics, in_cb, min_position_pct, max_position_pct);
     let mut size_usd = s.capital * pct;
 
     // Guard: min position size — scales with wallet to support micro-accounts.
@@ -4511,7 +4527,7 @@ mod tests {
     fn position_size_pct_pre_kelly_high_confidence() {
         // With <5 trades (no Kelly), conf=0.85 → base 15%, no Sharpe adjustment (1.0 mult)
         let metrics = PerformanceMetrics::default(); // total_trades=0 → no Kelly, size_mult=1.0
-        let pct = position_size_pct(0.85, &metrics, false);
+        let pct = position_size_pct(0.85, &metrics, false, MIN_POSITION_PCT, MAX_POSITION_PCT);
         // base=0.15 × sharpe_mult(1.0 for <3 trades) × no-CB → 0.15
         assert_eq!(pct, 0.15, "pre-Kelly high confidence: expected 15%");
     }
@@ -4519,14 +4535,14 @@ mod tests {
     #[test]
     fn position_size_pct_pre_kelly_mid_confidence() {
         let metrics = PerformanceMetrics::default();
-        let pct = position_size_pct(0.75, &metrics, false);
+        let pct = position_size_pct(0.75, &metrics, false, MIN_POSITION_PCT, MAX_POSITION_PCT);
         assert_eq!(pct, 0.12, "pre-Kelly mid confidence: expected 12%");
     }
 
     #[test]
     fn position_size_pct_pre_kelly_min_confidence() {
         let metrics = PerformanceMetrics::default();
-        let pct = position_size_pct(MIN_CONFIDENCE, &metrics, false);
+        let pct = position_size_pct(MIN_CONFIDENCE, &metrics, false, MIN_POSITION_PCT, MAX_POSITION_PCT);
         assert_eq!(pct, 0.08, "pre-Kelly min confidence: expected 8%");
     }
 
@@ -4534,8 +4550,8 @@ mod tests {
     fn position_size_pct_circuit_breaker_reduces_size() {
         // CB active → CB_SIZE_MULT (0.35) applied on top of everything else.
         let metrics = PerformanceMetrics::default();
-        let normal = position_size_pct(0.85, &metrics, false);
-        let cb = position_size_pct(0.85, &metrics, true);
+        let normal = position_size_pct(0.85, &metrics, false, MIN_POSITION_PCT, MAX_POSITION_PCT);
+        let cb = position_size_pct(0.85, &metrics, true, MIN_POSITION_PCT, MAX_POSITION_PCT);
         let expected_cb = normal * CB_SIZE_MULT;
         assert!(
             (cb - expected_cb).abs() < 1e-10,
@@ -4551,7 +4567,7 @@ mod tests {
             total_trades: 10,
             ..Default::default()
         };
-        let pct = position_size_pct(MIN_CONFIDENCE, &metrics, true);
+        let pct = position_size_pct(MIN_CONFIDENCE, &metrics, true, MIN_POSITION_PCT, MAX_POSITION_PCT);
         assert!(
             pct >= MIN_POSITION_PCT,
             "position_size_pct must never go below MIN_POSITION_PCT ({MIN_POSITION_PCT}), got {pct}"
@@ -4569,7 +4585,7 @@ mod tests {
             total_trades: 50,
             ..Default::default()
         };
-        let pct = position_size_pct(1.0, &metrics, false);
+        let pct = position_size_pct(1.0, &metrics, false, MIN_POSITION_PCT, MAX_POSITION_PCT);
         assert!(
             pct <= MAX_POSITION_PCT,
             "position_size_pct must never exceed MAX_POSITION_PCT ({MAX_POSITION_PCT}), got {pct}"
