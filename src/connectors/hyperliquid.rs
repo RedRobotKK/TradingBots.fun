@@ -17,10 +17,11 @@ use std::collections::HashMap;
 // ─────────────────────────── Session config ──────────────────────────────────
 
 /// Risk mode controls position sizing multipliers.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum RiskMode {
     Conservative,
+    #[default]
     Balanced,
     Aggressive,
 }
@@ -34,10 +35,6 @@ impl RiskMode {
             RiskMode::Aggressive   => 1.5,
         }
     }
-}
-
-impl Default for RiskMode {
-    fn default() -> Self { RiskMode::Balanced }
 }
 
 impl std::str::FromStr for RiskMode {

@@ -9261,6 +9261,7 @@ async fn verify_base_usdc_payment(
 
 /// Fire webhook for all sessions that have a `webhook_url` configured.
 /// Called after every trade close / open.
+#[allow(dead_code)]
 async fn dispatch_session_webhooks(
     bot_state: &crate::web_dashboard::SharedState,
     event_type: &str,

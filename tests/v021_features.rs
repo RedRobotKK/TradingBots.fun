@@ -158,6 +158,9 @@ mod bot_session_tests {
             performance_fee_pct: Some(10),
             hyperliquid_address: Some("0xAbCdEf1234".to_string()),
             paused:              false,
+            name:                Some("Test Bot".to_string()),
+            balance_usd:         200.0,
+            session_pnl:         0.0,
         }
     }
 

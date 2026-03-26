@@ -105,8 +105,8 @@ impl SessionLatencyStats {
     /// Compute stats from a slice of total_latency_ms values.
     pub fn compute(
         session_id: &str,
-        total_ms:   &mut Vec<f64>,
-        order_ms:   &mut Vec<f64>,
+        total_ms:   &mut [f64],
+        order_ms:   &mut [f64],
         window_secs: f64,
     ) -> Self {
         if total_ms.is_empty() {

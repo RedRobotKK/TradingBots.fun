@@ -325,10 +325,7 @@ impl PositionMonitor {
             if stop_hit {
                 return Some(QueuedExit {
                     tenant_id: pos.tenant_id,
-                    symbol: pos.id.split(':').next().map(|_| {
-                        // extract symbol from "{tenant_id}:{symbol}" id
-                        pos.id.splitn(2, ':').nth(1).unwrap_or("").to_string()
-                    }).unwrap_or_default(),
+                    symbol: pos.id.split_once(':').map(|x| x.1).unwrap_or("").to_string(),
                     side: close_side.to_string(),
                     reason: ExitReason::StopHit,
                     current_price,
@@ -348,7 +345,7 @@ impl PositionMonitor {
             if tp_hit {
                 return Some(QueuedExit {
                     tenant_id: pos.tenant_id,
-                    symbol: pos.id.splitn(2, ':').nth(1).unwrap_or("").to_string(),
+                    symbol: pos.id.split_once(':').map(|x| x.1).unwrap_or("").to_string(),
                     side: close_side.to_string(),
                     reason: ExitReason::TargetHit,
                     current_price,
@@ -377,7 +374,7 @@ impl PositionMonitor {
             if pnl_r < 0.5 {
                 return Some(QueuedExit {
                     tenant_id: pos.tenant_id,
-                    symbol: pos.id.splitn(2, ':').nth(1).unwrap_or("").to_string(),
+                    symbol: pos.id.split_once(':').map(|x| x.1).unwrap_or("").to_string(),
                     side: close_side.to_string(),
                     reason: ExitReason::TimeExit,
                     current_price,
@@ -565,7 +562,7 @@ pub async fn enqueue_time_exits(pool: &PgPool, stale_cycles: i32) -> Result<usiz
             Ok(u) => u,
             Err(_) => continue,
         };
-        let symbol = id.splitn(2, ':').nth(1).unwrap_or("").to_string();
+        let symbol = id.split_once(':').map(|x| x.1).unwrap_or("").to_string();
         let side: String = row.try_get("side").unwrap_or_default();
         let close_side = if side == "LONG" { "sell" } else { "buy" };
 
