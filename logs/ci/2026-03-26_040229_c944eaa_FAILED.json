@@ -1,0 +1,133 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-03-26T03:48:19Z",
+    "commit": "c944eaa",
+    "commit_full": "c944eaa24660d70bf3daab06051194f981e2dc34",
+    "commit_message": "chore: bump version 0.2.9 \u2192 0.2.10",
+    "branch": "master",
+    "overall_status": "FAILED",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.94.0 (4a4ef493e 2026-03-02)",
+    "cargo": "cargo 1.94.0 (85eff7c80 2026-01-15)",
+    "os_kernel": "6.8.0-106-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 553,
+      "total_passed": 0,
+      "total_failed": 0,
+      "total_ignored": 0,
+      "failures": []
+    },
+    "clippy": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 293,
+      "error_count": 9,
+      "errors": [
+        {
+          "code": "E",
+          "message": "function `dispatch_session_webhooks` is never used",
+          "file": "src/web_dashboard.rs",
+          "line": 9264,
+          "col": 10
+        },
+        {
+          "code": "E",
+          "message": "manual implementation of `split_once`",
+          "file": "src/position_monitor.rs",
+          "line": 330,
+          "col": 25
+        },
+        {
+          "code": "E",
+          "message": "manual implementation of `split_once`",
+          "file": "src/position_monitor.rs",
+          "line": 351,
+          "col": 29
+        },
+        {
+          "code": "E",
+          "message": "manual implementation of `split_once`",
+          "file": "src/position_monitor.rs",
+          "line": 380,
+          "col": 29
+        },
+        {
+          "code": "E",
+          "message": "manual implementation of `split_once`",
+          "file": "src/position_monitor.rs",
+          "line": 568,
+          "col": 22
+        },
+        {
+          "code": "E",
+          "message": "this `impl` can be derived",
+          "file": "src/connectors/hyperliquid.rs",
+          "line": 39,
+          "col": 1
+        },
+        {
+          "code": "E",
+          "message": "writing `&mut Vec` instead of `&mut [_]` involves a new object where a slice will do",
+          "file": "src/latency/mod.rs",
+          "line": 108,
+          "col": 21
+        },
+        {
+          "code": "E",
+          "message": "writing `&mut Vec` instead of `&mut [_]` involves a new object where a slice will do",
+          "file": "src/latency/mod.rs",
+          "line": 109,
+          "col": 21
+        },
+        {
+          "code": "E",
+          "message": "could not compile `tradingbots-fun` (lib) due to 8 previous errors"
+        }
+      ]
+    },
+    "audit": {
+      "status": "ADVISORY",
+      "exit_code": 1,
+      "duration_seconds": 4,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2023-0071",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2023-0071",
+          "severity": "5.9 (medium)",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "tradingbots",
+    "status": "active",
+    "active_since": "Thu 2026-03-26 03:47:15 UTC",
+    "recent_logs": [
+      "Mar 26 03:47:15 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: tradingbots.service: Deactivated successfully.",
+      "Mar 26 03:47:15 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Stopped tradingbots.service - TradingBots.fun.",
+      "Mar 26 03:47:15 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: tradingbots.service: Consumed 1.451s CPU time.",
+      "Mar 26 03:47:15 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Starting tradingbots.service - TradingBots.fun...",
+      "Mar 26 03:47:15 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Started tradingbots.service - TradingBots.fun."
+    ]
+  }
+}
