@@ -197,7 +197,7 @@ pub async fn top_signals(
 /// Spawns background signal computation.
 ///
 /// # Usage
-/// ```rust
+/// ```rust,no_run
 /// let signal_cache = signal_engine::new_signal_cache();
 /// SignalEngine::new(market.clone(), oracle.clone(), signal_cache.clone(), db_pool)
 ///     .spawn();
