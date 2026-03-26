@@ -481,7 +481,8 @@ impl BridgeManager {
             return Err(anyhow!("Destination {} is not trusted", destination));
         }
 
-        let account = self.hl.get_account().await?;
+        // Bridge balance checks don't enforce trading limits — pass permissive sentinels.
+        let account = self.hl.get_account(f64::MAX, 0.0).await?;
         if amount_usd > account.equity {
             return Err(anyhow!(
                 "Requested ${:.2} exceeds available equity ${:.2}",
@@ -702,7 +703,7 @@ impl BridgeManager {
             return Err(anyhow!("HL withdrawal rejected: {}", reason));
         }
 
-        let balance = self.hl.get_account().await.map(|a| a.equity).unwrap_or(0.0);
+        let balance = self.hl.get_account(f64::MAX, 0.0).await.map(|a| a.equity).unwrap_or(0.0);
         self.set_status(
             &id,
             BridgeStatus::Completed,
@@ -833,10 +834,10 @@ impl BridgeManager {
         .await;
 
         // ── Step 3: poll HL for balance increase ──────────────────────────────
-        let balance_before = self.hl.get_account().await.map(|a| a.equity).unwrap_or(0.0);
+        let balance_before = self.hl.get_account(f64::MAX, 0.0).await.map(|a| a.equity).unwrap_or(0.0);
         for attempt in 0..DEPOSIT_MAX_POLLS {
             tokio::time::sleep(tokio::time::Duration::from_secs(DEPOSIT_POLL_INTERVAL_SECS)).await;
-            if let Ok(acct) = self.hl.get_account().await {
+            if let Ok(acct) = self.hl.get_account(f64::MAX, 0.0).await {
                 if acct.equity >= balance_before + amount_usd * 0.95 {
                     // Credit appeared (allow 5% tolerance for fees)
                     self.set_status(
