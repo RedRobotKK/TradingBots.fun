@@ -3236,7 +3236,31 @@ async fn execute_paper_trade(
         }
     }
 
-    let pct = position_size_pct(dec.confidence, &metrics, in_cb, min_position_pct, max_position_pct);
+    // ── Small-wallet sizing override ──────────────────────────────────────
+    // Small wallets suffer from two compounding problems:
+    //   1. MIN_POSITION_PCT=5% → $5 margin on $100 → $25 notional at 5×.
+    //      Fees + spread consume a large fraction of any gain.
+    //   2. The Kelly/confidence formula is calibrated for larger accounts.
+    //      Applying it at micro scale produces positions too small to matter.
+    //
+    // Fix: scale the position-size bounds UP for small wallets so each trade
+    // is a meaningful fraction of the account.  Fewer, larger positions beat
+    // many tiny ones when fees are a fixed overhead per trade.
+    let effective_min_pct = if s.initial_capital <= 100.0 {
+        0.15 // ≤$100: minimum 15% per trade ($15 on a $100 wallet)
+    } else if s.initial_capital <= 300.0 {
+        0.10 // $101–$300: minimum 10% per trade
+    } else {
+        min_position_pct // $300+: use configured value
+    };
+    let effective_max_pct = if s.initial_capital <= 100.0 {
+        0.35 // ≤$100: allow up to 35% per trade for high-conviction signals
+    } else if s.initial_capital <= 300.0 {
+        0.20 // $101–$300: allow up to 20%
+    } else {
+        max_position_pct // $300+: use configured value
+    };
+    let pct = position_size_pct(dec.confidence, &metrics, in_cb, effective_min_pct, effective_max_pct);
     let mut size_usd = s.capital * pct;
 
     // Guard: min position size — scales with wallet to support micro-accounts.
@@ -3288,14 +3312,21 @@ async fn execute_paper_trade(
         size_usd = allowed; // apply the reduction — enforce the heat limit
     }
     // Guard: hard cap on simultaneous open positions — scales with wallet size.
-    // Very small wallets ($10-$100) cap at fewer positions so each one gets a
-    // meaningful allocation; large wallets use the global MAX_OPEN_POSITIONS.
+    // Tightened for small wallets: paired with the larger per-trade sizing above,
+    // fewer concurrent positions keeps each one large enough to generate real
+    // returns rather than being fee-eaten noise.
+    //   ≤$100  : 3 positions max — concentrate capital into 3 best signals
+    //   $101-300: 5 positions max — still concentrated
+    //   $301-500: 10 positions max
+    //   $500+  : full cap (20)
     let effective_pos_cap = if s.initial_capital <= 25.0 {
-        3_usize // $10–$25: max 3 positions
+        2_usize // $10–$25: max 2 positions (was 3)
     } else if s.initial_capital <= 100.0 {
-        6_usize // $26–$100: max 6 positions
+        3_usize // $26–$100: max 3 positions (was 6) — pairs with 15-35% sizing
+    } else if s.initial_capital <= 300.0 {
+        5_usize // $101–$300: max 5 positions (was mixed in 15 band)
     } else if s.initial_capital <= 500.0 {
-        15_usize // $101–$500: max 15 positions
+        10_usize // $301–$500: max 10 positions (was 15)
     } else {
         MAX_OPEN_POSITIONS // $500+: full cap
     };
