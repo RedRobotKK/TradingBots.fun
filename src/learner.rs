@@ -457,11 +457,17 @@ pub struct SignalContribution {
     #[serde(default)]
     pub entry_confidence: f64,
     // ── Direction flags (bullish = true, bearish = false) ─────────────────────
+    #[serde(default)]
     pub rsi_bullish: bool,
+    #[serde(default)]
     pub bb_bullish: bool,
+    #[serde(default)]
     pub macd_bullish: bool,
+    #[serde(default)]
     pub ema_cross_bullish: bool,
+    #[serde(default)]
     pub trend_bullish: bool,
+    #[serde(default)]
     pub of_bullish: bool,
     // ── Optional signals (only learn when data was available) ─────────────────
     #[serde(default)]
