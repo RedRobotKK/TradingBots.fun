@@ -19,8 +19,11 @@ pub struct Account {
     pub equity: f64,
     /// Margin currently in use (USD).
     pub margin: f64,
-    /// Health factor: `equity / margin`.  Safe threshold is > 2.0.
+    /// Health factor: `equity / margin`.
     pub health_factor: f64,
+    /// Minimum health factor before trading is halted. Sourced from config
+    /// (`MIN_HEALTH_FACTOR` env var) so small accounts can set a tighter threshold.
+    pub min_health_factor: f64,
     /// Realised + unrealised P&L for the current trading day (UTC).
     pub daily_pnl: f64,
     /// Maximum allowed daily loss before trading is halted.
@@ -30,9 +33,10 @@ pub struct Account {
 impl Account {
     /// Returns `true` when the account is safe to trade.
     ///
-    /// Requires `health_factor > 2.0` AND `daily_pnl > -daily_loss_limit`.
+    /// Requires `health_factor > min_health_factor` AND `daily_pnl > -daily_loss_limit`.
+    /// Both thresholds are sourced from config so they scale with account size.
     pub fn is_healthy(&self) -> bool {
-        self.health_factor > 2.0 && self.daily_pnl > -self.daily_loss_limit
+        self.health_factor > self.min_health_factor && self.daily_pnl > -self.daily_loss_limit
     }
 }
 
@@ -42,7 +46,7 @@ impl Account {
 ///
 /// Returns `Ok(true)` only when ALL of the following hold:
 ///   - Signal confidence ≥ 0.68 (matches the paper-mode threshold in `main.rs`)
-///   - Account health factor > 2.0
+///   - Account health factor > `account.min_health_factor` (from `MIN_HEALTH_FACTOR` env var)
 ///   - Daily loss limit has NOT been breached
 ///
 /// On `Ok(false)` the caller should silently skip the order.

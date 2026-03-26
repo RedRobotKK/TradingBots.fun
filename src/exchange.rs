@@ -248,15 +248,19 @@ impl HyperliquidClient {
 
     /// Fetch live account equity and margin from Hyperliquid (no auth needed).
     /// Paper mode returns safe defaults so the trading loop never needs keys.
-    pub async fn get_account(&self) -> Result<Account> {
+    ///
+    /// `daily_loss_limit` — max USD loss per day before trading halts (from config).
+    /// `min_health_factor` — minimum equity/margin ratio required to trade (from config).
+    pub async fn get_account(&self, daily_loss_limit: f64, min_health_factor: f64) -> Result<Account> {
         // Paper mode: stable stub
         if self.wallet_addr.is_none() {
             return Ok(Account {
                 equity: 1000.0,
                 margin: 0.0,
                 health_factor: 999.0,
+                min_health_factor,
                 daily_pnl: 0.0,
-                daily_loss_limit: 50.0,
+                daily_loss_limit,
             });
         }
 
@@ -293,8 +297,9 @@ impl HyperliquidClient {
             equity,
             margin,
             health_factor: health,
+            min_health_factor,
             daily_pnl: 0.0,
-            daily_loss_limit: 50.0,
+            daily_loss_limit,
         })
     }
 

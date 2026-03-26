@@ -132,6 +132,7 @@ mod funnel;
 mod hl_wallet;
 mod indicators;
 mod invite;
+mod latency;
 mod leaderboard;
 mod learner;
 mod ledger;

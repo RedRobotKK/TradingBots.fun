@@ -17,6 +17,7 @@ pub struct Config {
     pub trading_symbols: Vec<String>, // "ALL" or comma-separated list
     pub initial_capital: f64,
     pub max_position_pct: f64,
+    pub min_position_pct: f64,
     pub max_leverage: f64,
     pub daily_loss_limit: f64,
     pub min_health_factor: f64,
@@ -162,10 +163,23 @@ impl Config {
                 .unwrap_or_else(|_| "1000.0".to_string())
                 .parse()
                 .unwrap_or(1000.0),
-            max_position_pct: 0.15,
+            max_position_pct: env::var("MAX_POSITION_PCT")
+                .ok()
+                .and_then(|v| v.parse::<f64>().ok())
+                .unwrap_or(0.12),
+            min_position_pct: env::var("MIN_POSITION_PCT")
+                .ok()
+                .and_then(|v| v.parse::<f64>().ok())
+                .unwrap_or(0.05),
             max_leverage: 10.0,
-            daily_loss_limit: 50.0,
-            min_health_factor: 2.0,
+            daily_loss_limit: env::var("DAILY_LOSS_LIMIT")
+                .ok()
+                .and_then(|v| v.parse::<f64>().ok())
+                .unwrap_or(50.0),
+            min_health_factor: env::var("MIN_HEALTH_FACTOR")
+                .ok()
+                .and_then(|v| v.parse::<f64>().ok())
+                .unwrap_or(2.0),
             binance_api_key: env::var("BINANCE_API_KEY").ok(),
             hyperliquid_key: env::var("HYPERLIQUID_KEY").ok(),
             hyperliquid_secret: env::var("HYPERLIQUID_SECRET").ok(),
