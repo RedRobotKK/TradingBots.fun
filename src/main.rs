@@ -4304,6 +4304,7 @@ mod tests {
             cex_mode: String::new(),
             funded_from_pool: false,
             pool_stake_usd: 0.0,
+            venue: "Hyperliquid Perps (paper)".to_string(),
         }
     }
 

@@ -550,7 +550,7 @@ mod latency_tests {
     #[test]
     fn session_latency_stats_target_thresholds() {
         // Confirm the target constants are published correctly
-        let stats = SessionLatencyStats::default();
+        let _stats = SessionLatencyStats::default();
         // Targets are set in ::compute(), so build via compute
         let mut total = vec![100.0f64; 10];
         let mut order = vec![50.0f64; 10];
@@ -785,7 +785,7 @@ mod gap_close_tests {
 
     #[test]
     fn trade_filter_no_filter_returns_all() {
-        let trades = vec![
+        let trades = [
             make_trade_with_venue("BTC", "Hyperliquid Perps (paper)", 10.0),
             make_trade_with_venue("ETH", "internal", 5.0),
             make_trade_with_venue("SOL", "Hyperliquid Perps (paper)", -3.0),
@@ -803,7 +803,7 @@ mod gap_close_tests {
 
     #[test]
     fn trade_filter_hyperliquid_returns_only_hl() {
-        let trades = vec![
+        let trades = [
             make_trade_with_venue("BTC", "Hyperliquid Perps (paper)", 10.0),
             make_trade_with_venue("ETH", "internal", 5.0),
             make_trade_with_venue("SOL", "Hyperliquid Perps (paper)", -3.0),
@@ -822,7 +822,7 @@ mod gap_close_tests {
 
     #[test]
     fn trade_filter_internal_returns_only_internal() {
-        let trades = vec![
+        let trades = [
             make_trade_with_venue("BTC", "Hyperliquid Perps (paper)", 10.0),
             make_trade_with_venue("ETH", "internal", 5.0),
         ];
