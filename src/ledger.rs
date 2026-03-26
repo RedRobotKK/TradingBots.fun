@@ -275,6 +275,7 @@ mod tests {
             fees_est: 0.0,
             breakdown: None,
             note: None,
+            venue: "Hyperliquid Perps".to_string(),
         }
     }
 
