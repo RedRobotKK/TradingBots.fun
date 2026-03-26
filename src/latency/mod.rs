@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 //! Latency benchmarking module.
 //!
 //! Tracks 5 timing primitives per trade and computes rolling percentiles

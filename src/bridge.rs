@@ -65,12 +65,15 @@ use uuid::Uuid;
 const ARBITRUM_CHAIN_ID: u64 = 42161;
 
 /// Native USDC on Arbitrum One (Circle's official contract).
+#[allow(dead_code)]
 const DEFAULT_ARB_USDC: &str = "0xaf88d065e77c8cC2239327C5EDb3A432268e5831";
 
 /// How many seconds to wait between polling HL for balance after a deposit.
+#[allow(dead_code)]
 const DEPOSIT_POLL_INTERVAL_SECS: u64 = 15;
 
 /// How many poll attempts before giving up on deposit confirmation.
+#[allow(dead_code)]
 const DEPOSIT_MAX_POLLS: u32 = 20; // 20 × 15s = 5 minutes
 
 // ─────────────────────────── EIP-712 signatures ──────────────────────────────
@@ -193,6 +196,7 @@ fn sign_withdraw3(
 // ─────────────────────────── Arbitrum JSON-RPC helpers ───────────────────────
 
 /// Make a raw JSON-RPC call to the Arbitrum RPC endpoint.
+#[allow(dead_code)]
 async fn arb_rpc(rpc_url: &str, method: &str, params: serde_json::Value) -> Result<serde_json::Value> {
     let body = serde_json::json!({
         "jsonrpc": "2.0",
@@ -219,6 +223,7 @@ async fn arb_rpc(rpc_url: &str, method: &str, params: serde_json::Value) -> Resu
 /// Encode a 4-byte function selector + 32-byte argument (simple ABI encode).
 /// Sufficient for `approve(address spender, uint256 amount)` and
 /// `sendDeposit(address destination, uint64 amount)`.
+#[allow(dead_code)]
 fn abi_encode_2(selector: [u8; 4], arg1: [u8; 32], arg2: [u8; 32]) -> Vec<u8> {
     let mut data = Vec::with_capacity(68);
     data.extend_from_slice(&selector);
@@ -228,6 +233,7 @@ fn abi_encode_2(selector: [u8; 4], arg1: [u8; 32], arg2: [u8; 32]) -> Vec<u8> {
 }
 
 /// Address string `"0x..."` → 20-byte array, right-aligned in 32 bytes.
+#[allow(dead_code)]
 fn addr_to_word(addr: &str) -> Result<[u8; 32]> {
     let stripped = addr.trim_start_matches("0x");
     if stripped.len() != 40 {
@@ -240,6 +246,7 @@ fn addr_to_word(addr: &str) -> Result<[u8; 32]> {
 }
 
 /// USDC amount (f64 USD) → 32-byte word (uint256, 6 decimals).
+#[allow(dead_code)]
 fn usdc_to_word(amount_usd: f64) -> [u8; 32] {
     let units = (amount_usd * 1_000_000.0) as u64; // 6 decimal places
     let mut word = [0u8; 32];
@@ -249,6 +256,7 @@ fn usdc_to_word(amount_usd: f64) -> [u8; 32] {
 
 /// Minimal RLP encoding for an EIP-1559 transaction.
 /// Only supports the fields we use; sufficient for simple contract calls.
+#[allow(dead_code)]
 fn rlp_encode_u64(v: u64) -> Vec<u8> {
     if v == 0 {
         return vec![0x80]; // empty string (zero)
@@ -261,6 +269,7 @@ fn rlp_encode_u64(v: u64) -> Vec<u8> {
     rlp_encode_bytes(trimmed)
 }
 
+#[allow(dead_code)]
 fn rlp_encode_bytes(data: &[u8]) -> Vec<u8> {
     if data.len() == 1 && data[0] < 0x80 {
         return vec![data[0]];
@@ -282,6 +291,7 @@ fn rlp_encode_bytes(data: &[u8]) -> Vec<u8> {
     result
 }
 
+#[allow(dead_code)]
 fn rlp_encode_list(items: &[Vec<u8>]) -> Vec<u8> {
     let payload: Vec<u8> = items.iter().flat_map(|i| i.iter().copied()).collect();
     let mut result = Vec::new();
@@ -303,6 +313,7 @@ fn rlp_encode_list(items: &[Vec<u8>]) -> Vec<u8> {
 
 /// Build, sign, and broadcast one EIP-1559 contract call on Arbitrum.
 /// Returns the transaction hash.
+#[allow(dead_code)]
 async fn send_arb_tx(
     rpc_url: &str,
     private_key: &[u8],
@@ -529,6 +540,7 @@ impl BridgeManager {
     ///
     /// Requires `ARB_PRIVATE_KEY`, `ARBITRUM_RPC_URL`, and
     /// `HL_BRIDGE_ADDRESS_ARB` environment variables to be set.
+    #[allow(dead_code)]
     pub async fn request_deposit(
         &self,
         tenant_id: &TenantId,
@@ -735,6 +747,7 @@ impl BridgeManager {
 
     // ── Arbitrum → HL (real implementation) ──────────────────────────────────
 
+    #[allow(dead_code)]
     async fn process_deposit(
         &self,
         id: String,

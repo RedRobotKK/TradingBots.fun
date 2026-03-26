@@ -165,11 +165,13 @@ pub fn new_signal_cache() -> SharedSignalCache {
 // ── Convenience read helpers ──────────────────────────────────────────────────
 
 /// Return the latest snapshot for `symbol`, or `None` if not yet computed.
+#[allow(dead_code)]
 pub async fn get_signal(cache: &SharedSignalCache, symbol: &str) -> Option<SignalSnapshot> {
     cache.read().await.get(symbol).cloned()
 }
 
 /// Return all current snapshots sorted by confidence (highest first).
+#[allow(dead_code)]
 pub async fn top_signals(
     cache: &SharedSignalCache,
     direction: Option<&SignalDirection>,

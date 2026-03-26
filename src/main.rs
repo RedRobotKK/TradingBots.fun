@@ -17,9 +17,8 @@
 /// positions — too many borderline signals were entering.
 const MIN_CONFIDENCE: f64 = 0.68;
 /// Maximum fraction of equity at risk per individual trade (stop-distance based).
-/// Lowered 0.05→0.03: live data showed single positions regularly hitting $15k+ risk
-/// (e.g. GRIFFAIN 15.2%) — halving the per-trade ceiling keeps individual positions sane.
-const MAX_TRADE_HEAT: f64 = 0.03; // 3 %
+/// Set at 5%: stop_dist_pct × margin × leverage / equity ≤ 0.05.
+const MAX_TRADE_HEAT: f64 = 0.05; // 5 %
 /// Maximum total fraction of equity at risk across all open positions.
 /// This is the primary position budget — the AI sizes each new position so that
 /// total portfolio heat never exceeds this ceiling.
@@ -40,11 +39,13 @@ const CB_DRAWDOWN_THRESHOLD: f64 = 0.08; // 8 %
 /// Position-size multiplier applied when the circuit breaker is active.
 const CB_SIZE_MULT: f64 = 0.35;
 /// Upper bound for position size as fraction of free capital (Kelly clamp).
-/// Lowered 0.25→0.12: 25% of free capital was allowing $75k+ initial margins on a
-/// $1M account, which DCA×3 then inflated to $200k+. 12% keeps initial entries sane.
-const MAX_POSITION_PCT: f64 = 0.12;
+/// At 15% of free capital, a $1M account risks $150k per position before DCA.
+/// Used as the default cap when no env override is set.
+#[allow(dead_code)]
+const MAX_POSITION_PCT: f64 = 0.15;
 /// Lower bound for position size as fraction of free capital.
 /// Raised from 1% — a $10 position on $1000 is economically meaningless.
+#[allow(dead_code)]
 const MIN_POSITION_PCT: f64 = 0.05;
 
 #[derive(Clone, Debug)]
@@ -2494,7 +2495,7 @@ fn evaluate_ai_close_guard(pos: &PaperPosition) -> GuardrailOutcome {
         };
     }
 
-    let loss_score = (-r).max(0.0).min(1.0);
+    let loss_score = (-r).clamp(0.0, 1.0);
     let hold_score = (hold_mins as f64 / 60.0).clamp(0.0, 1.0);
     let deep_loss = if r < -0.40 { 0.15 } else { 0.0 };
     let mut components = vec![
@@ -2649,21 +2650,19 @@ async fn analyse_symbol(
     // Max impact is intentionally small — this is a supplementary signal, not primary.
     // get() always returns OnchainData (neutral 0.0 if key absent or symbol unknown).
     let oc_strength = onchain_cache.get(symbol).await.signal_strength();
-    if dec.action != "SKIP" {
-        if oc_strength.abs() > 0.05 {
-            // Aligned = netflow confirms trade direction → boost; opposed → penalty
-            let aligned = (dec.action == "BUY" && oc_strength > 0.0)
-                || (dec.action == "SELL" && oc_strength < 0.0);
-            let adj = oc_strength.abs() * 0.04 * if aligned { 1.0 } else { -1.0 };
-            dec.confidence = (dec.confidence + adj).clamp(0.0, 1.0);
-            log::debug!(
-                "{}: on-chain adj {:+.3} ({}) → conf={:.0}%",
-                symbol,
-                adj,
-                if aligned { "aligned" } else { "opposed" },
-                dec.confidence * 100.0
-            );
-        }
+    if dec.action != "SKIP" && oc_strength.abs() > 0.05 {
+        // Aligned = netflow confirms trade direction → boost; opposed → penalty
+        let aligned = (dec.action == "BUY" && oc_strength > 0.0)
+            || (dec.action == "SELL" && oc_strength < 0.0);
+        let adj = oc_strength.abs() * 0.04 * if aligned { 1.0 } else { -1.0 };
+        dec.confidence = (dec.confidence + adj).clamp(0.0, 1.0);
+        log::debug!(
+            "{}: on-chain adj {:+.3} ({}) → conf={:.0}%",
+            symbol,
+            adj,
+            if aligned { "aligned" } else { "opposed" },
+            dec.confidence * 100.0
+        );
     }
 
     // ── Funding-staleness warning (fail-open) ────────────────────────────
@@ -3434,10 +3433,8 @@ async fn execute_paper_trade(
     // Previous values (3/4 max) produced $491k notional on a single altcoin (GRIFFAIN).
     let entry_dca_max = if dec.confidence >= 0.85 {
         3  // was 4 — allows up to 2 DCA entries (1+0.5+0.75 = 2.25× initial)
-    } else if dec.confidence >= 0.75 {
-        2  // was 3 — allows up to 1 DCA entry (1+0.5 = 1.5× initial)
     } else {
-        2  // unchanged
+        2  // confidence <0.85: was 3 (1 DCA) or unchanged — capped at 1 DCA
     };
     let budget_mult = (entry_dca_max as f64 - 1.0).max(1.0); // 1.0/1.5
     let trade_budget_usd = size_usd * budget_mult;
@@ -3755,6 +3752,7 @@ async fn dca_position(
 /// |    0    |    1R    |       1/4       | Lock in early profit; reduce risk |
 /// |    1    |    2R    |       1/3       | Take more off as trade extends |
 /// |    2    |    4R    |       1/3       | Capture deep runner profits    |
+#[allow(clippy::too_many_arguments)]
 async fn take_partial(
     symbol: String,
     exit_price: f64,

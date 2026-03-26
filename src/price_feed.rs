@@ -517,6 +517,7 @@ pub async fn oracle_to_mids(oracle: &SharedPriceOracle) -> HashMap<String, f64> 
 }
 
 /// Return the best available mid for a single symbol, or `None` if stale/absent.
+#[allow(dead_code)]
 pub async fn oracle_mid(oracle: &SharedPriceOracle, symbol: &str) -> Option<f64> {
     let guard = oracle.read().await;
     let entry = guard.get(symbol)?;

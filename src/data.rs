@@ -123,6 +123,7 @@ pub struct MarketClient {
 
 impl MarketClient {
     /// Create a client with no live price feed (HTTP-only fallback).
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self::build(None)
     }

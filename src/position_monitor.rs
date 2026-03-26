@@ -362,12 +362,11 @@ impl PositionMonitor {
                 .map(|s| (pos.entry_price - s).abs())
                 .unwrap_or(pos.entry_price * 0.01);
             let pnl_r = if r_size > 0.0 {
-                let pnl = if is_long {
+                if is_long {
                     (current_price - pos.entry_price) / r_size
                 } else {
                     (pos.entry_price - current_price) / r_size
-                };
-                pnl
+                }
             } else {
                 0.0
             };
@@ -535,6 +534,7 @@ async fn worker_tick(worker_id: usize, pool: &PgPool) -> Result<()> {
 
 /// Enqueue time-exit orders for stale positions across all tenants.
 /// Called periodically — replaces the per-tenant time-exit block.
+#[allow(dead_code)]
 pub async fn enqueue_time_exits(pool: &PgPool, stale_cycles: i32) -> Result<usize> {
     let rows = sqlx::query(
         r#"
