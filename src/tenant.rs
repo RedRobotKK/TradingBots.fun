@@ -816,6 +816,58 @@ pub async fn seed_demo_tenants(mgr: &SharedTenantManager) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+//  Scale-test wallet seeding
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Bulk-seed `count` paper wallets each with `capital_usd` of simulated capital.
+///
+/// Designed for scale testing: register thousands of isolated paper-trading
+/// tenants in a single call without hitting the real exchange.
+///
+/// Tenant IDs are deterministic (`scale-NNNNN-…`) so this function is
+/// idempotent — calling it again on an already-seeded manager is a no-op
+/// because `register_with_id` skips existing IDs.
+///
+/// The stagger between trading loops is controlled by the caller (see
+/// `SCALE_TEST_STAGGER_MS` in `main.rs`).  For paper-only workloads a
+/// stagger of 0–50 ms is safe because no real HL API calls are made.
+///
+/// # Example
+/// ```rust,ignore
+/// let tm = tenant::new_tenant_manager();
+/// tenant::seed_scale_wallets(&tm, 5000, 200.0).await;
+/// ```
+pub async fn seed_scale_wallets(mgr: &SharedTenantManager, count: usize, capital_usd: f64) {
+    let mut m = mgr.write().await;
+    let mut seeded = 0usize;
+    for i in 1..=count {
+        // Deterministic, fully-valid UUID format: scale-NNNNN-…
+        let id_str = format!(
+            "scale{:05}-0000-0000-0000-{:012}",
+            i % 100_000,
+            i
+        );
+        let id = TenantId::from_str(&id_str);
+        if m.contains(&id) {
+            continue; // already seeded — idempotent restart
+        }
+        let name = format!("ScaleWallet-{:05}", i);
+        let mut cfg = TenantConfig::paper(&name, capital_usd);
+        // Pro tier so wallets have no position cap during scale test
+        cfg.tier = TenantTier::Pro;
+        cfg.live_trading = false; // paper only — no real HL keys
+        m.tenants.insert(id.clone(), TenantHandle::new(id, cfg));
+        seeded += 1;
+    }
+    log::info!(
+        "🚀 Scale test: seeded {} paper wallets (${:.0} each, {} total)",
+        seeded,
+        capital_usd,
+        count
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 //  Tests
 // ─────────────────────────────────────────────────────────────────────────────
 
