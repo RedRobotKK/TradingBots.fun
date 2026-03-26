@@ -1,0 +1,213 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-03-26T04:07:31Z",
+    "commit": "632d41d",
+    "commit_full": "632d41d6fdca4a6aed2080d9afe91cd71ffdf1bf",
+    "commit_message": "chore: bump version 0.2.10 \u2192 0.2.11",
+    "branch": "master",
+    "overall_status": "FAILED",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.94.0 (4a4ef493e 2026-03-02)",
+    "cargo": "cargo 1.94.0 (85eff7c80 2026-01-15)",
+    "os_kernel": "6.8.0-106-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 533,
+      "total_passed": 0,
+      "total_failed": 0,
+      "total_ignored": 0,
+      "failures": []
+    },
+    "clippy": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 281,
+      "error_count": 20,
+      "errors": [
+        {
+          "code": "E",
+          "message": "constant `MAX_POSITION_PCT` is never used",
+          "file": "src/main.rs",
+          "line": 45,
+          "col": 7
+        },
+        {
+          "code": "E",
+          "message": "constant `MIN_POSITION_PCT` is never used",
+          "file": "src/main.rs",
+          "line": 48,
+          "col": 7
+        },
+        {
+          "code": "E",
+          "message": "constant `DEFAULT_ARB_USDC` is never used",
+          "file": "src/bridge.rs",
+          "line": 68,
+          "col": 7
+        },
+        {
+          "code": "E",
+          "message": "constant `DEPOSIT_POLL_INTERVAL_SECS` is never used",
+          "file": "src/bridge.rs",
+          "line": 71,
+          "col": 7
+        },
+        {
+          "code": "E",
+          "message": "constant `DEPOSIT_MAX_POLLS` is never used",
+          "file": "src/bridge.rs",
+          "line": 74,
+          "col": 7
+        },
+        {
+          "code": "E",
+          "message": "function `arb_rpc` is never used",
+          "file": "src/bridge.rs",
+          "line": 196,
+          "col": 10
+        },
+        {
+          "code": "E",
+          "message": "function `abi_encode_2` is never used",
+          "file": "src/bridge.rs",
+          "line": 222,
+          "col": 4
+        },
+        {
+          "code": "E",
+          "message": "function `addr_to_word` is never used",
+          "file": "src/bridge.rs",
+          "line": 231,
+          "col": 4
+        },
+        {
+          "code": "E",
+          "message": "function `usdc_to_word` is never used",
+          "file": "src/bridge.rs",
+          "line": 243,
+          "col": 4
+        },
+        {
+          "code": "E",
+          "message": "function `rlp_encode_u64` is never used",
+          "file": "src/bridge.rs",
+          "line": 252,
+          "col": 4
+        },
+        {
+          "code": "E",
+          "message": "function `rlp_encode_bytes` is never used",
+          "file": "src/bridge.rs",
+          "line": 264,
+          "col": 4
+        },
+        {
+          "code": "E",
+          "message": "function `rlp_encode_list` is never used",
+          "file": "src/bridge.rs",
+          "line": 285,
+          "col": 4
+        },
+        {
+          "code": "E",
+          "message": "function `send_arb_tx` is never used",
+          "file": "src/bridge.rs",
+          "line": 306,
+          "col": 10
+        },
+        {
+          "code": "E",
+          "message": "methods `request_deposit` and `process_deposit` are never used",
+          "file": "src/bridge.rs",
+          "line": 532,
+          "col": 18
+        },
+        {
+          "code": "E",
+          "message": "associated function `new` is never used",
+          "file": "src/data.rs",
+          "line": 126,
+          "col": 12
+        },
+        {
+          "code": "E",
+          "message": "struct `TradeLatencyRecord` is never constructed",
+          "file": "src/latency/mod.rs",
+          "line": 21,
+          "col": 12
+        },
+        {
+          "code": "E",
+          "message": "associated items `new`, `order_latency_ms`, `fill_latency_ms`, and `total_latency_ms` are never used",
+          "file": "src/latency/mod.rs",
+          "line": 38,
+          "col": 12
+        },
+        {
+          "code": "E",
+          "message": "field `cap` is never read",
+          "file": "src/latency/mod.rs",
+          "line": 172,
+          "col": 5
+        },
+        {
+          "code": "E",
+          "message": "methods `record`, `len`, and `is_empty` are never used",
+          "file": "src/latency/mod.rs",
+          "line": 186,
+          "col": 12
+        },
+        {
+          "code": "E",
+          "message": "type alias `LatencyRegistry` is never used",
+          "file": "src/latency/mod.rs",
+          "line": 220,
+          "col": 10
+        }
+      ]
+    },
+    "audit": {
+      "status": "ADVISORY",
+      "exit_code": 1,
+      "duration_seconds": 3,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2023-0071",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2023-0071",
+          "severity": "5.9 (medium)",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "tradingbots",
+    "status": "failed",
+    "active_since": "unknown",
+    "recent_logs": [
+      "Mar 26 04:06:34 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: tradingbots.service: Failed with result 'exit-code'.",
+      "Mar 26 04:06:39 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: tradingbots.service: Scheduled restart job, restart counter is at 3.",
+      "Mar 26 04:06:39 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: tradingbots.service: Start request repeated too quickly.",
+      "Mar 26 04:06:39 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: tradingbots.service: Failed with result 'exit-code'.",
+      "Mar 26 04:06:39 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Failed to start tradingbots.service - TradingBots.fun."
+    ]
+  }
+}
