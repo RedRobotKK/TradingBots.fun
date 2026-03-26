@@ -94,7 +94,7 @@ pub struct AppState {
     pub pattern_cache: Arc<Mutex<pattern_insights::PatternCache>>,
     pub hyperliquid_stats: Arc<exchange::HyperliquidStats>,
     pub bridge_manager: Arc<BridgeManager>,
-    pub latency_tracker: std::sync::Arc<tokio::sync::RwLock<crate::latency::LatencyTracker>>,
+    pub latency_tracker: std::sync::Arc<tokio::sync::RwLock<latency::LatencyTracker>>,
 }
 
 // ─────────────────────────────── Serde defaults ──────────────────────────────
@@ -10193,7 +10193,7 @@ async fn api_v1_session_latency_stats_handler(
     }
     let window = params.get("window").map(|w| w.as_str()).unwrap_or("1h");
     // Read the latency tracker from app state
-    let tracker = app.latency_tracker.read().await;
+    let tracker: tokio::sync::RwLockReadGuard<latency::LatencyTracker> = app.latency_tracker.read().await;
     let stats = tracker.stats();
     axum::response::Json(serde_json::json!({
         "ok":              true,

@@ -522,7 +522,7 @@ async fn main() -> Result<()> {
             pattern_cache: pattern_cache.clone(),
             hyperliquid_stats: hl.stats(),
             bridge_manager: bridge_manager.clone(),
-            latency_tracker: std::sync::Arc::new(tokio::sync::RwLock::new(crate::latency::LatencyTracker::new("global"))),
+            latency_tracker: std::sync::Arc::new(tokio::sync::RwLock::new(latency::LatencyTracker::new("global"))),
         };
         tokio::spawn(async move {
             if let Err(e) = web_dashboard::serve(app_state, 3000).await {
@@ -913,6 +913,7 @@ async fn manual_open_position(
             cex_mode: String::new(),
             funded_from_pool: false,
             pool_stake_usd: 0.0,
+            venue: "Hyperliquid Perps (paper)".to_string(),
         });
     }
 
@@ -3455,6 +3456,7 @@ async fn execute_paper_trade(
         cex_mode: String::new(),
         funded_from_pool,
         pool_stake_usd,
+        venue: "Hyperliquid Perps (paper)".to_string(),
     });
 
     let kelly_str = if metrics.kelly_fraction() > 0.0 {
