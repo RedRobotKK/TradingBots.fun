@@ -824,9 +824,12 @@ pub async fn seed_demo_tenants(mgr: &SharedTenantManager) {
 /// Designed for scale testing: register thousands of isolated paper-trading
 /// tenants in a single call without hitting the real exchange.
 ///
-/// Tenant IDs are deterministic (`scale-NNNNN-…`) so this function is
-/// idempotent — calling it again on an already-seeded manager is a no-op
-/// because `register_with_id` skips existing IDs.
+/// Tenant IDs are deterministic fully-valid hex UUIDs (prefix `5c00` = "scale"
+/// mnemonic) so `snapshot_daily()`'s `Uuid::parse_str()` succeeds without
+/// spamming parse errors.  Scale-test wallets are intentionally excluded from
+/// the public leaderboard by their recognisable `5c00` prefix.
+///
+/// This function is idempotent — safe to call on every restart.
 ///
 /// The stagger between trading loops is controlled by the caller (see
 /// `SCALE_TEST_STAGGER_MS` in `main.rs`).  For paper-only workloads a
@@ -841,12 +844,12 @@ pub async fn seed_scale_wallets(mgr: &SharedTenantManager, count: usize, capital
     let mut m = mgr.write().await;
     let mut seeded = 0usize;
     for i in 1..=count {
-        // Deterministic, fully-valid UUID format: scale-NNNNN-…
-        let id_str = format!(
-            "scale{:05}-0000-0000-0000-{:012}",
-            i % 100_000,
-            i
-        );
+        // Deterministic, fully-valid hex UUID.
+        // First group: 5c00 prefix + 4-hex index (supports up to 65535 wallets).
+        // Last group: 12-hex index for easy log grep / correlation.
+        // e.g. i=1    → 5c000001-0000-0000-0000-000000000001
+        //      i=5000 → 5c001388-0000-0000-0000-000000001388
+        let id_str = format!("5c00{:04x}-0000-0000-0000-{:012x}", i, i);
         let id = TenantId::from_str(&id_str);
         if m.contains(&id) {
             continue; // already seeded — idempotent restart

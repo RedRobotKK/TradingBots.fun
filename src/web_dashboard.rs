@@ -1,10 +1,14 @@
 use axum::{
     extract::State,
     http::HeaderMap,
-    response::Html,
+    response::{
+        sse::{Event, KeepAlive, Sse},
+        Html,
+    },
     routing::{get, post},
     Json, Router,
 };
+use futures_util::stream::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
@@ -1548,6 +1552,24 @@ body{{background:var(--bg);color:var(--text);
 @keyframes liveDot{{0%,100%{{box-shadow:0 0 0 0 rgba(63,185,80,.6)}}70%{{box-shadow:0 0 0 5px rgba(63,185,80,0)}}}}
 @keyframes aiPulse{{0%,100%{{opacity:1}}50%{{opacity:.55}}}}
 @keyframes cbFlash{{0%,100%{{border-color:rgba(248,81,73,.55)}}50%{{border-color:rgba(248,81,73,1)}}}}
+/* ── Live winning-trades ticker ── */
+.win-ticker{{display:flex;align-items:center;gap:0;overflow:hidden;
+             background:linear-gradient(90deg,rgba(63,185,80,.08),rgba(63,185,80,.03));
+             border:1px solid rgba(63,185,80,.20);border-radius:8px;
+             padding:0;height:32px;margin-bottom:10px;font-size:.72em;font-weight:600;
+             position:relative}}
+.win-ticker-label{{flex-shrink:0;padding:0 10px;color:#3fb950;letter-spacing:.5px;
+                   font-size:.95em;border-right:1px solid rgba(63,185,80,.20);
+                   height:100%;display:flex;align-items:center;gap:5px;
+                   background:rgba(63,185,80,.06)}}
+.win-ticker-scroll{{flex:1;overflow:hidden;position:relative;height:100%}}
+.win-ticker-inner{{display:flex;gap:0;height:100%;position:absolute;top:0;left:0;
+                   transition:transform .4s ease;width:max-content}}
+.win-item{{padding:0 18px;color:#e6edf3;white-space:nowrap;height:32px;
+           display:flex;align-items:center;gap:6px;border-right:1px solid rgba(63,185,80,.10)}}
+.win-item .sym{{color:#58a6ff;font-weight:700}}
+.win-item .pnl{{color:#3fb950}}
+.win-item .wlt{{color:#8b949e;font-weight:400;font-size:.88em}}
 /* ── Header ── */
 .header{{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:6px;
          padding-bottom:12px;border-bottom:1px solid var(--border)}}
@@ -1764,6 +1786,20 @@ tr:hover td{{background:rgba(255,255,255,.025)}}
   </div>
 </div>
 
+<!-- ── Live winning-trades ticker ──────────────────────────────────────────── -->
+<div class="win-ticker" id="win-ticker">
+  <div class="win-ticker-label">
+    <span class="live-ring"></span> LIVE WINS
+  </div>
+  <div class="win-ticker-scroll" id="win-scroll">
+    <div class="win-ticker-inner" id="win-inner">
+      <div class="win-item" style="color:#8b949e">
+        <span>Waiting for winning trades…</span>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div id="equity-hero" class="{hero_class}">
   <div class="eq-left">
 
@@ -1952,6 +1988,102 @@ tr:hover td{{background:rgba(255,255,255,.025)}}
 
 <script>
 {metric_info_js}
+</script>
+
+<script>
+/* ── Live winning-trades ticker (SSE) ──────────────────────────────────── */
+(function(){{
+  var MAX_ITEMS = 30;      // keep at most 30 wins in the carousel
+  var SCROLL_INTERVAL = 4000; // rotate visible item every 4 s
+  var wins = [];
+  var currentIdx = 0;
+  var scrollTimer = null;
+
+  function fmtWin(w){{
+    var side = w.side === 'LONG' ? '▲' : '▼';
+    var col  = w.side === 'LONG' ? '#3fb950' : '#f78166';
+    var rStr = w.r_mult > 0 ? '+' + w.r_mult.toFixed(2) + 'R' : '';
+    return '<div class="win-item">'
+      + '<span class="sym">' + w.symbol + '</span>'
+      + '<span style="color:' + col + '">' + side + ' </span>'
+      + '<span class="pnl">+$' + w.pnl.toFixed(2) + '</span>'
+      + (rStr ? '<span style="color:#e3b341;font-size:.85em">' + rStr + '</span>' : '')
+      + '<span class="wlt">· ' + w.wallet + '</span>'
+      + '</div>';
+  }}
+
+  function renderTicker(){{
+    if(wins.length === 0) return;
+    var inner = document.getElementById('win-inner');
+    if(!inner) return;
+    inner.innerHTML = wins.map(fmtWin).join('');
+  }}
+
+  function startScroll(){{
+    if(scrollTimer) clearInterval(scrollTimer);
+    if(wins.length <= 1) return;
+    scrollTimer = setInterval(function(){{
+      currentIdx = (currentIdx + 1) % wins.length;
+      var inner = document.getElementById('win-inner');
+      if(!inner) return;
+      // Shift by item width — each item is padded, use offsetWidth
+      var items = inner.querySelectorAll('.win-item');
+      if(items.length === 0) return;
+      var shift = 0;
+      for(var i=0;i<currentIdx && i<items.length;i++){{
+        shift += items[i].offsetWidth;
+      }}
+      inner.style.transform = 'translateX(-' + shift + 'px)';
+    }}, SCROLL_INTERVAL);
+  }}
+
+  function addWin(w){{
+    wins.unshift(w);          // newest first
+    if(wins.length > MAX_ITEMS) wins.pop();
+    currentIdx = 0;
+    var inner = document.getElementById('win-inner');
+    if(inner) inner.style.transform = 'translateX(0)';
+    renderTicker();
+    startScroll();
+  }}
+
+  // Flash the ticker border green briefly on a new win
+  function flashTicker(){{
+    var el = document.getElementById('win-ticker');
+    if(!el) return;
+    el.style.borderColor = '#3fb950';
+    el.style.boxShadow = '0 0 12px rgba(63,185,80,.5)';
+    setTimeout(function(){{
+      el.style.borderColor = '';
+      el.style.boxShadow = '';
+    }}, 800);
+  }}
+
+  // Connect SSE
+  function connectStream(){{
+    if(!window.EventSource) return;
+    var es = new EventSource('/api/trade-stream');
+    es.addEventListener('trade_win', function(e){{
+      try{{
+        var w = JSON.parse(e.data);
+        addWin(w);
+        flashTicker();
+      }}catch(err){{}}
+    }});
+    es.onerror = function(){{
+      // Reconnect after 5 s if connection drops
+      es.close();
+      setTimeout(connectStream, 5000);
+    }};
+  }}
+
+  // Start on page load
+  if(document.readyState === 'loading'){{
+    document.addEventListener('DOMContentLoaded', connectStream);
+  }} else {{
+    connectStream();
+  }}
+}})();
 </script>
 
 <script>
@@ -6640,6 +6772,39 @@ async fn get_invite_handler(
     .into_response()
 }
 
+// ── Live winning-trade SSE stream ────────────────────────────────────────────
+
+/// `GET /api/trade-stream` — Server-Sent Events stream of winning trade closes.
+///
+/// Browsers connect with `new EventSource('/api/trade-stream')` and receive
+/// one JSON event per winning (or partial-profit) trade close.  A keep-alive
+/// comment is sent every 15 s to prevent proxy timeouts.
+///
+/// Event format (`data` field is JSON):
+/// ```json
+/// {"symbol":"ETH","side":"LONG","pnl":12.40,"pnl_pct":3.1,"r_mult":1.25,
+///  "reason":"Partial1.25R","wallet":"Bot Alpha","closed_at":"2026-03-26T…"}
+/// ```
+async fn trade_stream_handler() -> Sse<impl futures_util::stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
+    use tokio_stream::wrappers::BroadcastStream;
+
+    let rx = crate::trade_stream::subscribe()
+        .expect("trade_stream not initialised — call trade_stream::init() at startup");
+
+    let stream = BroadcastStream::new(rx).filter_map(|msg| async move {
+        match msg {
+            Ok(win) => {
+                let data = serde_json::to_string(&win).unwrap_or_default();
+                Some(Ok(Event::default().event("trade_win").data(data)))
+            }
+            // Receiver lagged (burst): skip the missed events and continue.
+            Err(_) => None,
+        }
+    });
+
+    Sse::new(stream).keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(15)))
+}
+
 /// `GET /api/leaderboard` — JSON endpoint for the current standings.
 async fn api_leaderboard_handler(State(app): State<AppState>) -> impl axum::response::IntoResponse {
     use axum::response::IntoResponse;
@@ -10791,6 +10956,11 @@ pub async fn serve(
         .route("/app/invite", get(get_invite_handler))
         .route("/app/invite/generate", post(generate_invite_handler))
         .route("/api/leaderboard", get(api_leaderboard_handler))
+        // ── Live winning-trade SSE stream ────────────────────────────────────
+        // GET /api/trade-stream  → text/event-stream
+        // Events are emitted in real-time whenever any tenant closes a winning
+        // trade.  Dashboard top-page ticker consumes this via EventSource.
+        .route("/api/trade-stream", get(trade_stream_handler))
         // ── Investment thesis ────────────────────────────────────────────────
         .route(
             "/api/thesis",

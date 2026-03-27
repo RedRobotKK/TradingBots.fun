@@ -162,6 +162,7 @@ mod stripe;
 mod tenant;
 mod thesis;
 mod trade_log;
+mod trade_stream;
 mod web_dashboard;
 
 use crate::bridge::BridgeManager;
@@ -263,6 +264,9 @@ async fn main() -> Result<()> {
     env_logger::Builder::from_default_env()
         .format_timestamp_millis()
         .init();
+
+    // Initialise the winning-trade broadcast channel before any trading task starts.
+    trade_stream::init();
 
     // ── CLI: --analyze [YYYY-MM-DD] ──────────────────────────────────────
     // Analyse a specific day's log and print the markdown report, then exit.
@@ -3916,6 +3920,20 @@ async fn take_partial(
             note: None,
             venue: "Hyperliquid Perps (paper)".to_string(),
         };
+        // Emit winning-trade event to the live dashboard stream (partial wins)
+        if trade_pnl > 0.0 {
+            let r_at_partial_emit = if close_size > 0.0 { trade_pnl / close_size } else { 0.0 };
+            trade_stream::emit(trade_stream::TradeWin {
+                symbol: symbol.clone(),
+                side: if was_long { "LONG".to_string() } else { "SHORT".to_string() },
+                pnl: trade_pnl,
+                pnl_pct,
+                r_mult: r_at_partial_emit,
+                reason: format!("Partial{}R", r_label),
+                wallet: s.status.split_whitespace().next().unwrap_or("Bot").to_string(),
+                closed_at: now_str(),
+            });
+        }
         ledger::append(&partial_trade);
         s.closed_trades.push(partial_trade);
         let len = s.closed_trades.len();
@@ -4142,6 +4160,19 @@ async fn close_paper_position(
             note: None, // operator can add note via POST /api/trade-note
             venue: "Hyperliquid Perps (paper)".to_string(),
         };
+        // Emit winning-trade event to the live dashboard stream (full close)
+        if trade_pnl > 0.0 {
+            trade_stream::emit(trade_stream::TradeWin {
+                symbol: symbol.to_string(),
+                side: full_trade.side.clone(),
+                pnl: trade_pnl,
+                pnl_pct,
+                r_mult: r_at_close,
+                reason: reason.to_string(),
+                wallet: s.status.split_whitespace().next().unwrap_or("Bot").to_string(),
+                closed_at: now_str(),
+            });
+        }
         ledger::append(&full_trade);
         s.closed_trades.push(full_trade);
         let len = s.closed_trades.len();

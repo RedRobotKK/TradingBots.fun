@@ -115,12 +115,12 @@ impl Default for SignalWeights {
         // * EMA Cross F grade was partly due to "always-on" backtest implementation.
         //   Real bot uses ema_cross_pct threshold.  Weight reduced but not eliminated.
         SignalWeights {
-            rsi: 0.16,            // +0.02 — mean-reversion works
+            rsi: 0.18,            // +0.04 — mean-reversion works; +0.02 redistributed from macd/ema_cross reduction
             bollinger: 0.13,      // +0.02 — regime-aware, marginal boost
             macd: 0.03,           // -0.07 — harmful at 15m, further reduced (T-stat -4.02); default lowered toward evidence-based floor
             ema_cross: 0.03,      // -0.08 — reduced; gap filter added in decision.rs (T-stat -6.00); default lowered toward evidence-based floor
             order_flow: 0.14,     // +0.03 — real order-book data outperforms candle proxy
-            z_score: 0.16,        // +0.09 — highest T-stat, significantly boosted
+            z_score: 0.18,        // +0.11 — highest T-stat, significantly boosted; +0.02 redistributed from macd/ema_cross reduction
             volume: 0.03,         // -0.03 — directional removed; amplifier role kept
             sentiment: 0.10,      // +0.01 — orthogonal signal, slight boost
             funding_rate: 0.08,   // +0.01 — contrarian edge, slight boost

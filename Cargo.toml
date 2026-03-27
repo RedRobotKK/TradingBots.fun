@@ -1,6 +1,6 @@
 [package]
 name = "tradingbots-fun"
-version = "0.2.20"
+version = "0.2.21"
 edition = "2021"
 
 [dependencies]
@@ -34,6 +34,7 @@ futures-util      = "0.3"
 
 # Web dashboard
 axum         = { version = "0.7", features = ["form"] }
+tokio-stream = { version = "0.1", features = ["sync"] }   # broadcast→Stream for SSE
 tower        = "0.4"
 tower-http   = { version = "0.5", features = ["cors"] }
 
