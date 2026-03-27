@@ -1242,6 +1242,11 @@ ENDSSH
       PASS=0; FAIL=0
       STEP1="⏳"; STEP2="⏳"; STEP3="⏳"
 
+      # Use offline sqlx cache so cargo test/clippy never need a DB connection.
+      # The .sqlx/ directory is committed to the repo and contains pre-verified
+      # query hashes for every sqlx::query! macro in the codebase.
+      export SQLX_OFFLINE=true
+
       # ── Pre-CI: free disk space to prevent "No space left on device" ────────
       {
         DISK_BEFORE=$(df -h / | awk 'NR==2{print $4}')
@@ -1438,6 +1443,7 @@ MIGR
       cd ${VPS_DIR}
       export PATH="\$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin:\$PATH"
       source "\$HOME/.cargo/env" 2>/dev/null || true
+      export SQLX_OFFLINE=true
 
       if ! swapon --show 2>/dev/null | grep -q .; then
         swapon /swapfile 2>/dev/null || true
