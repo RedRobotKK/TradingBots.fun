@@ -1205,7 +1205,18 @@ if $DO_DEPLOY; then
     source "\$HOME/.cargo/env" 2>/dev/null || true
 
     echo "Before: \$(git rev-parse --short HEAD)  (\$(git log -1 --format='%s'))"
-    git fetch origin 2>&1
+    # Retry fetch up to 5 times — GitHub edge propagation can lag a few seconds
+    # after a fresh push, causing the first fetch to miss the latest commit.
+    FETCH_OK=false
+    for _attempt in 1 2 3 4 5; do
+      if git fetch origin 2>&1; then
+        FETCH_OK=true
+        break
+      fi
+      echo "  fetch attempt \${_attempt} failed, retrying in 3s…"
+      sleep 3
+    done
+    \$FETCH_OK || { echo "ERROR: git fetch failed after 5 attempts"; exit 1; }
     git reset --hard origin/${BRANCH} 2>&1
     echo "After:  \$(git rev-parse --short HEAD)  (\$(git log -1 --format='%s'))"
     echo ""
