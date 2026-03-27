@@ -1552,24 +1552,35 @@ body{{background:var(--bg);color:var(--text);
 @keyframes liveDot{{0%,100%{{box-shadow:0 0 0 0 rgba(63,185,80,.6)}}70%{{box-shadow:0 0 0 5px rgba(63,185,80,0)}}}}
 @keyframes aiPulse{{0%,100%{{opacity:1}}50%{{opacity:.55}}}}
 @keyframes cbFlash{{0%,100%{{border-color:rgba(248,81,73,.55)}}50%{{border-color:rgba(248,81,73,1)}}}}
-/* ── Live winning-trades ticker ── */
-.win-ticker{{display:flex;align-items:center;gap:0;overflow:hidden;
-             background:linear-gradient(90deg,rgba(63,185,80,.08),rgba(63,185,80,.03));
-             border:1px solid rgba(63,185,80,.20);border-radius:8px;
-             padding:0;height:32px;margin-bottom:10px;font-size:.72em;font-weight:600;
-             position:relative}}
-.win-ticker-label{{flex-shrink:0;padding:0 10px;color:#3fb950;letter-spacing:.5px;
-                   font-size:.95em;border-right:1px solid rgba(63,185,80,.20);
-                   height:100%;display:flex;align-items:center;gap:5px;
-                   background:rgba(63,185,80,.06)}}
-.win-ticker-scroll{{flex:1;overflow:hidden;position:relative;height:100%}}
-.win-ticker-inner{{display:flex;gap:0;height:100%;position:absolute;top:0;left:0;
-                   transition:transform .4s ease;width:max-content}}
-.win-item{{padding:0 18px;color:#e6edf3;white-space:nowrap;height:32px;
-           display:flex;align-items:center;gap:6px;border-right:1px solid rgba(63,185,80,.10)}}
-.win-item .sym{{color:#58a6ff;font-weight:700}}
-.win-item .pnl{{color:#3fb950}}
-.win-item .wlt{{color:#8b949e;font-weight:400;font-size:.88em}}
+/* ── Live Wins Stock-Market Ticker ── */
+.win-ticker{{display:flex;align-items:stretch;overflow:hidden;
+             background:#0d1117;border:1px solid rgba(63,185,80,.30);
+             border-radius:6px;height:36px;margin-bottom:12px;
+             font-family:'SF Mono','Fira Code','Courier New',monospace;
+             font-size:.72em;font-weight:600;position:relative;
+             box-shadow:0 0 0 0 rgba(63,185,80,0);transition:box-shadow .4s ease}}
+.win-ticker.wt-flash{{box-shadow:0 0 20px rgba(63,185,80,.55)!important}}
+.win-ticker-label{{flex-shrink:0;padding:0 14px;color:#fff;letter-spacing:.8px;
+                   font-size:.9em;font-weight:700;display:flex;align-items:center;gap:7px;
+                   background:linear-gradient(135deg,#1a7f37 0%,#238636 100%);
+                   border-right:2px solid rgba(63,185,80,.40);white-space:nowrap;
+                   text-transform:uppercase}}
+.wt-dot{{width:7px;height:7px;border-radius:50%;background:#fff;flex-shrink:0;
+          animation:wt-pulse 1.4s ease-in-out infinite}}
+@keyframes wt-pulse{{0%,100%{{opacity:1;transform:scale(1)}}50%{{opacity:.3;transform:scale(.75)}}}}
+.win-ticker-scroll{{flex:1;overflow:hidden;position:relative;display:flex;align-items:center}}
+.win-ticker-inner{{display:inline-flex;align-items:center;white-space:nowrap;
+                   animation:wt-scroll 40s linear infinite;will-change:transform}}
+.win-ticker-inner:hover{{animation-play-state:paused;cursor:default}}
+@keyframes wt-scroll{{from{{transform:translateX(0)}}to{{transform:translateX(-50%)}}}}
+.wt-item{{display:inline-flex;align-items:center;gap:5px;padding:0 6px 0 0}}
+.wt-sep{{color:#30363d;padding:0 10px;font-size:1.2em;user-select:none}}
+.wt-sym{{color:#58a6ff;font-weight:800;letter-spacing:.5px}}
+.wt-long{{color:#3fb950}}.wt-short{{color:#f85149}}
+.wt-pnl-pos{{color:#3fb950;font-weight:700}}.wt-pnl-neg{{color:#f85149;font-weight:700}}
+.wt-r{{color:#e3b341;font-size:.9em}}
+.wt-wlt{{color:#6e7681;font-size:.86em;font-weight:400}}
+.wt-wallet-label{{color:#484f58;font-size:.82em;font-weight:400}}
 /* ── Header ── */
 .header{{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:6px;
          padding-bottom:12px;border-bottom:1px solid var(--border)}}
@@ -1775,6 +1786,7 @@ tr:hover td{{background:rgba(255,255,255,.025)}}
     <span class="live-ring"></span> TradingBots<span style="color:#3fb950">.fun</span>
   </h1>
   <div class="header-right">
+    <a href="/fleet" style="font-size:.78rem;color:#8b949e;text-decoration:none;padding:5px 10px;border:1px solid #21262d;border-radius:6px;display:inline-flex;align-items:center;gap:5px;transition:.15s" onmouseover="this.style.color='#e6edf3';this.style.borderColor='#30363d'" onmouseout="this.style.color='#8b949e';this.style.borderColor='#21262d'">⚡ Fleet (5 000)</a>
     <span class="ts">⟳ <span id="cntdn">30s</span> &nbsp;·&nbsp; {last_update}</span>
     <a href="/login" class="btn-cta" data-funnel="login_click">
       <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor"
@@ -1786,16 +1798,18 @@ tr:hover td{{background:rgba(255,255,255,.025)}}
   </div>
 </div>
 
-<!-- ── Live winning-trades ticker ──────────────────────────────────────────── -->
+<!-- ── Live Wins Stock-Market Ticker ─────────────────────────────────────── -->
+<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+  <span style="font-size:.68em;color:#6e7681;font-weight:600;letter-spacing:.3px">SESSION</span>
+  <span id="wt-ls-stats" style="font-size:.68em;font-family:'SF Mono','Courier New',monospace"></span>
+</div>
 <div class="win-ticker" id="win-ticker">
   <div class="win-ticker-label">
-    <span class="live-ring"></span> LIVE WINS
+    <span class="wt-dot"></span>LIVE WINS
   </div>
-  <div class="win-ticker-scroll" id="win-scroll">
+  <div class="win-ticker-scroll">
     <div class="win-ticker-inner" id="win-inner">
-      <div class="win-item" style="color:#8b949e">
-        <span>Waiting for winning trades…</span>
-      </div>
+      <span style="color:#484f58;padding:0 24px">Waiting for winning trades…</span>
     </div>
   </div>
 </div>
@@ -1991,93 +2005,87 @@ tr:hover td{{background:rgba(255,255,255,.025)}}
 </script>
 
 <script>
-/* ── Live winning-trades ticker (SSE) ──────────────────────────────────── */
+/* ── Live Wins — Bloomberg-style continuous stock ticker (SSE) ────────── */
 (function(){{
-  var MAX_ITEMS = 30;      // keep at most 30 wins in the carousel
-  var SCROLL_INTERVAL = 4000; // rotate visible item every 4 s
+  var MAX_ITEMS = 60;
+  var PX_PER_SEC = 80;   // scroll speed pixels/second
   var wins = [];
-  var currentIdx = 0;
-  var scrollTimer = null;
+  var longWins = 0, shortWins = 0;
 
-  function fmtWin(w){{
-    var side = w.side === 'LONG' ? '▲' : '▼';
-    var col  = w.side === 'LONG' ? '#3fb950' : '#f78166';
-    var rStr = w.r_mult > 0 ? '+' + w.r_mult.toFixed(2) + 'R' : '';
-    return '<div class="win-item">'
-      + '<span class="sym">' + w.symbol + '</span>'
-      + '<span style="color:' + col + '">' + side + ' </span>'
-      + '<span class="pnl">+$' + w.pnl.toFixed(2) + '</span>'
-      + (rStr ? '<span style="color:#e3b341;font-size:.85em">' + rStr + '</span>' : '')
-      + '<span class="wlt">· ' + w.wallet + '</span>'
-      + '</div>';
+  function fmtSym(s){{ return s.replace('-PERP','').replace('USDT',''); }}
+
+  function fmtItem(w, idx){{
+    var isLong = w.side === 'LONG';
+    var arrow  = isLong ? '▲' : '▼';
+    var sideC  = isLong ? 'wt-long' : 'wt-short';
+    var pnlC   = w.pnl >= 0 ? 'wt-pnl-pos' : 'wt-pnl-neg';
+    var pnlStr = (w.pnl >= 0 ? '+$' : '-$') + Math.abs(w.pnl).toFixed(2);
+    var rStr   = w.r_mult > 0 ? '+' + w.r_mult.toFixed(2) + 'R' : '';
+    var sym    = fmtSym(w.symbol);
+    return '<span class="wt-item">'
+      + '<span class="wt-sep">◆</span>'
+      + '<span class="wt-sym">' + sym + '</span>'
+      + '<span class="' + sideC + '">&nbsp;' + arrow + '&nbsp;</span>'
+      + '<span class="' + pnlC + '">' + pnlStr + '</span>'
+      + (rStr ? '&nbsp;<span class="wt-r">' + rStr + '</span>' : '')
+      + '&nbsp;<span class="wt-wlt">·&nbsp;' + w.wallet + '</span>'
+      + '</span>';
   }}
 
   function renderTicker(){{
-    if(wins.length === 0) return;
     var inner = document.getElementById('win-inner');
     if(!inner) return;
-    inner.innerHTML = wins.map(fmtWin).join('');
+    if(wins.length === 0){{
+      inner.style.animation = 'none';
+      inner.innerHTML = '<span style="color:#484f58;padding:0 24px">Waiting for winning trades…</span>';
+      return;
+    }}
+    // Duplicate content for seamless infinite loop
+    var html = wins.map(fmtItem).join('');
+    inner.innerHTML = html + html;
+    // Speed: base on content width, min 8s
+    inner.style.animation = 'none';
+    inner.offsetWidth; // force reflow
+    var halfW = inner.scrollWidth / 2;
+    var dur   = Math.max(8, halfW / PX_PER_SEC);
+    inner.style.animation = 'wt-scroll ' + dur.toFixed(1) + 's linear infinite';
   }}
 
-  function startScroll(){{
-    if(scrollTimer) clearInterval(scrollTimer);
-    if(wins.length <= 1) return;
-    scrollTimer = setInterval(function(){{
-      currentIdx = (currentIdx + 1) % wins.length;
-      var inner = document.getElementById('win-inner');
-      if(!inner) return;
-      // Shift by item width — each item is padded, use offsetWidth
-      var items = inner.querySelectorAll('.win-item');
-      if(items.length === 0) return;
-      var shift = 0;
-      for(var i=0;i<currentIdx && i<items.length;i++){{
-        shift += items[i].offsetWidth;
-      }}
-      inner.style.transform = 'translateX(-' + shift + 'px)';
-    }}, SCROLL_INTERVAL);
+  function updateLSStats(){{
+    var el = document.getElementById('wt-ls-stats');
+    if(!el) return;
+    var total = longWins + shortWins;
+    if(total === 0){{ el.textContent = ''; return; }}
+    var lp = ((longWins/total)*100).toFixed(0);
+    var sp = ((shortWins/total)*100).toFixed(0);
+    el.innerHTML = '<span style="color:#3fb950">▲ ' + longWins + ' (' + lp + '%)</span>'
+      + '<span style="color:#6e7681"> · </span>'
+      + '<span style="color:#f85149">▼ ' + shortWins + ' (' + sp + '%)</span>';
   }}
 
   function addWin(w){{
-    wins.unshift(w);          // newest first
+    wins.unshift(w);
     if(wins.length > MAX_ITEMS) wins.pop();
-    currentIdx = 0;
-    var inner = document.getElementById('win-inner');
-    if(inner) inner.style.transform = 'translateX(0)';
+    if(w.side === 'LONG') longWins++; else shortWins++;
     renderTicker();
-    startScroll();
-  }}
-
-  // Flash the ticker border green briefly on a new win
-  function flashTicker(){{
+    updateLSStats();
+    // Glow flash
     var el = document.getElementById('win-ticker');
-    if(!el) return;
-    el.style.borderColor = '#3fb950';
-    el.style.boxShadow = '0 0 12px rgba(63,185,80,.5)';
-    setTimeout(function(){{
-      el.style.borderColor = '';
-      el.style.boxShadow = '';
-    }}, 800);
+    if(el){{
+      el.classList.add('wt-flash');
+      setTimeout(function(){{ el.classList.remove('wt-flash'); }}, 900);
+    }}
   }}
 
-  // Connect SSE
   function connectStream(){{
     if(!window.EventSource) return;
     var es = new EventSource('/api/trade-stream');
     es.addEventListener('trade_win', function(e){{
-      try{{
-        var w = JSON.parse(e.data);
-        addWin(w);
-        flashTicker();
-      }}catch(err){{}}
+      try{{ addWin(JSON.parse(e.data)); }}catch(err){{}}
     }});
-    es.onerror = function(){{
-      // Reconnect after 5 s if connection drops
-      es.close();
-      setTimeout(connectStream, 5000);
-    }};
+    es.onerror = function(){{ es.close(); setTimeout(connectStream, 5000); }};
   }}
 
-  // Start on page load
   if(document.readyState === 'loading'){{
     document.addEventListener('DOMContentLoaded', connectStream);
   }} else {{
@@ -10884,6 +10892,356 @@ footer a{color:#58a6ff;text-decoration:none}
 </html>"#)
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// /fleet  –  Live aggregate view across all scale-test wallets
+// ─────────────────────────────────────────────────────────────────────────────
+async fn fleet_handler(State(app): State<AppState>) -> Html<String> {
+    // ── Snapshot all tenant states ────────────────────────────────────────────
+    let mgr = app.tenants.read().await;
+
+    struct WalletSnap {
+        name: String,
+        equity: f64,
+        initial: f64,
+        pnl_pct: f64,
+        open: usize,
+        trades: usize,
+        wins: usize,
+        cb: bool,
+    }
+
+    let mut snaps: Vec<WalletSnap> = Vec::with_capacity(mgr.count());
+    let mut symbol_longs: HashMap<String, usize> = HashMap::new();
+    let mut symbol_shorts: HashMap<String, usize> = HashMap::new();
+    let mut total_open_pos: usize = 0;
+    let mut total_long_pos: usize = 0;
+    let mut total_short_pos: usize = 0;
+    let mut cb_count: usize = 0;
+
+    for handle in mgr.all() {
+        // Skip non-scale wallets (demo bots, real users) for fleet view
+        let id_str = handle.config.display_name.clone();
+        let state = handle.state.read().await;
+        let committed: f64 = state.positions.iter().map(|p| p.size_usd).sum();
+        let unrealised: f64 = state.positions.iter().map(|p| p.unrealised_pnl).sum();
+        let equity = state.capital + committed + unrealised;
+        let pnl_pct = if state.initial_capital > 0.0 {
+            (equity - state.initial_capital) / state.initial_capital * 100.0
+        } else { 0.0 };
+
+        for p in &state.positions {
+            let sym = p.symbol.replace("-PERP", "").replace("USDT", "");
+            if p.side == "LONG" {
+                *symbol_longs.entry(sym).or_insert(0) += 1;
+                total_long_pos += 1;
+            } else {
+                *symbol_shorts.entry(sym.clone()).or_insert(0) += 1;
+                *symbol_shorts.entry(sym).or_insert(0) += 0; // ensure key exists
+                total_short_pos += 1;
+            }
+        }
+        total_open_pos += state.positions.len();
+        if state.cb_active { cb_count += 1; }
+
+        snaps.push(WalletSnap {
+            name: id_str,
+            equity,
+            initial: state.initial_capital,
+            pnl_pct,
+            open: state.positions.len(),
+            trades: state.metrics.total_trades,
+            wins: state.metrics.wins,
+            cb: state.cb_active,
+        });
+    }
+    drop(mgr);
+
+    let wallet_count = snaps.len();
+    let total_initial: f64 = snaps.iter().map(|s| s.initial).sum();
+    let total_equity: f64  = snaps.iter().map(|s| s.equity).sum();
+    let total_pnl = total_equity - total_initial;
+    let total_pnl_pct = if total_initial > 0.0 { total_pnl / total_initial * 100.0 } else { 0.0 };
+    let total_trades: usize = snaps.iter().map(|s| s.trades).sum();
+    let total_wins: usize   = snaps.iter().map(|s| s.wins).sum();
+    let fleet_wr = if total_trades > 0 { total_wins as f64 / total_trades as f64 * 100.0 } else { 0.0 };
+
+    // Sort copies for leaderboard
+    snaps.sort_by(|a, b| b.pnl_pct.partial_cmp(&a.pnl_pct).unwrap_or(std::cmp::Ordering::Equal));
+
+    let top10: String = snaps.iter().take(10).enumerate().map(|(i, s)| {
+        let pnl_col = if s.pnl_pct >= 0.0 { "#3fb950" } else { "#f85149" };
+        let sign    = if s.pnl_pct >= 0.0 { "+" } else { "" };
+        format!(r#"<tr>
+          <td style="color:#8b949e;width:28px">#{}</td>
+          <td style="color:#e6edf3;font-weight:600">{}</td>
+          <td style="color:#58a6ff">${:.2}</td>
+          <td style="color:{};font-weight:700">{}{:.2}%</td>
+          <td style="color:#8b949e">{}</td>
+          <td style="color:#e3b341">{:.0}%</td>
+          <td style="color:{}">{}</td>
+        </tr>"#,
+            i+1, s.name,
+            s.equity,
+            pnl_col, sign, s.pnl_pct,
+            s.trades,
+            if s.trades > 0 { s.wins as f64 / s.trades as f64 * 100.0 } else { 0.0 },
+            if s.cb { "#f85149" } else { "#3fb950" },
+            if s.cb { "🔴 CB" } else { "✅ OK" },
+        )
+    }).collect();
+
+    let bot10: String = snaps.iter().rev().take(10).enumerate().map(|(i, s)| {
+        let pnl_col = if s.pnl_pct >= 0.0 { "#3fb950" } else { "#f85149" };
+        let sign    = if s.pnl_pct >= 0.0 { "+" } else { "" };
+        format!(r#"<tr>
+          <td style="color:#8b949e;width:28px">#{}</td>
+          <td style="color:#e6edf3;font-weight:600">{}</td>
+          <td style="color:#58a6ff">${:.2}</td>
+          <td style="color:{};font-weight:700">{}{:.2}%</td>
+          <td style="color:#8b949e">{}</td>
+          <td style="color:#e3b341">{:.0}%</td>
+          <td style="color:{}">{}</td>
+        </tr>"#,
+            wallet_count - i, s.name,
+            s.equity,
+            pnl_col, sign, s.pnl_pct,
+            s.trades,
+            if s.trades > 0 { s.wins as f64 / s.trades as f64 * 100.0 } else { 0.0 },
+            if s.cb { "#f85149" } else { "#3fb950" },
+            if s.cb { "🔴 CB" } else { "✅ OK" },
+        )
+    }).collect();
+
+    // Symbol table — all symbols, sorted by total position count
+    let mut sym_rows: Vec<(String, usize, usize)> = {
+        let mut all_syms: std::collections::HashSet<String> = std::collections::HashSet::new();
+        all_syms.extend(symbol_longs.keys().cloned());
+        all_syms.extend(symbol_shorts.keys().cloned());
+        all_syms.into_iter().map(|sym| {
+            let l = symbol_longs.get(&sym).copied().unwrap_or(0);
+            let s = symbol_shorts.get(&sym).copied().unwrap_or(0);
+            (sym, l, s)
+        }).collect()
+    };
+    sym_rows.sort_by(|a, b| (b.1+b.2).cmp(&(a.1+a.2)));
+
+    let sym_table: String = sym_rows.iter().take(25).map(|(sym, l, sh)| {
+        let total = l + sh;
+        let net: i64 = *l as i64 - *sh as i64;
+        let net_col = if net > 0 { "#3fb950" } else if net < 0 { "#f85149" } else { "#8b949e" };
+        let bar_l = if total > 0 { l * 120 / total } else { 60 };
+        let bar_s = 120usize.saturating_sub(bar_l);
+        format!(r#"<tr>
+          <td style="color:#58a6ff;font-weight:700;font-family:monospace">{}</td>
+          <td style="color:#3fb950">▲ {}</td>
+          <td style="color:#f85149">▼ {}</td>
+          <td style="color:{};font-weight:700">{:+}</td>
+          <td><div style="display:flex;gap:1px;align-items:center;height:10px">
+            <div style="width:{}px;height:8px;background:#3fb950;border-radius:2px 0 0 2px;opacity:.8"></div>
+            <div style="width:{}px;height:8px;background:#f85149;border-radius:0 2px 2px 0;opacity:.8"></div>
+          </div></td>
+        </tr>"#,
+            sym, l, sh, net_col, net, bar_l, bar_s
+        )
+    }).collect();
+
+    let pnl_col = if total_pnl >= 0.0 { "#3fb950" } else { "#f85149" };
+    let pnl_sign = if total_pnl >= 0.0 { "+" } else { "" };
+    let ts = chrono::Utc::now().format("%H:%M:%S UTC").to_string();
+
+    Html(format!(r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fleet Dashboard — TradingBots.fun</title>
+<meta http-equiv="refresh" content="30">
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{background:#0d1117;color:#e6edf3;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px;min-height:100vh}}
+a{{color:#58a6ff;text-decoration:none}}a:hover{{text-decoration:underline}}
+.page{{max-width:1200px;margin:0 auto;padding:24px 16px}}
+.header{{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;padding-bottom:16px;border-bottom:1px solid #21262d}}
+.header h1{{font-size:1.3em;font-weight:800;background:linear-gradient(90deg,#58a6ff,#3fb950);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}}
+.header-right{{display:flex;align-items:center;gap:16px;font-size:.78em;color:#8b949e}}
+.live-badge{{display:flex;align-items:center;gap:6px;background:#161b22;border:1px solid rgba(63,185,80,.3);border-radius:20px;padding:4px 12px;color:#3fb950;font-weight:700}}
+.dot{{width:7px;height:7px;border-radius:50%;background:#3fb950;animation:pulse 1.4s ease-in-out infinite}}
+@keyframes pulse{{0%,100%{{opacity:1}}50%{{opacity:.3}}}}
+.nav-links{{display:flex;gap:12px;margin-bottom:20px;font-size:.82em}}
+.nav-links a{{color:#8b949e;padding:4px 10px;border-radius:6px;border:1px solid #21262d}}
+.nav-links a:hover{{background:#161b22;color:#e6edf3;text-decoration:none}}
+.nav-links a.active{{background:#1f3d1f;border-color:rgba(63,185,80,.4);color:#3fb950}}
+.metrics{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:24px}}
+.card{{background:#161b22;border:1px solid #21262d;border-radius:10px;padding:16px}}
+.card .label{{font-size:.72em;color:#8b949e;text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px}}
+.card .value{{font-size:1.6em;font-weight:800;line-height:1.1;font-variant-numeric:tabular-nums}}
+.card .sub{{font-size:.78em;color:#8b949e;margin-top:4px}}
+.section{{margin-bottom:28px}}
+.section-title{{font-size:.78em;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:#8b949e;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid #21262d}}
+.two-col{{display:grid;grid-template-columns:1fr 1fr;gap:16px}}
+@media(max-width:700px){{.two-col{{grid-template-columns:1fr}}}}
+table{{width:100%;border-collapse:collapse}}
+th{{text-align:left;font-size:.72em;color:#8b949e;text-transform:uppercase;letter-spacing:.6px;padding:6px 8px;border-bottom:1px solid #21262d}}
+td{{padding:7px 8px;border-bottom:1px solid #161b22;font-size:.82em}}
+tr:last-child td{{border-bottom:none}}
+tr:hover td{{background:rgba(255,255,255,.02)}}
+.prog-bar{{height:6px;background:#21262d;border-radius:3px;overflow:hidden;margin-top:6px}}
+.prog-fill{{height:100%;border-radius:3px}}
+.ls-row{{display:flex;gap:8px;align-items:center;margin-bottom:10px}}
+.ls-label{{font-size:.75em;color:#8b949e;width:50px}}
+.ls-bar-wrap{{flex:1;height:20px;background:#21262d;border-radius:4px;overflow:hidden;display:flex}}
+.ls-bar-l{{background:rgba(63,185,80,.7)}}
+.ls-bar-s{{background:rgba(248,81,73,.7)}}
+.ls-val{{font-size:.8em;font-weight:700;width:60px;text-align:right}}
+.refresh-note{{font-size:.7em;color:#484f58;text-align:right;margin-top:16px}}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="header">
+    <h1>⚡ Fleet Dashboard</h1>
+    <div class="header-right">
+      <span>Updated {ts}</span>
+      <div class="live-badge"><span class="dot"></span>LIVE · auto-refresh 30s</div>
+    </div>
+  </div>
+
+  <div class="nav-links">
+    <a href="/dashboard">📊 Primary Bot</a>
+    <a href="/fleet" class="active">⚡ Fleet ({wallet_count} wallets)</a>
+    <a href="/leaderboard">🏆 Leaderboard</a>
+    <a href="/admin">🔧 Admin</a>
+  </div>
+
+  <!-- ── Key Metrics ── -->
+  <div class="metrics">
+    <div class="card">
+      <div class="label">Active Wallets</div>
+      <div class="value" style="color:#58a6ff">{wallet_count}</div>
+      <div class="sub">scale-test fleet</div>
+    </div>
+    <div class="card">
+      <div class="label">Total Equity</div>
+      <div class="value">${total_equity:.0}</div>
+      <div class="sub">deployed ${total_initial:.0} initial</div>
+    </div>
+    <div class="card">
+      <div class="label">Fleet PnL</div>
+      <div class="value" style="color:{pnl_col}">{pnl_sign}${total_pnl:.2}</div>
+      <div class="sub" style="color:{pnl_col}">{pnl_sign}{total_pnl_pct:.2}%</div>
+    </div>
+    <div class="card">
+      <div class="label">Open Positions</div>
+      <div class="value" style="color:#e3b341">{total_open_pos}</div>
+      <div class="sub">across all wallets</div>
+    </div>
+    <div class="card">
+      <div class="label">Fleet Win Rate</div>
+      <div class="value" style="color:#3fb950">{fleet_wr:.1}%</div>
+      <div class="sub">{total_wins}/{total_trades} trades</div>
+    </div>
+    <div class="card">
+      <div class="label">Circuit Breakers</div>
+      <div class="value" style="color:{cb_col}">{cb_count}</div>
+      <div class="sub">wallets in drawdown CB</div>
+    </div>
+  </div>
+
+  <!-- ── Long/Short breakdown ── -->
+  <div class="section">
+    <div class="section-title">Position Direction Breakdown</div>
+    <div style="max-width:500px">
+      <div class="ls-row">
+        <span class="ls-label" style="color:#3fb950">LONG</span>
+        <div class="ls-bar-wrap">
+          <div class="ls-bar-l" style="width:{long_pct:.0}%"></div>
+          <div class="ls-bar-s" style="width:{short_pct:.0}%"></div>
+        </div>
+        <span class="ls-val" style="color:#3fb950">▲ {total_long_pos}</span>
+        <span class="ls-val" style="color:#f85149">▼ {total_short_pos}</span>
+      </div>
+      <div style="font-size:.75em;color:#8b949e;margin-top:4px">
+        Long {long_pct:.1}%  ·  Short {short_pct:.1}%
+        {net_bias_note}
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Symbol heat table + Leaderboards ── -->
+  <div class="two-col">
+
+    <div class="section">
+      <div class="section-title">Most-Traded Symbols (top 25)</div>
+      <div style="background:#161b22;border:1px solid #21262d;border-radius:10px;overflow:hidden">
+        <table>
+          <tr>
+            <th>Symbol</th><th>Long</th><th>Short</th><th>Net</th><th>Bias</th>
+          </tr>
+          {sym_table}
+        </table>
+      </div>
+    </div>
+
+    <div>
+      <div class="section">
+        <div class="section-title">🥇 Top 10 Performers</div>
+        <div style="background:#161b22;border:1px solid #21262d;border-radius:10px;overflow:hidden">
+          <table>
+            <tr><th>#</th><th>Wallet</th><th>Equity</th><th>PnL%</th><th>Trades</th><th>WR</th><th>Status</th></tr>
+            {top10}
+          </table>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">📉 Bottom 10 Performers</div>
+        <div style="background:#161b22;border:1px solid #21262d;border-radius:10px;overflow:hidden">
+          <table>
+            <tr><th>#</th><th>Wallet</th><th>Equity</th><th>PnL%</th><th>Trades</th><th>WR</th><th>Status</th></tr>
+            {bot10}
+          </table>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="refresh-note">Page auto-refreshes every 30 s · <a href="/fleet">Refresh now</a></div>
+
+</div>
+</body>
+</html>"#,
+        ts = ts,
+        wallet_count = wallet_count,
+        total_equity = total_equity,
+        total_initial = total_initial,
+        total_pnl = total_pnl,
+        pnl_col = pnl_col,
+        pnl_sign = pnl_sign,
+        total_pnl_pct = total_pnl_pct,
+        total_open_pos = total_open_pos,
+        fleet_wr = fleet_wr,
+        total_wins = total_wins,
+        total_trades = total_trades,
+        cb_count = cb_count,
+        cb_col = if cb_count > 50 { "#f85149" } else if cb_count > 10 { "#e3b341" } else { "#3fb950" },
+        long_pct = if total_open_pos > 0 { total_long_pos as f64 / total_open_pos as f64 * 100.0 } else { 50.0 },
+        short_pct = if total_open_pos > 0 { total_short_pos as f64 / total_open_pos as f64 * 100.0 } else { 50.0 },
+        total_long_pos = total_long_pos,
+        total_short_pos = total_short_pos,
+        net_bias_note = {
+            let net = total_long_pos as i64 - total_short_pos as i64;
+            if net.abs() < 10 { "· Balanced".to_string() }
+            else if net > 0 { format!("· Fleet leaning LONG by {} positions", net) }
+            else { format!("· Fleet leaning SHORT by {} positions", net.abs()) }
+        },
+        sym_table = sym_table,
+        top10 = top10,
+        bot10 = bot10,
+    ))
+}
+
 pub async fn serve(
     app_state: AppState,
     port: u16,
@@ -10953,6 +11311,7 @@ pub async fn serve(
         .route("/api/bridge/status/:id", get(bridge_status_handler))
         // ── Leaderboard & invite codes ──────────────────────────────────────
         .route("/leaderboard", get(leaderboard_handler))
+        .route("/fleet", get(fleet_handler))
         .route("/app/invite", get(get_invite_handler))
         .route("/app/invite/generate", post(generate_invite_handler))
         .route("/api/leaderboard", get(api_leaderboard_handler))
