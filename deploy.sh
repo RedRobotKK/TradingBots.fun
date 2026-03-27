@@ -1155,7 +1155,12 @@ if $DO_PUSH; then
     echo "✓ Updated local git remote → ${NEW_LOCAL_REMOTE}"
   fi
   info "Pushing branch '${BRANCH}' to origin…"
-  git push origin "$BRANCH" 2>&1 | sed 's/^/  /'
+  # Retry push with rebase in case CI-log commits landed since we started
+  if ! git push origin "$BRANCH" 2>&1 | sed 's/^/  /'; then
+    warn "Push rejected — rebasing version bump onto remote and retrying…"
+    git pull --rebase origin "$BRANCH" 2>&1 | sed 's/^/  /'
+    git push origin "$BRANCH" 2>&1 | sed 's/^/  /'
+  fi
   success "GitHub up to date  ($(git rev-parse --short HEAD))"
 fi
 
