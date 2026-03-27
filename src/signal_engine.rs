@@ -67,6 +67,18 @@ const ENGINE_CYCLE_SECS: u64 = 30;
 /// a single tenant used to pay.
 const MAX_SYMBOLS: usize = 40;
 
+/// Inter-symbol REST pacing delay.
+///
+/// At cold start (empty candle/book cache) each symbol fires up to 2 REST
+/// calls (candleSnapshot + l2Book).  40 symbols × 2 calls with no delay
+/// produces an 80-request burst that reliably triggers HL HTTP 429s.
+///
+/// 75 ms × 40 symbols = 3 s total — well inside the 30 s cycle, and enough
+/// to keep instantaneous request rate below HL's ~12 req/s soft limit.
+/// Cache-hit cycles pay only the sleep cost (no REST call) but stay within
+/// the same budget.
+const INTER_SYMBOL_DELAY_MS: u64 = 75;
+
 /// Minimum 24-h USD volume for a symbol to be considered.
 /// Below this the spread is typically too wide for reliable fills.
 const MIN_VOLUME_USD: f64 = 5_000_000.0;
@@ -279,8 +291,16 @@ impl SignalEngine {
         );
 
         // ── Step 2: compute signals for each symbol ────────────────────────
+        // Pace REST calls: candle + order-book fetches are cached (1h TTL /
+        // 25s TTL respectively) but on a cold start every symbol misses the
+        // cache and fires 2 REST calls back-to-back.  A 75 ms stagger keeps
+        // the instantaneous rate well below HL's soft 429 threshold while
+        // adding only ~3 s to a 40-symbol cycle.
         let mut snapshots: Vec<SignalSnapshot> = Vec::with_capacity(candidates.len());
-        for (symbol, _vol) in &candidates {
+        for (idx, (symbol, _vol)) in candidates.iter().enumerate() {
+            if idx > 0 {
+                sleep(Duration::from_millis(INTER_SYMBOL_DELAY_MS)).await;
+            }
             match self.compute_for_symbol(symbol, &mids, cycle_seq).await {
                 Ok(snap) => snapshots.push(snap),
                 Err(e) => warn!("SignalEngine: {} compute error: {}", symbol, e),
