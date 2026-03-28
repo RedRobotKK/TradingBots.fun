@@ -1347,12 +1347,10 @@ async fn run_cycle(
                 total_trades_today: closed_today,
                 win_rate_today,
             };
-            let db_clone = db.clone();
-            tokio::spawn(async move {
-                if let Err(e) = db_clone.insert_aum_snapshot(&snap).await {
-                    log::debug!("aum_snapshot write skipped: {e}");
-                }
-            });
+            // Non-blocking enqueue — the batch flusher keeps only the latest
+            // snapshot per 60-second window and writes one INSERT per minute,
+            // eliminating the 5 000-task fire-and-forget thundering herd.
+            db.enqueue_aum_snapshot(snap);
         }
     }
 

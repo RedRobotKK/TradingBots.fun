@@ -101,19 +101,21 @@ pub struct AumSummary {
 
 /// Async PostgreSQL connection pool. Clone is cheap — all clones share the pool.
 ///
-/// # Equity snapshot batching
+/// # Snapshot batching (equity + AUM)
 ///
-/// `enqueue_equity_snapshot` sends `(tenant_id, equity)` pairs to an unbounded
-/// MPSC channel.  A background task spawned in `connect()` drains the channel
-/// every 30 s and writes all pending snapshots in a single UNNEST batch INSERT.
-/// This collapses up to 5 000 individual one-row INSERTs per cycle into one
-/// query, eliminating pool-connection saturation under scale-test load.
+/// Both `enqueue_equity_snapshot` and `enqueue_aum_snapshot` are non-blocking
+/// channel sends.  Background tasks spawned in `connect()` drain the channels
+/// every 30 s and write all pending rows in a single query, collapsing up to
+/// 5 000 individual one-row INSERTs per cycle into one round-trip.
 #[derive(Clone)]
 pub struct Database {
     pool: PgPool,
     /// Non-blocking send end of the equity-snapshot batch queue.
-    /// Receiver lives in the background flusher task spawned by `connect()`.
     snapshot_tx: mpsc::UnboundedSender<(uuid::Uuid, f64)>,
+    /// Non-blocking send end of the aum-snapshot queue.
+    /// The flusher keeps only the **last** snapshot received per 60-second
+    /// window — AUM is an aggregate metric and only the freshest value matters.
+    aum_tx: mpsc::UnboundedSender<AumSnapshot>,
 }
 
 /// `Arc`-wrapped `Database` — the canonical way to share it across tasks.
@@ -189,7 +191,53 @@ impl Database {
             }
         });
 
-        let db = Database { pool, snapshot_tx };
+        // ── AUM snapshot flusher ───────────────────────────────────────────────
+        // Only the most-recent snapshot matters (AUM is an aggregate metric).
+        // The flusher keeps the last value received and writes it every 60 s,
+        // reducing 5 000 individual INSERTs/cycle to one query every minute.
+        let (aum_tx, mut aum_rx) = mpsc::unbounded_channel::<AumSnapshot>();
+        let aum_flush_pool = pool.clone();
+        tokio::spawn(async move {
+            let mut interval =
+                tokio::time::interval(std::time::Duration::from_secs(60));
+            interval.tick().await; // skip immediate first tick
+            let mut latest: Option<AumSnapshot> = None;
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        if let Some(ref s) = latest {
+                            let _ = sqlx::query(
+                                r#"INSERT INTO aum_snapshots (
+                                    total_aum, deposited_capital, total_pnl, pnl_pct,
+                                    active_tenant_count, total_tenant_count,
+                                    open_position_count, total_trades_today, win_rate_today
+                                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)"#
+                            )
+                            .bind(s.total_aum)
+                            .bind(s.deposited_capital)
+                            .bind(s.total_pnl)
+                            .bind(s.pnl_pct)
+                            .bind(s.active_tenant_count)
+                            .bind(s.total_tenant_count)
+                            .bind(s.open_position_count)
+                            .bind(s.total_trades_today)
+                            .bind(s.win_rate_today)
+                            .execute(&aum_flush_pool)
+                            .await;
+                            latest = None;
+                        }
+                    }
+                    msg = aum_rx.recv() => {
+                        match msg {
+                            Some(snap) => latest = Some(snap), // keep only latest
+                            None => break,
+                        }
+                    }
+                }
+            }
+        });
+
+        let db = Database { pool, snapshot_tx, aum_tx };
         db.run_migrations().await?;
         log::info!("✅ PostgreSQL ready");
         Ok(db)
@@ -330,6 +378,18 @@ impl Database {
         .await
         .context("insert_aum_snapshot failed")?;
         Ok(())
+    }
+
+    /// Enqueue an AUM snapshot for batched write — **non-blocking, O(1)**.
+    ///
+    /// The background flusher spawned in [`connect`] keeps only the most recent
+    /// snapshot received per 60-second window and writes it in one INSERT.
+    /// Calling this from 5 000 tenant loops per cycle produces exactly one DB
+    /// write per minute instead of 5 000 individual INSERTs per 30 seconds.
+    pub fn enqueue_aum_snapshot(&self, snap: AumSnapshot) {
+        if self.aum_tx.send(snap).is_err() {
+            log::warn!("aum_snapshot enqueue failed — flusher task may have exited");
+        }
     }
 
     /// Return AUM time-series for the TVL graph.

@@ -65,8 +65,12 @@ const MIN_MOVE_THRESHOLD: f64 = 0.0005;
 const MAX_QUEUE_PER_SYMBOL: usize = 50;
 
 /// How many execution workers drain the queue in parallel.
-/// Each worker handles one order at a time; 20 workers = 20 concurrent HL calls.
-pub const EXECUTION_WORKER_COUNT: usize = 20;
+///
+/// Reduced from 20 → 4.  20 workers polling every 200 ms consumed all 20 pool
+/// connections permanently even when the queue was empty (100 DB polls/s).
+/// 4 workers is sufficient for the current order volume; increase if needed
+/// once real multi-tenant HL execution is wired up in Phase 2.
+pub const EXECUTION_WORKER_COUNT: usize = 4;
 
 // ─────────────────────────── Position row ────────────────────────────────────
 
@@ -457,18 +461,33 @@ async fn enqueue_exits(pool: &PgPool, exits: &[QueuedExit]) -> Result<()> {
 
 /// One execution worker: polls `execution_queue` and processes pending jobs.
 /// Runtime queries (no macros) — compiles before migration 016 creates the table.
+///
+/// # Idle backoff
+/// When the queue is empty the worker sleeps 1 s before the next poll instead
+/// of the active 200 ms interval.  This prevents the 4 workers from issuing
+/// ~20 DB polls/second against an empty queue, freeing pool connections for
+/// the tenant loops and background flushers.
 async fn run_single_worker(worker_id: usize, pool: PgPool) {
-    let mut tick = interval(Duration::from_millis(200));
     loop {
-        tick.tick().await;
-        if let Err(e) = worker_tick(worker_id, &pool).await {
-            warn!("ExecutionWorker {}: tick error: {}", worker_id, e);
-            sleep(Duration::from_millis(500)).await;
+        match worker_tick(worker_id, &pool).await {
+            Ok(true) => {
+                // Job was processed — poll quickly for the next one.
+                sleep(Duration::from_millis(200)).await;
+            }
+            Ok(false) => {
+                // Queue empty — back off to avoid burning pool connections.
+                sleep(Duration::from_secs(1)).await;
+            }
+            Err(e) => {
+                warn!("ExecutionWorker {}: tick error: {}", worker_id, e);
+                sleep(Duration::from_millis(500)).await;
+            }
         }
     }
 }
 
-async fn worker_tick(worker_id: usize, pool: &PgPool) -> Result<()> {
+/// Returns `Ok(true)` if a job was processed, `Ok(false)` if the queue was empty.
+async fn worker_tick(worker_id: usize, pool: &PgPool) -> Result<bool> {
     // Claim one pending job via SKIP LOCKED for parallel-safe processing.
     let row = sqlx::query(
         r#"
@@ -492,11 +511,11 @@ async fn worker_tick(worker_id: usize, pool: &PgPool) -> Result<()> {
 
     let row = match row {
         Ok(Some(r)) => r,
-        Ok(None) => return Ok(()), // queue empty
+        Ok(None) => return Ok(false), // queue empty
         Err(e) => {
             // Table may not exist yet — suppress until migration runs
             debug!("worker_tick {}: {}", worker_id, e);
-            return Ok(());
+            return Ok(false);
         }
     };
 
@@ -527,7 +546,7 @@ async fn worker_tick(worker_id: usize, pool: &PgPool) -> Result<()> {
     .execute(pool)
     .await;
 
-    Ok(())
+    Ok(true) // job was processed
 }
 
 // ─────────────────────────── Scheduled cleanup ───────────────────────────────
