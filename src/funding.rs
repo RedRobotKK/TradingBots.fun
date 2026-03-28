@@ -40,7 +40,7 @@ use reqwest::Client;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 
 /// Refresh every 3 minutes.  Funding settles every 8 h but can spike quickly;
 /// 3-minute granularity catches intra-period crowding build-ups.
@@ -311,6 +311,11 @@ struct CacheInner {
 pub struct FundingCache {
     client: Client,
     inner: RwLock<CacheInner>,
+    /// Single-flight lock: prevents thundering herd when the cache expires.
+    /// At 5 000 tenants all calling get() simultaneously, only the first
+    /// acquires this mutex and fetches; the rest wait, then re-read the
+    /// now-warm cache without firing their own HTTP request.
+    fetch_lock: Mutex<()>,
 }
 
 pub type SharedFunding = Arc<FundingCache>;
@@ -327,6 +332,7 @@ impl FundingCache {
                 prev_rates: HashMap::new(),
                 last_fetch: None,
             }),
+            fetch_lock: Mutex::new(()),
         })
     }
 
@@ -335,6 +341,23 @@ impl FundingCache {
     /// Returns `None` only for symbols not listed on HL (e.g. `@N` derivatives).
     pub async fn get(&self, symbol: &str) -> Option<FundingData> {
         // Fast path: cache is warm.
+        {
+            let r = self.inner.read().await;
+            if r.last_fetch
+                .map(|t| t.elapsed() < CACHE_TTL)
+                .unwrap_or(false)
+            {
+                return r.data.get(symbol).cloned();
+            }
+        }
+
+        // Acquire single-flight lock: only one task fetches at a time.
+        // All concurrent callers queue here; when they get the lock the cache
+        // will already be warm and the re-check below short-circuits.
+        let _flight = self.fetch_lock.lock().await;
+
+        // Re-check after acquiring lock — another task may have refreshed while
+        // we were waiting.
         {
             let r = self.inner.read().await;
             if r.last_fetch
