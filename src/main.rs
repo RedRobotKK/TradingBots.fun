@@ -586,7 +586,16 @@ async fn main() -> Result<()> {
             let t_config = config.clone();
             let t_market = market.clone();
             let t_hl = hl.clone();
-            let t_db = shared_db.clone();
+            // Scale-test wallets (ID prefix "5c00") are paper-only load probes —
+            // they produce no real trades and have no user data worth persisting.
+            // Giving them a live DB handle causes thousands of concurrent INSERT/
+            // UPDATE tasks that saturate the connection pool and stall real writes.
+            // Pass None so they run entirely in-memory.
+            let t_db: Option<SharedDb> = if tid.as_str().starts_with("5c00") {
+                None
+            } else {
+                shared_db.clone()
+            };
             let t_weights = weights.clone();
             let t_sent = sentiment_cache.clone();
             let t_fund = funding_cache.clone();
