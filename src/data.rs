@@ -1,6 +1,7 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, RwLock};
 
@@ -30,6 +31,13 @@ const MAX_CANDIDATES: usize = 40;
 /// in-memory copy.  Net result: at most 1 allMids request and ~40 l2Book
 /// requests per 30-second cycle — down from up to 9× each.
 const PRICE_ORACLE_TTL: Duration = Duration::from_secs(25);
+
+/// How long a cached l2Book snapshot is considered fresh.
+///
+/// Separate from `PRICE_ORACLE_TTL` (25 s allMids) because order-book depth
+/// changes more slowly and a 120-second TTL cuts REST weight dramatically
+/// when thousands of tenant loops share the same `Arc<MarketClient>`.
+const BOOK_ORACLE_TTL: Duration = Duration::from_secs(120);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PriceData {
@@ -116,6 +124,17 @@ pub struct MarketClient {
     mids_oracle: Mutex<Option<(Instant, HashMap<String, f64>)>>,
     /// Order-book oracle: symbol → (fetched_at, OrderBook).
     book_oracle: RwLock<HashMap<String, (Instant, OrderBook)>>,
+    /// Single-flight guard for l2Book fetches.
+    ///
+    /// When the cache entry for a symbol is stale, the first caller creates
+    /// (or retrieves) a per-symbol `Arc<Mutex<()>>` and locks it.  All other
+    /// callers that arrive while the fetch is in flight block on the same mutex.
+    /// After the lock is released the secondary callers re-check the cache and
+    /// return the freshly-populated entry without firing a second HTTP request.
+    book_inflight: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    /// Single-flight guard for candleSnapshot fetches — mirrors `book_inflight`
+    /// but keyed by `"COIN:interval"` to deduplicate per (coin, interval) pair.
+    candle_inflight: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     /// WebSocket-fed shared price oracle (primary source for mid prices).
     /// Set to `None` at construction; injected by [`PriceFeedService`] on startup.
     price_feed: Option<SharedPriceOracle>,
@@ -141,10 +160,12 @@ impl MarketClient {
                 .timeout(std::time::Duration::from_secs(10))
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new()),
-            hl_base:     "https://api.hyperliquid.xyz".to_string(),
-            candle_cache: RwLock::new(HashMap::new()),
-            mids_oracle:  Mutex::new(None),
-            book_oracle:  RwLock::new(HashMap::new()),
+            hl_base:          "https://api.hyperliquid.xyz".to_string(),
+            candle_cache:     RwLock::new(HashMap::new()),
+            mids_oracle:      Mutex::new(None),
+            book_oracle:      RwLock::new(HashMap::new()),
+            book_inflight:    Mutex::new(HashMap::new()),
+            candle_inflight:  Mutex::new(HashMap::new()),
             price_feed,
         }
     }
@@ -348,7 +369,7 @@ impl MarketClient {
 
         let cache_key = format!("{}:{}", coin, interval);
 
-        // Fast path: cache hit — same bar epoch for this coin's jitter slot.
+        // ── Fast path: cache hit — same bar epoch for this coin's jitter slot ─
         {
             let r = self.candle_cache.read().await;
             if let Some(entry) = r.get(&cache_key) {
@@ -364,7 +385,39 @@ impl MarketClient {
             }
         }
 
-        // Slow path: fetch from HL (first call, or new bar has opened for this coin).
+        // ── Single-flight: only one task per (coin, interval) fires the fetch ─
+        //
+        // Same pattern as `fetch_order_book` / `book_inflight`:
+        //   1. Get/create a per-key Arc<Mutex<()>> (map lock held briefly).
+        //   2. Lock it — latecomers block here while the leader fetches.
+        //   3. Re-check cache — secondary callers find the warm entry and return.
+        //   4. Primary caller falls through to the HTTP request.
+        let key_lock: Arc<tokio::sync::Mutex<()>> = {
+            let mut map = self.candle_inflight.lock().await;
+            Arc::clone(
+                map.entry(cache_key.clone())
+                    .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))),
+            )
+        };
+        let _guard = key_lock.lock().await;
+
+        // Re-check after acquiring the per-key lock.
+        {
+            let r = self.candle_cache.read().await;
+            if let Some(entry) = r.get(&cache_key) {
+                if entry.bar_epoch == cur_epoch {
+                    log::debug!(
+                        "candle_cache HIT (post-lock) {}:{} epoch={}",
+                        coin,
+                        interval,
+                        cur_epoch
+                    );
+                    return Ok(entry.candles.clone());
+                }
+            }
+        }
+
+        // ── Slow path: this task won the race — fetch from HL ────────────────
         log::debug!(
             "candle_cache MISS {}:{} epoch={} jitter={}ms — fetching",
             coin,
@@ -374,7 +427,7 @@ impl MarketClient {
         );
         let candles = self.fetch_hl_candles_raw(coin, interval, limit).await?;
 
-        // Write back; grab write lock only after the HTTP round trip.
+        // Write back; all waiting callers will read this on their re-check.
         {
             let mut w = self.candle_cache.write().await;
             w.insert(
@@ -492,17 +545,45 @@ impl MarketClient {
     /// Multiple tenant loops requesting the same symbol within the TTL window
     /// share a single cached snapshot — only one HTTP request is sent.
     pub async fn fetch_order_book(&self, coin: &str) -> Result<OrderBook> {
-        // Fast path: return cached book if still fresh.
+        // ── Fast path: cache hit within BOOK_ORACLE_TTL (120 s) ──────────────
         {
             let guard = self.book_oracle.read().await;
             if let Some((fetched_at, ref book)) = guard.get(coin) {
-                if fetched_at.elapsed() < PRICE_ORACLE_TTL {
+                if fetched_at.elapsed() < BOOK_ORACLE_TTL {
                     return Ok(book.clone());
                 }
             }
         }
 
-        // Slow path: fetch from Hyperliquid.
+        // ── Single-flight: only one task per symbol fires the HTTP request ───
+        //
+        // 1. Grab (or create) a per-symbol Arc<Mutex<()>> while holding the
+        //    outer map lock for the shortest possible time.
+        // 2. Lock the per-symbol mutex — callers that arrive while a fetch is
+        //    in flight will block here until the leader releases it.
+        // 3. Re-check the cache: a secondary caller that just unblocked will
+        //    find a warm entry and return without a second HTTP call.
+        // 4. Primary caller falls through to the actual HTTP fetch.
+        let sym_lock: Arc<tokio::sync::Mutex<()>> = {
+            let mut map = self.book_inflight.lock().await;
+            Arc::clone(
+                map.entry(coin.to_string())
+                    .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))),
+            )
+        };
+        let _guard = sym_lock.lock().await;
+
+        // Re-check after acquiring the per-symbol lock (cache may now be warm).
+        {
+            let guard = self.book_oracle.read().await;
+            if let Some((fetched_at, ref book)) = guard.get(coin) {
+                if fetched_at.elapsed() < BOOK_ORACLE_TTL {
+                    return Ok(book.clone());
+                }
+            }
+        }
+
+        // ── Slow path: this task won the race — fetch from Hyperliquid ───────
         let url = format!("{}/info", self.hl_base);
         let body = serde_json::json!({ "type": "l2Book", "coin": coin });
         let client = self.client.clone();
@@ -548,7 +629,7 @@ impl MarketClient {
         })
         .await?;
 
-        // Cache the freshly-fetched book for subsequent callers.
+        // Cache; all waiting callers will read this on their re-check.
         self.book_oracle
             .write()
             .await
