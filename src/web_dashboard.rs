@@ -1991,7 +1991,7 @@ tr:hover td{{background:rgba(255,255,255,.025)}}
   <div class="section-title">Closed Trades <span class="badge">{total_closed} total</span></div>
   <div class="tbl-wrap">
     <table><tr><th>Symbol</th><th>Side</th><th>Entry</th><th>Exit</th><th>P&amp;L</th><th>Reason</th><th>Time</th></tr>
-    {closed_rows}</table>
+    <tbody id="ct-tbody">{closed_rows}</tbody></table>
   </div>
 </div>
 
@@ -2296,6 +2296,58 @@ function toggleDetail(id){{
     }} else if(aiBar){{
       aiBar.style.display='none';
     }}
+
+    /* ── Closed trades table — live update ─────────────────────────────── */
+    (function(){{
+      var tbody=document.getElementById('ct-tbody');
+      if(!tbody)return;
+      var trades=s.closed_trades||[];
+      /* Only re-render when count changes to avoid disrupting expanded detail rows */
+      var cur=tbody.getAttribute('data-ct-len');
+      if(cur==trades.length)return;
+      tbody.setAttribute('data-ct-len',trades.length);
+      /* Update badge */
+      var badge=document.querySelector('.section-closed .badge');
+      if(badge)badge.textContent=trades.length+' total';
+      /* Re-render rows (last 20, newest first) */
+      if(!trades.length){{
+        tbody.innerHTML='<tr><td colspan="7" class="empty-td">No closed trades yet</td></tr>';
+        return;
+      }}
+      var reasonClass=function(r){{
+        if(!r)return'signal';
+        var l=r.toLowerCase();
+        if(l.indexOf('stop')>=0)return'stop_loss';
+        if(l.indexOf('take')>=0||l.indexOf('tp')>=0)return'take_profit';
+        if(l.indexOf('partial')>=0||l.indexOf('tranche')>=0)return'partial';
+        if(l.indexOf('time')>=0)return'time_exit';
+        if(l.indexOf('ai')>=0||l.indexOf('llm')>=0)return'ai_close';
+        return'signal';
+      }};
+      var html='';
+      var slice=[].concat(trades).reverse().slice(0,20);
+      slice.forEach(function(t,i){{
+        var pc=t.pnl>=0?'#3fb950':'#f85149';
+        var ps=t.pnl>=0?'+':'-';
+        var sc=t.side==='LONG'?'#3fb950':'#f85149';
+        var pnlAbs=Math.abs(t.pnl).toFixed(2);
+        var pctAbs=Math.abs(t.pnl_pct).toFixed(1);
+        var det='ct-det-'+i;
+        var row='ct-'+i;
+        var ts=(t.closed_at||'').slice(0,19).replace('T',' ');
+        html+='<tr class="ct-row" style="cursor:pointer" onclick="toggleDetail(\''+det+'\')" id="'+row+'">'
+          +'<td><b>'+t.symbol+'</b> <span style="color:#444c56;font-size:.75em">▼</span></td>'
+          +'<td style="color:'+sc+'">'+t.side+'</td>'
+          +'<td>$'+t.entry.toFixed(4)+'</td><td>$'+t.exit.toFixed(4)+'</td>'
+          +'<td style="color:'+pc+'">'+ps+pnlAbs+' ('+ps+pctAbs+'%)</td>'
+          +'<td class="reason-'+reasonClass(t.reason)+'">'+t.reason+'</td>'
+          +'<td class="ts">'+ts+'</td></tr>'
+          +'<tr id="'+det+'" class="ct-detail" style="display:none">'
+          +'<td colspan="7" style="background:#161b22;padding:8px 12px;border-bottom:1px solid #30363d">'
+          +(t.breakdown||'No detailed breakdown recorded for this trade.')+'</td></tr>';
+      }});
+      tbody.innerHTML=html;
+    }})();
 
     /* ── Shared helpers ─────────────────────────────────────────────────── */
     /* Brief opacity flash on a cell whose value just changed */
