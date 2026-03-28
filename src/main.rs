@@ -1307,20 +1307,15 @@ async fn run_cycle(
         }
 
         // ── PostgreSQL: equity snapshot ───────────────────────────────────
-        // Persist one equity data point per cycle. Tenant ID is "operator"
-        // in single-op mode; will be per-tenant in multi-tenant phase.
-        // Fire-and-forget — a DB write failure must never crash the cycle.
+        // Non-blocking enqueue: sends (tenant_id, equity) to the batch flusher
+        // spawned in Database::connect().  The flusher drains all pending rows
+        // every 30 s via a single UNNEST INSERT — eliminates the thundering herd
+        // of 5 000 concurrent fire-and-forget INSERTs competing for pool conns.
         if let Some(db) = db {
-            let equity_copy = equity;
-            let db_clone = db.clone();
-            tokio::spawn(async move {
-                if let Err(e) = db_clone
-                    .insert_equity_snapshot("00000000-0000-0000-0000-000000000001", equity_copy)
-                    .await
-                {
-                    log::debug!("equity_snapshot write skipped: {e}");
-                }
-            });
+            db.enqueue_equity_snapshot(
+                "00000000-0000-0000-0000-000000000001",
+                equity,
+            );
         }
 
         // ── PostgreSQL: AUM snapshot (pre-aggregated for admin + landing page) ──

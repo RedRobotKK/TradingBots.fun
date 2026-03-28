@@ -50,6 +50,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{postgres::PgPoolOptions, PgPool};
 use std::sync::Arc;
+use tokio::sync::mpsc;
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Public result types
@@ -99,9 +100,20 @@ pub struct AumSummary {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Async PostgreSQL connection pool. Clone is cheap — all clones share the pool.
+///
+/// # Equity snapshot batching
+///
+/// `enqueue_equity_snapshot` sends `(tenant_id, equity)` pairs to an unbounded
+/// MPSC channel.  A background task spawned in `connect()` drains the channel
+/// every 30 s and writes all pending snapshots in a single UNNEST batch INSERT.
+/// This collapses up to 5 000 individual one-row INSERTs per cycle into one
+/// query, eliminating pool-connection saturation under scale-test load.
 #[derive(Clone)]
 pub struct Database {
     pool: PgPool,
+    /// Non-blocking send end of the equity-snapshot batch queue.
+    /// Receiver lives in the background flusher task spawned by `connect()`.
+    snapshot_tx: mpsc::UnboundedSender<(uuid::Uuid, f64)>,
 }
 
 /// `Arc`-wrapped `Database` — the canonical way to share it across tasks.
@@ -115,13 +127,12 @@ impl Database {
     pub async fn connect(url: &str) -> Result<Self> {
         log::info!("🗄  Connecting to PostgreSQL…");
         // Pool sizing: Postgres default max_connections = 100.
-        // We use 10 max to leave ample headroom for future services, pgAdmin,
-        // and the price_feed's dedicated 3-connection sub-pool.
-        // With 9 tenant loops + Axum handlers, 10 connections is sufficient
-        // because sqlx queues queries rather than opening new raw connections.
+        // Raised from 10 → 20 to give equity-snapshot batch flush + Axum
+        // handlers more headroom when running with scale-test wallet counts.
+        // The price_feed sub-pool uses an additional 3 connections separately.
         let pool = PgPoolOptions::new()
-            .max_connections(10)
-            .min_connections(2)  // keep 2 warm; was 3 (saves 1 idle slot)
+            .max_connections(20)
+            .min_connections(2)
             .acquire_timeout(std::time::Duration::from_secs(30))
             .idle_timeout(std::time::Duration::from_secs(600))
             .max_lifetime(std::time::Duration::from_secs(1800))
@@ -129,7 +140,56 @@ impl Database {
             .await
             .with_context(|| format!("Cannot connect to PostgreSQL: {url}"))?;
 
-        let db = Database { pool };
+        // ── Equity snapshot batch flusher ──────────────────────────────────────
+        // Instead of one INSERT per tenant per cycle (up to 5 000 concurrent
+        // fire-and-forget tasks fighting for pool connections), all callers
+        // send to this channel and one background task issues a single UNNEST
+        // batch INSERT every 30 s.  The send is non-blocking and O(1).
+        let (snapshot_tx, mut snapshot_rx) =
+            mpsc::unbounded_channel::<(uuid::Uuid, f64)>();
+        let flush_pool = pool.clone();
+        tokio::spawn(async move {
+            let mut interval =
+                tokio::time::interval(std::time::Duration::from_secs(30));
+            interval.tick().await; // skip the immediate first tick
+            loop {
+                interval.tick().await;
+
+                // Drain everything pending in the channel without blocking.
+                let mut ids:    Vec<uuid::Uuid> = Vec::new();
+                let mut equities: Vec<f64>        = Vec::new();
+                while let Ok((id, eq)) = snapshot_rx.try_recv() {
+                    ids.push(id);
+                    equities.push(eq);
+                }
+                if ids.is_empty() {
+                    continue;
+                }
+
+                // Single UNNEST batch INSERT — one round-trip regardless of N.
+                if let Err(e) = sqlx::query(
+                    "INSERT INTO equity_snapshots (tenant_id, equity) \
+                     SELECT * FROM UNNEST($1::uuid[], $2::float8[])",
+                )
+                .bind(&ids)
+                .bind(&equities)
+                .execute(&flush_pool)
+                .await
+                {
+                    log::warn!(
+                        "equity_snapshot batch flush failed ({} rows): {e}",
+                        ids.len()
+                    );
+                } else {
+                    log::debug!(
+                        "equity_snapshot batch: {} rows flushed",
+                        ids.len()
+                    );
+                }
+            }
+        });
+
+        let db = Database { pool, snapshot_tx };
         db.run_migrations().await?;
         log::info!("✅ PostgreSQL ready");
         Ok(db)
@@ -165,6 +225,10 @@ impl Database {
 
     /// Record one equity snapshot for a tenant.
     /// Called every 30 s per tenant from the trading loop.
+    ///
+    /// **Prefer [`enqueue_equity_snapshot`] for high-tenant-count deployments.**
+    /// This method executes a synchronous INSERT and should only be used when
+    /// an immediate, guaranteed write is required (e.g. tests, admin tooling).
     pub async fn insert_equity_snapshot(&self, tenant_id: &str, equity: f64) -> Result<()> {
         sqlx::query("INSERT INTO equity_snapshots (tenant_id, equity) VALUES ($1::uuid, $2)")
             .bind(tenant_id)
@@ -173,6 +237,33 @@ impl Database {
             .await
             .with_context(|| format!("insert_equity_snapshot: tenant={tenant_id}"))?;
         Ok(())
+    }
+
+    /// Enqueue an equity snapshot for batched write — **non-blocking, O(1)**.
+    ///
+    /// Sends `(tenant_id, equity)` to the background batch flusher spawned in
+    /// [`connect`].  The flusher drains the queue every 30 s and writes all
+    /// pending rows in a single UNNEST INSERT, eliminating pool-connection
+    /// saturation when thousands of tenant loops call this simultaneously.
+    ///
+    /// Silently drops the item if the tenant_id is not a valid UUID.
+    pub fn enqueue_equity_snapshot(&self, tenant_id: &str, equity: f64) {
+        match uuid::Uuid::parse_str(tenant_id) {
+            Ok(id) => {
+                // UnboundedSender::send only fails if the receiver was dropped
+                // (i.e. the flusher task panicked) — log and move on.
+                if self.snapshot_tx.send((id, equity)).is_err() {
+                    log::warn!(
+                        "equity_snapshot enqueue failed — flusher task may have exited"
+                    );
+                }
+            }
+            Err(e) => {
+                log::debug!(
+                    "enqueue_equity_snapshot: bad UUID '{tenant_id}': {e}"
+                );
+            }
+        }
     }
 
     /// Fetch the most recent `limit` equity snapshots for a tenant.
