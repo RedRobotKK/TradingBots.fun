@@ -253,19 +253,31 @@ pub struct BtcMarketContext {
     /// ETH 24h return — ETH is the "king of alts"; its direction leads altcoins.
     pub eth_return_24h: f64,
     /// ETH 4h return for short-term alt momentum.
+    // Stored for future use (relative-performance cross-asset signals).
+    #[allow(dead_code)]
     pub eth_return_4h: f64,
 
     // ── Daily MA levels (macro trend) ─────────────────────────────────────
+    // Stored for future dashboard display and extended signal development.
+    // The derived `macro_regime` field is what confidence_adjustment() uses.
+    #[allow(dead_code)]
     /// BTC daily MA5 / MA10 / MA20.  0.0 = insufficient candle history.
     pub btc_ma5: f64,
+    #[allow(dead_code)]
     pub btc_ma10: f64,
+    #[allow(dead_code)]
     pub btc_ma20: f64,
+    #[allow(dead_code)]
     /// ETH daily MA5 / MA10 / MA20.
     pub eth_ma5: f64,
+    #[allow(dead_code)]
     pub eth_ma10: f64,
+    #[allow(dead_code)]
     pub eth_ma20: f64,
+    #[allow(dead_code)]
     /// Latest BTC daily close (for MA comparison).
     pub btc_price: f64,
+    #[allow(dead_code)]
     /// Latest ETH daily close.
     pub eth_price: f64,
 
@@ -314,17 +326,14 @@ impl BtcMarketContext {
         // bonus — ETH leads altcoins.  Disagreement adds a mild penalty.
         let eth_bull = self.eth_return_24h > 0.3;
         let eth_bear = self.eth_return_24h < -0.3;
-        let eth_adj: f64 = if eth_bull && action == "BUY" {
-            0.03
-        } else if eth_bear && action == "SELL" {
-            0.03
-        } else if eth_bull && action == "SELL" {
-            -0.03
-        } else if eth_bear && action == "BUY" {
-            -0.03
-        } else {
-            0.00
-        };
+        let eth_adj: f64 =
+            if (eth_bull && action == "BUY") || (eth_bear && action == "SELL") {
+                0.03  // ETH direction aligns with trade
+            } else if (eth_bull && action == "SELL") || (eth_bear && action == "BUY") {
+                -0.03 // ETH direction opposes trade
+            } else {
+                0.00
+            };
 
         // ── 3. 24h BTC direction alignment ────────────────────────────────────
         let btc_bull = self.btc_return_24h > 0.3;
@@ -366,11 +375,15 @@ impl BtcMarketContext {
 
     /// True when a new SHORT entry requires elevated confidence (counter-trend).
     /// In a BULL macro, shorts are only valid as pico-top scalps — higher bar.
+    // Used by the entry gate in execute_paper_trade; kept as a named helper
+    // for readability and future extensions.
+    #[allow(dead_code)]
     pub fn short_is_counter_trend(&self) -> bool {
         self.macro_regime == MacroRegime::Bull
     }
 
     /// True when a new LONG entry requires elevated confidence (counter-trend).
+    #[allow(dead_code)]
     pub fn long_is_counter_trend(&self) -> bool {
         self.macro_regime == MacroRegime::Bear
     }

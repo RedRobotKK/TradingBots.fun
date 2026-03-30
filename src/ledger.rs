@@ -308,6 +308,9 @@ mod tests {
 
     #[test]
     fn append_multiple_rows_one_header() {
+        // Remove any leftover file from a previous failed run so the header
+        // is always written fresh — idempotent, ignores errors if file absent.
+        let _ = std::fs::remove_file(ledger_path(2098));
         let t1 = sample_trade(5.0, "2098");
         let t2 = sample_trade(-3.0, "2098");
         append(&t1);
