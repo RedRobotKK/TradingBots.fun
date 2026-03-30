@@ -2219,6 +2219,13 @@ function toggleDetail(id){{
     tick();setInterval(tick,1000);
   }}
 
+  /* ── Hard reload when a cycle completes ──────────────────────────────────
+     next_cycle_at is stamped to now+30s exactly once when analysis finishes.
+     When the poller sees it change to a NEW future value, the cycle just
+     ended — hard-reload so position cards, metrics and the macro pill all
+     render fresh from the server template (no stale DOM state). */
+  var _lastCycleAt = {next_cycle_at_ms};
+
   /* ── Live data polling every 5s — updates key numbers without page flicker ─ */
   function $id(id){{return document.getElementById(id);}}
   function fmt2(n){{return Math.abs(n).toFixed(2);}}
@@ -2226,6 +2233,19 @@ function toggleDetail(id){{
   function col(n){{return n>=0?'#3fb950':'#f85149';}}
 
   function applyPoll(s){{
+    /* ── Hard reload when cycle timestamp advances ───────────────────────
+       next_cycle_at is only stamped once per cycle (end of analysis loop).
+       When it changes to a strictly-newer value the full cycle just completed
+       — reload the page so templates, position cards and the macro pill are
+       all re-rendered cleanly from the server. Skip on very first poll
+       (_lastCycleAt == 0 means page just loaded). */
+    var newCycleAt = s.next_cycle_at || 0;
+    if(_lastCycleAt > 0 && newCycleAt > 0 && newCycleAt !== _lastCycleAt){{
+      window.location.reload();
+      return;
+    }}
+    if(newCycleAt > 0) _lastCycleAt = newCycleAt;
+
     /* Equity hero */
     var unrealised=0,committed=0;
     (s.positions||[]).forEach(function(p){{unrealised+=p.unrealised_pnl;committed+=p.size_usd;}});
@@ -2784,7 +2804,9 @@ window.doResetStats = function() {{
         } else {
             "#f85149"
         },
-        sortino = m.sortino,
+        // Cap Sortino at 999 for display — with 0 losing trades the denominator
+        // is near-zero, producing astronomically large values that break the layout.
+        sortino = m.sortino.min(999.0),
         expc = if m.expectancy >= 0.0 {
             "#3fb950"
         } else {
