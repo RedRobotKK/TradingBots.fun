@@ -1,0 +1,107 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-03-30T19:32:57Z",
+    "commit": "64ff9d8",
+    "commit_full": "64ff9d87e58d666e679b1bf09bfc30c8d1481f83",
+    "commit_message": "fix: compile errors from new BtcMarketContext + BotState fields",
+    "branch": "master",
+    "overall_status": "FAILED",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.94.0 (4a4ef493e 2026-03-02)",
+    "cargo": "cargo 1.94.0 (85eff7c80 2026-01-15)",
+    "os_kernel": "6.8.0-106-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 641,
+      "total_passed": 325,
+      "total_failed": 1,
+      "total_ignored": 0,
+      "failures": [
+        "ledger::tests::append_multiple_rows_one_header"
+      ]
+    },
+    "clippy": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 316,
+      "error_count": 5,
+      "errors": [
+        {
+          "code": "E",
+          "message": "multiple fields are never read",
+          "file": "src/decision.rs",
+          "line": 256,
+          "col": 9
+        },
+        {
+          "code": "E",
+          "message": "methods `short_is_counter_trend` and `long_is_counter_trend` are never used",
+          "file": "src/decision.rs",
+          "line": 369,
+          "col": 12
+        },
+        {
+          "code": "E",
+          "message": "this `if` has identical blocks",
+          "file": "src/decision.rs",
+          "line": 317,
+          "col": 59
+        },
+        {
+          "code": "E",
+          "message": "this `if` has identical blocks",
+          "file": "src/decision.rs",
+          "line": 321,
+          "col": 48
+        },
+        {
+          "code": "E",
+          "message": "could not compile `tradingbots-fun` (bin \"tradingbots-fun\") due to 4 previous errors"
+        }
+      ]
+    },
+    "audit": {
+      "status": "ADVISORY",
+      "exit_code": 1,
+      "duration_seconds": 3,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2023-0071",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2023-0071",
+          "severity": "5.9 (medium)",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "tradingbots",
+    "status": "failed",
+    "active_since": "unknown",
+    "recent_logs": [
+      "Mar 30 19:32:02 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: tradingbots.service: Failed with result 'exit-code'.",
+      "Mar 30 19:32:07 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: tradingbots.service: Scheduled restart job, restart counter is at 3.",
+      "Mar 30 19:32:07 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: tradingbots.service: Start request repeated too quickly.",
+      "Mar 30 19:32:07 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: tradingbots.service: Failed with result 'exit-code'.",
+      "Mar 30 19:32:07 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Failed to start tradingbots.service - TradingBots.fun."
+    ]
+  }
+}
