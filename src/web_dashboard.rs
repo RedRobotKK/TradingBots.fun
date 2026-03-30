@@ -332,6 +332,12 @@ pub struct BotState {
     #[serde(default)]
     pub ai_status: String,
 
+    /// Consensus macro regime derived from daily BTC + ETH MA5/MA10/MA20.
+    /// Values: "BULL" | "BEAR" | "TRANSITION"
+    /// Updated once per cycle. Displayed in dashboard header.
+    #[serde(default)]
+    pub macro_regime: String,
+
     // ── Profit recycling ─────────────────────────────────────────────────
     /// Accumulated realized profits (from partial + full closes with positive P&L)
     /// held separately from the base capital.  This is "house money" — profits the
@@ -604,6 +610,14 @@ async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
     } else {
         "#3fb950" // plenty of capacity
     };
+
+    // ── Macro regime pill colours ─────────────────────────────────────────
+    let (macro_label, macro_bg, macro_fg, macro_border, macro_dot) =
+        match s.macro_regime.as_str() {
+            "BULL" => ("🐂 BULL", "#0d2318", "#3fb950", "#238636", "#3fb950"),
+            "BEAR" => ("🐻 BEAR", "#2d0f0d", "#f85149", "#da3633", "#f85149"),
+            _      => ("◎ NEUTRAL", "#1c1c1c", "#8b949e", "#30363d", "#8b949e"),
+        };
 
     // ── Equity hero P&L class (drives colour glow) ────────────────────────
     // CB active overrides colour → flashing red border.
@@ -1786,6 +1800,17 @@ tr:hover td{{background:rgba(255,255,255,.025)}}
     <span class="live-ring"></span> TradingBots<span style="color:#3fb950">.fun</span>
   </h1>
   <div class="header-right">
+    <!-- ── Macro regime indicator ── -->
+    <span id="macro-pill" style="
+      display:inline-flex;align-items:center;gap:5px;
+      font-size:.72rem;font-weight:700;letter-spacing:.5px;
+      padding:4px 10px;border-radius:20px;
+      background:{macro_bg};color:{macro_fg};border:1px solid {macro_border};
+      font-family:'SF Mono','Courier New',monospace;
+    " title="Daily BTC+ETH MA5/MA10/MA20 consensus macro regime">
+      <span style="width:7px;height:7px;border-radius:50%;background:{macro_dot};display:inline-block"></span>
+      {macro_label}
+    </span>
     <a href="/fleet" style="font-size:.78rem;color:#8b949e;text-decoration:none;padding:5px 10px;border:1px solid #21262d;border-radius:6px;display:inline-flex;align-items:center;gap:5px;transition:.15s" onmouseover="this.style.color='#e6edf3';this.style.borderColor='#30363d'" onmouseout="this.style.color='#8b949e';this.style.borderColor='#21262d'">⚡ Fleet (5 000)</a>
     <span class="ts">⟳ <span id="cntdn">30s</span> &nbsp;·&nbsp; {last_update}</span>
     <a href="/login" class="btn-cta" data-funnel="login_click">
@@ -2804,6 +2829,11 @@ window.doResetStats = function() {{
         cb_int = cb_int,
         wr_float = wr_float,
         tracking_js = crate::funnel::client_tracking_script(),
+        macro_label  = macro_label,
+        macro_bg     = macro_bg,
+        macro_fg     = macro_fg,
+        macro_border = macro_border,
+        macro_dot    = macro_dot,
         pkg_version = env!("CARGO_PKG_VERSION"),
         git_hash    = env!("GIT_COMMIT_HASH"),
     ))

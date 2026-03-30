@@ -157,10 +157,74 @@ pub fn calc_leverage(confidence: f64, regime: Regime) -> f64 {
     raw.min(regime_cap)
 }
 
+// ─────────────────────────── Macro Regime ────────────────────────────────────
+
+/// Macro market regime derived from daily BTC + ETH moving averages.
+///
+/// Classification rules (both BTC and ETH considered):
+///   BULL       — BTC price > MA20 AND MA5 > MA10  (trend confirmed up)
+///   BEAR       — BTC price < MA20 AND MA5 < MA10  (trend confirmed down)
+///   TRANSITION — Mixed signals (regime is changing)
+///
+/// ETH acts as the "alts" leading indicator: when ETH's MAs agree with BTC
+/// the regime signal is stronger.  ETH divergence (e.g. ETH BULL but BTC BEAR)
+/// suggests altcoin-specific moves and downgrades conviction.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+pub enum MacroRegime {
+    Bull,
+    Bear,
+    #[default]
+    Transition,
+}
+
+impl MacroRegime {
+    pub fn label(self) -> &'static str {
+        match self {
+            MacroRegime::Bull => "BULL",
+            MacroRegime::Bear => "BEAR",
+            MacroRegime::Transition => "TRANSITION",
+        }
+    }
+
+    /// Classify macro regime from daily candle MAs.
+    /// `price` is the latest close; ma5/ma10/ma20 are simple daily MAs.
+    /// Returns `Transition` whenever any value is zero (unavailable).
+    pub fn classify(price: f64, ma5: f64, ma10: f64, ma20: f64) -> Self {
+        if price == 0.0 || ma20 == 0.0 || ma10 == 0.0 || ma5 == 0.0 {
+            return MacroRegime::Transition;
+        }
+        let above_ma20    = price > ma20;
+        let ma5_above_ma10 = ma5 > ma10;
+        if above_ma20 && ma5_above_ma10 {
+            MacroRegime::Bull
+        } else if !above_ma20 && !ma5_above_ma10 {
+            MacroRegime::Bear
+        } else {
+            MacroRegime::Transition
+        }
+    }
+
+    /// Combine BTC regime with ETH regime into a single consensus signal.
+    /// BTC is the primary anchor (2/3 weight); ETH confirms alts (1/3 weight).
+    pub fn consensus(btc: MacroRegime, eth: MacroRegime) -> MacroRegime {
+        match (btc, eth) {
+            // Both agree → clear signal
+            (MacroRegime::Bull, MacroRegime::Bull) => MacroRegime::Bull,
+            (MacroRegime::Bear, MacroRegime::Bear) => MacroRegime::Bear,
+            // BTC BULL confirmed by ETH Transition → lean Bull
+            (MacroRegime::Bull, MacroRegime::Transition) => MacroRegime::Bull,
+            // BTC BEAR confirmed by ETH Transition → lean Bear
+            (MacroRegime::Bear, MacroRegime::Transition) => MacroRegime::Bear,
+            // Any disagreement or ETH divergence → Transition
+            _ => MacroRegime::Transition,
+        }
+    }
+}
+
 // ─────────────────────────── BTC Market Context ──────────────────────────────
 
-/// BTC market-wide context — modulates per-altcoin confidence based on
-/// dominance regime and BTC price direction.
+/// BTC + ETH market-wide context — modulates per-altcoin confidence based on
+/// dominance regime, price direction, and macro regime.
 ///
 /// ## Backtest results (400 days, Feb 2024 – Feb 2026, 9 assets):
 ///
@@ -184,19 +248,85 @@ pub struct BtcMarketContext {
     /// This asset's own 4h return — compared against `btc_return_4h`.
     /// 0.0 when 4h candles are unavailable.
     pub asset_return_4h: f64,
+
+    // ── ETH (alts leading indicator) ──────────────────────────────────────
+    /// ETH 24h return — ETH is the "king of alts"; its direction leads altcoins.
+    pub eth_return_24h: f64,
+    /// ETH 4h return for short-term alt momentum.
+    pub eth_return_4h: f64,
+
+    // ── Daily MA levels (macro trend) ─────────────────────────────────────
+    /// BTC daily MA5 / MA10 / MA20.  0.0 = insufficient candle history.
+    pub btc_ma5: f64,
+    pub btc_ma10: f64,
+    pub btc_ma20: f64,
+    /// ETH daily MA5 / MA10 / MA20.
+    pub eth_ma5: f64,
+    pub eth_ma10: f64,
+    pub eth_ma20: f64,
+    /// Latest BTC daily close (for MA comparison).
+    pub btc_price: f64,
+    /// Latest ETH daily close.
+    pub eth_price: f64,
+
+    // ── Consensus macro regime ────────────────────────────────────────────
+    /// Derived from BTC + ETH daily MAs.  Updated once per cycle.
+    pub macro_regime: MacroRegime,
 }
 
 impl BtcMarketContext {
-    /// Returns a confidence delta in **[-0.12, +0.12]**.
+    /// Returns a confidence delta in **[-0.20, +0.20]**.
     ///
-    /// Positive = BTC direction / relative-performance supports the trade.
-    /// Negative = BTC direction opposes the trade.
-    /// Zero     = BTC flat or dominance too low to matter.
+    /// Layers (applied in order, clamped to ±0.20 total):
+    ///   1. Macro regime (daily MA5/MA10/MA20 BTC + ETH) — strongest signal
+    ///   2. 24h BTC + ETH direction alignment
+    ///   3. Relative performance catch-up
     ///
     /// Not applied to BTC's own signals (caller passes `None` for BTC).
     pub fn confidence_adjustment(&self, action: &str) -> f64 {
-        // ── 24h BTC direction alignment ──────────────────────────────────────
-        // Treat sub-±0.3 % moves as "flat" to avoid noise on tiny wiggles
+        // ── 1. Macro regime adjustment ────────────────────────────────────────
+        // Daily MAs tell us the sustained trend direction — the single strongest
+        // edge. BULL regime: longs boosted, shorts penalised (and vice-versa).
+        // In TRANSITION we fall back to intraday signals only.
+        let macro_adj: f64 = match self.macro_regime {
+            MacroRegime::Bull => {
+                if action == "BUY" {
+                    0.10  // Long aligned with macro — meaningful boost
+                } else {
+                    // SELL in a bull macro = counter-trend.
+                    // NOT blocked here (pico-top scalps are valid), but penalised
+                    // so only high-conviction setups survive.
+                    -0.10
+                }
+            }
+            MacroRegime::Bear => {
+                if action == "SELL" {
+                    0.10  // Short aligned with macro
+                } else {
+                    -0.10 // Long in a bear macro — penalise
+                }
+            }
+            MacroRegime::Transition => 0.00, // No macro edge — rely on intraday
+        };
+
+        // ── 2. ETH alignment boost (alts leading indicator) ──────────────────
+        // When ETH's 24h direction agrees with the trade direction, add a small
+        // bonus — ETH leads altcoins.  Disagreement adds a mild penalty.
+        let eth_bull = self.eth_return_24h > 0.3;
+        let eth_bear = self.eth_return_24h < -0.3;
+        let eth_adj: f64 = if eth_bull && action == "BUY" {
+            0.03
+        } else if eth_bear && action == "SELL" {
+            0.03
+        } else if eth_bull && action == "SELL" {
+            -0.03
+        } else if eth_bear && action == "BUY" {
+            -0.03
+        } else {
+            0.00
+        };
+
+        // ── 3. 24h BTC direction alignment ────────────────────────────────────
         let btc_bull = self.btc_return_24h > 0.3;
         let btc_bear = self.btc_return_24h < -0.3;
         let big_move = self.btc_return_24h.abs() > 3.0;
@@ -205,35 +335,20 @@ impl BtcMarketContext {
         let opposed = (action == "BUY" && btc_bear) || (action == "SELL" && btc_bull);
 
         let btc_adj = if self.dominance >= 55.0 {
-            // HIGH dominance — BTC direction is a strong edge (Pearson 0.75)
-            if aligned && big_move {
-                0.08
-            } else if aligned {
-                0.05
-            } else if opposed && big_move {
-                -0.12
-            } else if opposed {
-                -0.08
-            } else {
-                0.00
-            }
+            if aligned && big_move { 0.08 }
+            else if aligned        { 0.05 }
+            else if opposed && big_move { -0.12 }
+            else if opposed        { -0.08 }
+            else                   { 0.00 }
         } else if self.dominance >= 48.0 {
-            // MEDIUM dominance — weaker correlation (Pearson 0.49)
-            if aligned {
-                0.03
-            } else if opposed {
-                -0.04
-            } else {
-                0.00
-            }
+            if aligned  {  0.03 }
+            else if opposed { -0.04 }
+            else        { 0.00 }
         } else {
-            // LOW dominance / altseason (<48 %) — alts decouple from BTC
-            0.00
+            0.00 // altseason — alts decouple from BTC
         };
 
-        // ── Relative performance catch-up (IC ~0.04–0.06) ───────────────────
-        // Asset lagging BTC over 4h in a high-dominance regime tends to catch up.
-        // Asset leading BTC by >2% may mean-revert back toward BTC performance.
+        // ── 4. Relative performance catch-up ──────────────────────────────────
         let lag = self.asset_return_4h - self.btc_return_4h;
         let rel_bonus: f64 = if self.dominance >= 55.0 && self.btc_return_4h.abs() > 0.5 {
             if (action == "BUY" && lag < -2.0) || (action == "SELL" && lag > 2.0) {
@@ -245,7 +360,19 @@ impl BtcMarketContext {
             0.00
         };
 
-        btc_adj + rel_bonus
+        // Clamp total adjustment to ±0.20 — never let context alone flip a trade
+        (macro_adj + eth_adj + btc_adj + rel_bonus).clamp(-0.20, 0.20)
+    }
+
+    /// True when a new SHORT entry requires elevated confidence (counter-trend).
+    /// In a BULL macro, shorts are only valid as pico-top scalps — higher bar.
+    pub fn short_is_counter_trend(&self) -> bool {
+        self.macro_regime == MacroRegime::Bull
+    }
+
+    /// True when a new LONG entry requires elevated confidence (counter-trend).
+    pub fn long_is_counter_trend(&self) -> bool {
+        self.macro_regime == MacroRegime::Bear
     }
 }
 

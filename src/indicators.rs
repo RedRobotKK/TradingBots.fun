@@ -106,6 +106,33 @@ impl Default for HtfIndicators {
     }
 }
 
+// ─────────────────────────── Macro daily MAs ─────────────────────────────────
+
+/// Simple Moving Average of the last `period` closes from a candle slice.
+/// Returns `None` when there are fewer candles than `period`.
+pub fn sma(candles: &[PriceData], period: usize) -> Option<f64> {
+    if candles.len() < period || period == 0 {
+        return None;
+    }
+    let slice = &candles[candles.len() - period..];
+    Some(slice.iter().map(|c| c.close).sum::<f64>() / period as f64)
+}
+
+/// Daily MA5 / MA10 / MA20 from a slice of **daily** candles (newest last).
+///
+/// Used for macro regime detection:
+///   * price > MA20 AND MA5 > MA10  →  BULL
+///   * price < MA20 AND MA5 < MA10  →  BEAR
+///   * mixed                        →  TRANSITION
+///
+/// Any unavailable value (insufficient candles) is returned as 0.0.
+pub fn daily_mas(candles: &[PriceData]) -> (f64, f64, f64) {
+    let ma5  = sma(candles, 5).unwrap_or(0.0);
+    let ma10 = sma(candles, 10).unwrap_or(0.0);
+    let ma20 = sma(candles, 20).unwrap_or(0.0);
+    (ma5, ma10, ma20)
+}
+
 // ─────────────────────────── Public entry point ──────────────────────────────
 
 /// Calculate all indicators from a slice of OHLCV candles (newest last).

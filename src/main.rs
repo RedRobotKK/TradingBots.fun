@@ -1379,8 +1379,20 @@ async fn run_cycle(
     let mut to_partial2: Vec<(String, f64)> = Vec::new(); // 1/3 out at 4R
     let mut pnl_updates: Vec<(String, f64)> = Vec::new(); // (sym, pnl_pct) for hot_positions
 
+    // Read macro regime from BotState (set end-of-previous-cycle; 30s stale is fine
+    // for a daily indicator — daily MAs don't change bar-by-bar).
+    let cached_macro_regime: decision::MacroRegime = {
+        let s = bot_state.read().await;
+        match s.macro_regime.as_str() {
+            "BULL" => decision::MacroRegime::Bull,
+            "BEAR" => decision::MacroRegime::Bear,
+            _      => decision::MacroRegime::Transition,
+        }
+    };
+
     {
         let mut s = bot_state.write().await;
+        let macro_regime = cached_macro_regime; // bring into scope for the loop
         for pos in s.positions.iter_mut() {
             let cur = match current_mids.get(pos.symbol.as_str()) {
                 Some(&p) => p,
@@ -1483,6 +1495,61 @@ async fn run_cycle(
                     if trail < pos.stop_loss && trail > pos.entry_price {
                         pos.stop_loss = trail;
                     }
+                }
+            }
+
+            // ── Macro regime flip: manage SHORTs when market turns BULL ───
+            //
+            // When macro flips to BULL and we have an open SHORT, the position
+            // is now fighting the macro trend.  Three actions based on R:
+            //
+            //   SHORT in profit (r_mult ≥ 0)  → tighten stop to breakeven now.
+            //                                    Let the winner run but protect it.
+            //   SHORT at small loss (-0.5R)   → tighten stop to entry (near breakeven).
+            //                                    Haircut DCA eligible (see DCA logic).
+            //   SHORT at large loss (< -0.5R) → close immediately — macro is against us
+            //                                    and the loss will compound.
+            //
+            // Mirror applies in BEAR macro for open LONGs.
+            if macro_regime == decision::MacroRegime::Bull && pos.side == "SHORT" {
+                if r_mult < -0.50 {
+                    // Large loss + macro against us — exit cleanly
+                    to_close.push((pos.symbol.clone(), cur, "MacroFlipExit".to_string()));
+                    info!(
+                        "🌅 {} SHORT closed — macro turned BULL at {:.2}R (>{:.1}R threshold)",
+                        pos.symbol, r_mult, -0.50
+                    );
+                } else if r_mult >= 0.0 && pos.stop_loss > pos.entry_price {
+                    // Already profitable SHORT — tighten to breakeven
+                    pos.stop_loss = pos.entry_price;
+                    info!(
+                        "📌 {} SHORT stop → breakeven (BULL macro, {:.2}R profit)",
+                        pos.symbol, r_mult
+                    );
+                } else if r_mult > -0.50 && r_mult < 0.0 && pos.stop_loss > pos.entry_price * 1.05 {
+                    // Small loss — tighten stop toward entry to limit further damage
+                    let tighter = pos.entry_price * 1.015; // 1.5% above entry
+                    if tighter < pos.stop_loss {
+                        pos.stop_loss = tighter;
+                        info!(
+                            "⚠ {} SHORT stop tightened (BULL macro, {:.2}R) → {:.4}",
+                            pos.symbol, r_mult, pos.stop_loss
+                        );
+                    }
+                }
+            } else if macro_regime == decision::MacroRegime::Bear && pos.side == "LONG" {
+                if r_mult < -0.50 {
+                    to_close.push((pos.symbol.clone(), cur, "MacroFlipExit".to_string()));
+                    info!(
+                        "🌑 {} LONG closed — macro turned BEAR at {:.2}R",
+                        pos.symbol, r_mult
+                    );
+                } else if r_mult >= 0.0 && pos.stop_loss < pos.entry_price {
+                    pos.stop_loss = pos.entry_price;
+                    info!(
+                        "📌 {} LONG stop → breakeven (BEAR macro, {:.2}R profit)",
+                        pos.symbol, r_mult
+                    );
                 }
             }
 
@@ -1864,7 +1931,8 @@ async fn run_cycle(
 
     // BTC 24h return: compare first vs last candle across the 1h window (50 × 1h ≈ 50h).
     // BTC 4h return: first vs last candle in the 4h window (used for relative perf signal).
-    // Both fetched same-cycle so always fresh.
+    // ETH 24h + 4h returns: ETH is the "king of alts" — its direction leads altcoins.
+    // Daily candles: BTC + ETH MA5/MA10/MA20 for macro regime detection.
     let (btc_ret_24h, btc_ret_4h): (f64, f64) = {
         let candles_1h = market.fetch_market_data("BTC").await;
         let candles_4h = market.fetch_market_data_4h("BTC").await;
@@ -1872,11 +1940,7 @@ async fn run_cycle(
             Ok(c) if c.len() >= 2 => {
                 let f = c.first().unwrap().close;
                 let l = c.last().unwrap().close;
-                if f > 0.0 {
-                    (l - f) / f * 100.0
-                } else {
-                    0.0
-                }
+                if f > 0.0 { (l - f) / f * 100.0 } else { 0.0 }
             }
             _ => 0.0,
         };
@@ -1884,25 +1948,83 @@ async fn run_cycle(
             Ok(c) if c.len() >= 2 => {
                 let f = c.first().unwrap().close;
                 let l = c.last().unwrap().close;
-                if f > 0.0 {
-                    (l - f) / f * 100.0
-                } else {
-                    0.0
-                }
+                if f > 0.0 { (l - f) / f * 100.0 } else { 0.0 }
             }
             _ => 0.0,
         };
         (ret_24h, ret_4h)
     };
 
+    // ETH returns — fetched in parallel with BTC above (cached, no extra API cost)
+    let (eth_ret_24h, eth_ret_4h): (f64, f64) = {
+        let candles_1h = market.fetch_market_data("ETH").await;
+        let candles_4h = market.fetch_market_data_4h("ETH").await;
+        let ret_24h = match &candles_1h {
+            Ok(c) if c.len() >= 2 => {
+                let f = c.first().unwrap().close;
+                let l = c.last().unwrap().close;
+                if f > 0.0 { (l - f) / f * 100.0 } else { 0.0 }
+            }
+            _ => 0.0,
+        };
+        let ret_4h = match &candles_4h {
+            Ok(c) if c.len() >= 2 => {
+                let f = c.first().unwrap().close;
+                let l = c.last().unwrap().close;
+                if f > 0.0 { (l - f) / f * 100.0 } else { 0.0 }
+            }
+            _ => 0.0,
+        };
+        (ret_24h, ret_4h)
+    };
+
+    // ── Daily MA5/MA10/MA20 for BTC + ETH (macro regime) ─────────────────────
+    // Fetched once per cycle; daily candles are cached so no extra API calls on
+    // intra-day cycles (the cache only refetches when the daily bar closes).
+    let (btc_ma5, btc_ma10, btc_ma20, btc_daily_price): (f64, f64, f64, f64) = {
+        match market.fetch_market_data_1d("BTC").await {
+            Ok(c) if c.len() >= 20 => {
+                let (ma5, ma10, ma20) = crate::indicators::daily_mas(&c);
+                let price = c.last().map(|x| x.close).unwrap_or(0.0);
+                (ma5, ma10, ma20, price)
+            }
+            _ => {
+                warn!("BTC daily candles unavailable — macro regime defaulting to Transition");
+                (0.0, 0.0, 0.0, 0.0)
+            }
+        }
+    };
+    let (eth_ma5, eth_ma10, eth_ma20, eth_daily_price): (f64, f64, f64, f64) = {
+        match market.fetch_market_data_1d("ETH").await {
+            Ok(c) if c.len() >= 20 => {
+                let (ma5, ma10, ma20) = crate::indicators::daily_mas(&c);
+                let price = c.last().map(|x| x.close).unwrap_or(0.0);
+                (ma5, ma10, ma20, price)
+            }
+            _ => (0.0, 0.0, 0.0, 0.0),
+        }
+    };
+
+    // Classify each separately then take consensus (BTC primary, ETH confirms alts)
+    let btc_regime = decision::MacroRegime::classify(btc_daily_price, btc_ma5, btc_ma10, btc_ma20);
+    let eth_regime = decision::MacroRegime::classify(eth_daily_price, eth_ma5, eth_ma10, eth_ma20);
+    let macro_regime = decision::MacroRegime::consensus(btc_regime, eth_regime);
+
     let btc_dom = *btc_dominance.read().await;
     if btc_ret_24h != 0.0 || btc_ret_4h != 0.0 {
         info!(
-            "🟠 BTC ctx: dom={:.1}%  24h={:+.2}%  4h={:+.2}%",
-            btc_dom, btc_ret_24h, btc_ret_4h
+            "🟠 BTC ctx: dom={:.1}%  24h={:+.2}%  4h={:+.2}%  ETH 24h={:+.2}%  macro={}  BTC MA5={:.0}/MA10={:.0}/MA20={:.0}",
+            btc_dom, btc_ret_24h, btc_ret_4h, eth_ret_24h,
+            macro_regime.label(), btc_ma5, btc_ma10, btc_ma20
         );
     } else {
         warn!("BTC candles unavailable — dominance filter disabled this cycle");
+    }
+
+    // Persist macro regime to BotState for dashboard display
+    {
+        let mut s = bot_state.write().await;
+        s.macro_regime = macro_regime.label().to_string();
     }
 
     // ── Tier 2: analyse candidates ────────────────────────────────────────
@@ -1931,6 +2053,17 @@ async fn run_cycle(
             btc_dom,
             btc_ret_24h,
             btc_ret_4h,
+            eth_ret_24h,
+            eth_ret_4h,
+            btc_ma5,
+            btc_ma10,
+            btc_ma20,
+            btc_daily_price,
+            eth_ma5,
+            eth_ma10,
+            eth_ma20,
+            eth_daily_price,
+            macro_regime,
             trade_logger,
             fee_bps,
             notifier,
@@ -2616,14 +2749,25 @@ async fn analyse_symbol(
     weights: &SharedWeights,
     sent_cache: &SharedSentiment,
     fund_cache: &SharedFunding,
-    btc_dom: f64,     // BTC dominance %
-    btc_ret_24h: f64, // BTC 24h return %
-    btc_ret_4h: f64,  // BTC 4h return % (for relative performance signal)
+    btc_dom: f64,       // BTC dominance %
+    btc_ret_24h: f64,   // BTC 24h return %
+    btc_ret_4h: f64,    // BTC 4h return %
+    eth_ret_24h: f64,   // ETH 24h return % (alts leading indicator)
+    eth_ret_4h: f64,    // ETH 4h return %
+    btc_ma5: f64,       // BTC daily MA5
+    btc_ma10: f64,      // BTC daily MA10
+    btc_ma20: f64,      // BTC daily MA20
+    btc_daily_price: f64, // latest BTC daily close
+    eth_ma5: f64,
+    eth_ma10: f64,
+    eth_ma20: f64,
+    eth_daily_price: f64,
+    macro_regime: decision::MacroRegime, // consensus BTC+ETH macro regime
     trade_logger: &SharedTradeLogger,
-    fee_bps: u32, // builder fee bps for this tenant (1 = Pro, 3 = Free)
-    notifier: &Option<SharedNotifier>, // webhook / Telegram notifier
-    onchain_cache: &SharedOnchain, // exchange netflow signal
-    cex_monitor: &SharedCrossExchange, // cross-exchange price divergence
+    fee_bps: u32,
+    notifier: &Option<SharedNotifier>,
+    onchain_cache: &SharedOnchain,
+    cex_monitor: &SharedCrossExchange,
 ) -> Result<Option<(decision::Decision, SymbolIndicators)>> {
     let candles = market.fetch_market_data(symbol).await?;
     if candles.len() < 26 {
@@ -2667,7 +2811,7 @@ async fn analyse_symbol(
         cex_monitor.tick_persistence(symbol, s.hl_premium_pct).await;
     }
 
-    // BTC dominance context not applied to BTC itself (no self-reference).
+    // BTC dominance + macro context not applied to BTC itself (no self-reference).
     let ctx = if symbol == "BTC" {
         None
     } else {
@@ -2676,6 +2820,17 @@ async fn analyse_symbol(
             btc_return_24h: btc_ret_24h,
             btc_return_4h: btc_ret_4h,
             asset_return_4h,
+            eth_return_24h: eth_ret_24h,
+            eth_return_4h: eth_ret_4h,
+            btc_ma5,
+            btc_ma10,
+            btc_ma20,
+            btc_price: btc_daily_price,
+            eth_ma5,
+            eth_ma10,
+            eth_ma20,
+            eth_price: eth_daily_price,
+            macro_regime,
         })
     };
 
@@ -2829,6 +2984,17 @@ async fn analyse_symbol(
         // and use it for DCA thesis validation later.
         // For BTC itself, use 0.0 (no self-referential filter).
         let cycle_btc_ret = if symbol == "BTC" { 0.0 } else { btc_ret_4h };
+
+        // Pre-compute exhaustion candle flags here (candles in scope) so
+        // execute_paper_trade doesn't need raw candle access.
+        let recent3 = &candles[candles.len().saturating_sub(3)..];
+        let is_large_green = recent3.iter().any(|c| {
+            c.close > c.open && (c.close - c.open) / c.open.max(1e-8) >= 0.02
+        });
+        let is_large_red = recent3.iter().any(|c| {
+            c.open > c.close && (c.open - c.close) / c.open.max(1e-8) >= 0.02
+        });
+
         execute_paper_trade(
             symbol,
             &dec,
@@ -2845,6 +3011,10 @@ async fn analyse_symbol(
             config.paper_trading,
             config.min_position_pct,
             config.max_position_pct,
+            macro_regime,
+            current_price,
+            is_large_green,
+            is_large_red,
         )
         .await;
     } else if !config.paper_trading && dec.action != "SKIP" {
@@ -3024,6 +3194,12 @@ async fn execute_paper_trade(
     // Position sizing bounds from config (MIN_POSITION_PCT / MAX_POSITION_PCT env vars).
     min_position_pct: f64,
     max_position_pct: f64,
+    // Macro regime + pre-computed candle flags (computed in analyse_symbol where
+    // raw candles are in scope; avoids needing to pass the full candle slice here).
+    macro_regime: decision::MacroRegime,
+    current_price: f64,
+    is_large_green: bool, // ≥2% green body in the last 3 bars
+    is_large_red: bool,   // ≥2% red body in the last 3 bars
 ) {
     let target_side = if dec.action == "BUY" { "LONG" } else { "SHORT" };
 
@@ -3226,22 +3402,76 @@ async fn execute_paper_trade(
     };
 
     // ── BTC swing timing gate ─────────────────────────────────────────────
-    // Trades "follow BTC" — when BTC is making a big move AGAINST our intended
-    // direction, entering a new altcoin trade is fighting the macro.  This gate
-    // raises the confidence floor by 0.08 when BTC 4h return is strongly opposed
-    // (>2%), blocking borderline signals that would normally squeak through.
-    // BTC signals skipping this check (btc_ret_4h == 0.0) are intentional.
+    // Raises confidence floor by 0.08 when BTC 4h is strongly opposed (>2%).
     let btc_opposed_entry = if btc_ret_4h.abs() > 2.0 && symbol != "BTC" {
         (dec.action == "BUY" && btc_ret_4h < -2.0) || (dec.action == "SELL" && btc_ret_4h > 2.0)
     } else {
         false
     };
 
+    // ── Macro regime entry gate ────────────────────────────────────────────
+    // BULL regime: LONGs are primary — no extra floor.
+    //              SHORTs are counter-trend scalps only.
+    //              Valid SHORT setup in BULL = "pico top" after exhaustion candle:
+    //                • Recent large green candle (≥2% body in last 3 bars)
+    //                • RSI overbought (>68) — momentum exhausting
+    //                • Price at or above Bollinger upper band
+    //              If those conditions aren't met, SELL signal is blocked in BULL macro.
+    //
+    // BEAR regime: SHORTs are primary — no extra floor.
+    //              LONGs counter-trend: require pico bottom (mirror of above).
+    //
+    // TRANSITION: no extra floor (rely on intraday signals).
+    let macro_regime_floor_delta: f64 = match macro_regime {
+        decision::MacroRegime::Bull if dec.action == "SELL" => {
+            // Check for pico-top exhaustion pattern.
+            // is_large_green / current_price pre-computed in analyse_symbol (candles in scope there).
+            let rsi_overbought = ind.rsi > 68.0;
+            let at_bb_upper   = current_price >= ind.bollinger_upper * 0.998;
+            let is_pico_top   = is_large_green && rsi_overbought && at_bb_upper;
+            if is_pico_top {
+                // Valid pico-top scalp SHORT — raise floor slightly (scalps need conviction)
+                info!(
+                    "📍 {} BULL pico-top SHORT: RSI={:.0} BB_upper={:.4} green_candle=true",
+                    symbol, ind.rsi, ind.bollinger_upper
+                );
+                0.12 // needs higher confidence than a trend short
+            } else {
+                // Not a pico top — block the short in BULL macro
+                info!(
+                    "🚫 {} SELL blocked in BULL macro (no pico-top: RSI={:.0} green={} bb_upper={})",
+                    symbol, ind.rsi, is_large_green, at_bb_upper
+                );
+                return; // skip this trade entirely
+            }
+        }
+        decision::MacroRegime::Bull if dec.action == "BUY" => {
+            // LONGs aligned with macro — no extra floor (confidence_adjustment already boosted)
+            0.00
+        }
+        decision::MacroRegime::Bear if dec.action == "BUY" => {
+            // Counter-trend long in bear macro: require strong confirmation.
+            // Mirror of pico-top: exhaustion down (large red candle, RSI oversold, at BB lower).
+            let rsi_oversold = ind.rsi < 32.0;
+            let at_bb_lower  = current_price <= ind.bollinger_lower * 1.002;
+            if is_large_red && rsi_oversold && at_bb_lower {
+                info!(
+                    "📍 {} BEAR bounce LONG: RSI={:.0} BB_lower={:.4}",
+                    symbol, ind.rsi, ind.bollinger_lower
+                );
+                0.12
+            } else {
+                info!(
+                    "🚫 {} BUY blocked in BEAR macro (no exhaustion: RSI={:.0} red={} bb_lower={})",
+                    symbol, ind.rsi, is_large_red, at_bb_lower
+                );
+                return;
+            }
+        }
+        _ => 0.00, // TRANSITION or BTC itself — no extra floor
+    };
+
     // ── Minimum confidence gate ────────────────────────────────────────────
-    // Only enter trades where the signal is genuinely strong.
-    // Signals below MIN_CONFIDENCE generated 0W/14L in choppy markets.
-    // Use dynamic floor based on performance metrics; add extra 0.10 if circuit breaker active.
-    // Add extra 0.08 when BTC is making a big opposing swing.
     let mut effective_floor = metrics.confidence_floor(MIN_CONFIDENCE);
     if in_cb {
         effective_floor = (effective_floor + 0.10).min(0.92);
@@ -3249,19 +3479,17 @@ async fn execute_paper_trade(
     if btc_opposed_entry {
         effective_floor = (effective_floor + 0.08).min(0.95);
         info!(
-            "⚡ {} BTC swing gate: BTC 4h={:+.1}% opposes {}, floor raised to {:.0}%",
-            symbol,
-            btc_ret_4h,
-            dec.action,
-            effective_floor * 100.0
+            "⚡ {} BTC swing gate: BTC 4h={:+.1}% opposes {}, floor raised",
+            symbol, btc_ret_4h, dec.action,
         );
+    }
+    if macro_regime_floor_delta > 0.0 {
+        effective_floor = (effective_floor + macro_regime_floor_delta).min(0.95);
     }
     if dec.confidence < effective_floor {
         info!(
-            "⚠ {} skipped — confidence {:.0}% below {:.0}% minimum",
-            symbol,
-            dec.confidence * 100.0,
-            effective_floor * 100.0
+            "⚠ {} skipped — confidence {:.0}% below {:.0}% minimum (macro={})",
+            symbol, dec.confidence * 100.0, effective_floor * 100.0, macro_regime.label()
         );
         return;
     }

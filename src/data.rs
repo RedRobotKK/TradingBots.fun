@@ -536,6 +536,12 @@ impl MarketClient {
         self.fetch_hl_candles_cached(coin, "4h", 50).await
     }
 
+    /// Fetch 30 daily candles (cached — refetches at most once per 1d bar close).
+    /// Used for macro regime detection: MA5 / MA10 / MA20 on daily BTC + ETH.
+    pub async fn fetch_market_data_1d(&self, coin: &str) -> Result<Vec<PriceData>> {
+        self.fetch_hl_candles_cached(coin, "1d", 30).await
+    }
+
     // ── Tier 3: order book (per-cycle, not cached) ────────────────────────────
 
     /// Fetch order book depth from Hyperliquid's `l2Book` endpoint (weight = 2),
