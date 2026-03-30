@@ -236,7 +236,7 @@ impl MacroRegime {
 ///
 /// Big-move days (BTC >3%, high dominance): ETH/AVAX/LINK follow 93–100%.
 /// Lead-lag is SAME-DAY — the signal expires quickly, act fast.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct BtcMarketContext {
     /// BTC dominance as a percentage (e.g. 56.0 = 56 %).
     pub dominance: f64,
@@ -1514,6 +1514,7 @@ mod tests {
             btc_return_24h: 4.0,
             btc_return_4h: 0.0,
             asset_return_4h: 0.0,
+            ..Default::default()
         };
         let adj = ctx.confidence_adjustment("BUY");
         assert!(
@@ -1529,6 +1530,7 @@ mod tests {
             btc_return_24h: 4.0,
             btc_return_4h: 0.0,
             asset_return_4h: 0.0,
+            ..Default::default()
         };
         let adj = ctx.confidence_adjustment("SELL");
         assert!(
@@ -1544,6 +1546,7 @@ mod tests {
             btc_return_24h: 5.0,
             btc_return_4h: 0.0,
             asset_return_4h: 0.0,
+            ..Default::default()
         };
         let adj = ctx.confidence_adjustment("BUY");
         assert_eq!(adj, 0.0, "dominance < 48% → 0 adjustment (altseason)");
@@ -1556,6 +1559,7 @@ mod tests {
             btc_return_24h: 2.0,
             btc_return_4h: 0.0,
             asset_return_4h: 0.0,
+            ..Default::default()
         };
         let adj = ctx.confidence_adjustment("BUY");
         assert!(
@@ -1572,6 +1576,7 @@ mod tests {
             btc_return_24h: 0.2,
             btc_return_4h: 0.0,
             asset_return_4h: 0.0,
+            ..Default::default()
         };
         let adj = ctx.confidence_adjustment("BUY");
         assert_eq!(adj, 0.0, "BTC return < 0.3% is flat → 0 adjustment");
@@ -1585,6 +1590,7 @@ mod tests {
             btc_return_24h: 0.0,
             btc_return_4h: 1.5,
             asset_return_4h: -1.0,
+            ..Default::default()
         };
         let adj = ctx.confidence_adjustment("BUY");
         assert!(
