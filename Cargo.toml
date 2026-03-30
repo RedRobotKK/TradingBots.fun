@@ -1,6 +1,6 @@
 [package]
 name = "tradingbots-fun"
-version = "0.2.32"
+version = "0.2.34"
 edition = "2021"
 
 [dependencies]

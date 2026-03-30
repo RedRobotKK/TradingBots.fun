@@ -488,6 +488,7 @@ impl Default for BotState {
             pool_deployed_usd: 0.0,
             pending_cmds: std::collections::VecDeque::new(),
             bot_sessions: std::collections::HashMap::new(),
+            macro_regime: String::new(),
         }
     }
 }
