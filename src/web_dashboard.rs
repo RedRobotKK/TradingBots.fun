@@ -8502,6 +8502,25 @@ a{color:inherit;text-decoration:none}
 .lat-warn{color:#d29922}
 .lat-bad{color:#f85149}
 
+/* ── Pricing section ── */
+.pricing-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:20px;margin-top:8px}
+.plan-card{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:28px 26px;display:flex;flex-direction:column;gap:0;transition:.15s}
+.plan-card:hover{border-color:rgba(63,185,80,.4);transform:translateY(-2px)}
+.plan-card.popular{border-color:rgba(63,185,80,.4);background:linear-gradient(135deg,rgba(63,185,80,.06),rgba(63,185,80,.02));position:relative}
+.plan-badge{position:absolute;top:-12px;left:50%;transform:translateX(-50%);background:var(--green);color:#0d1117;border-radius:20px;padding:3px 14px;font-size:.68rem;font-weight:800;letter-spacing:.5px;white-space:nowrap}
+.plan-name{font-size:1rem;font-weight:700;color:var(--text-hi);margin-bottom:4px}
+.plan-price{font-size:2.2rem;font-weight:800;color:var(--text-hi);line-height:1;margin-bottom:2px;font-variant-numeric:tabular-nums}
+.plan-price span{font-size:.85rem;font-weight:400;color:var(--muted)}
+.plan-sub{font-size:.75rem;color:var(--dim);margin-bottom:20px}
+.plan-features{display:flex;flex-direction:column;gap:8px;margin-bottom:24px;flex:1}
+.plan-feat{display:flex;align-items:flex-start;gap:9px;font-size:.82rem;color:var(--text)}
+.plan-feat-icon{color:var(--green);font-size:.85rem;margin-top:1px;flex-shrink:0}
+.plan-feat-icon.dim{color:var(--dim)}
+.plan-cta{display:block;text-align:center;padding:11px 20px;border-radius:9px;font-weight:700;font-size:.88rem;background:var(--green);color:#0d1117;transition:.15s}
+.plan-cta:hover{background:#52c965}
+.plan-cta.sec{background:transparent;border:1px solid var(--border);color:var(--text)}
+.plan-cta.sec:hover{border-color:rgba(63,185,80,.4);color:var(--text-hi)}
+
 /* ── x402 highlight band ── */
 .x402-hero{background:linear-gradient(135deg,rgba(88,166,255,.06) 0%,rgba(63,185,80,.04) 100%);border:1px solid rgba(88,166,255,.18);border-radius:16px;padding:28px 28px 24px;margin-top:40px}
 .x402-hero h3{font-size:1.05rem;font-weight:800;color:var(--text-hi);margin-bottom:6px;display:flex;align-items:center;gap:8px}
@@ -8630,9 +8649,10 @@ th{padding:9px 14px;font-size:.65rem;font-weight:700;color:var(--dim);text-trans
   <div class="nav-links">
     <span class="live-badge"><span id="live-pill-text">1 Bot</span> Live</span>
     <a href="#how" class="nav-link">How it works</a>
+    <a href="#pricing" class="nav-link">Pricing</a>
     <a href="#x402-api" class="nav-link">x402 API</a>
     <a href="/leaderboard" class="nav-link">Leaderboard</a>
-    <a href="/login" class="nav-cta">Get Your Bot →</a>
+    <a href="/login" class="nav-cta">Start Trading →</a>
   </div>
 </nav>
 
@@ -8642,17 +8662,17 @@ th{padding:9px 14px;font-size:.65rem;font-weight:700;color:var(--dim);text-trans
   <canvas id="aum-canvas"></canvas>
   <div style="position:relative;z-index:1">
     <div class="hero-eyebrow">● AI Trading · Live on Hyperliquid</div>
-    <h1>Get a bot.<br>Let it <em>trade for you</em>.</h1>
+    <h1>Your portfolio.<br>Managed by <em>AI. 24/7.</em></h1>
     <div id="hero-pnl" class="hero-pnl" style="display:none">
       <span id="hero-pnl-val">+$0.00</span>
       <span class="hero-pnl-meta">session profit · <span id="hero-wr">—</span> win rate</span>
     </div>
-    <p class="hero-sub">Deposit USDC via Arbitrum. The AI scans 50+ perpetual pairs every 30 seconds and manages your trades 24/7.<br><span id="hero-aum" style="color:var(--green);font-weight:700">—</span> under management right now.</p>
+    <p class="hero-sub">Multi-signal AI scans 50+ Hyperliquid perpetual pairs every 30 seconds — entering, managing, and exiting trades while you sleep.<br><span id="hero-aum" style="color:var(--green);font-weight:700">—</span> under active management right now.</p>
     <div class="hero-btns">
-      <a href="/login" class="btn-p" style="font-size:1rem;padding:14px 32px">Get Your Bot →</a>
-      <a href="#x402-api" class="btn-s">Bot API (x402)</a>
+      <a href="/login" class="btn-p" style="font-size:1rem;padding:14px 32px">Start Trading →</a>
+      <a href="#pricing" class="btn-s">See Plans</a>
     </div>
-    <p style="margin-top:14px;font-size:.72rem;color:var(--dim)">No subscription. Deposit USDC &amp; start. Withdraw anytime.</p>
+    <p style="margin-top:14px;font-size:.72rem;color:var(--dim)">From <strong style="color:var(--text)">$20/month</strong> · Withdraw anytime · Paper trading free</p>
   </div>
 </section>
 
@@ -8660,7 +8680,7 @@ th{padding:9px 14px;font-size:.65rem;font-weight:700;color:var(--dim);text-trans
 <div class="stat-bar">
   <div class="stat-cell">
     <div class="stat-val" id="m-pnl" style="color:var(--green)">—</div>
-    <div class="stat-lbl">Session Profit</div>
+    <div class="stat-lbl">Realised Profit</div>
   </div>
   <div class="stat-cell">
     <div class="stat-val" id="m-wr2" style="color:var(--yellow)">—</div>
@@ -8668,11 +8688,15 @@ th{padding:9px 14px;font-size:.65rem;font-weight:700;color:var(--dim);text-trans
   </div>
   <div class="stat-cell">
     <div class="stat-val" id="m-pos" style="color:var(--blue)">—</div>
-    <div class="stat-lbl">Open Now</div>
+    <div class="stat-lbl">Live Positions</div>
   </div>
   <div class="stat-cell">
     <div class="stat-val" id="m-trades2" style="color:var(--muted)">—</div>
     <div class="stat-lbl">Trades Closed</div>
+  </div>
+  <div class="stat-cell">
+    <div class="stat-val" style="color:var(--green)">50+</div>
+    <div class="stat-lbl">Pairs Scanned</div>
   </div>
 </div>
 
@@ -8717,6 +8741,51 @@ th{padding:9px 14px;font-size:.65rem;font-weight:700;color:var(--dim);text-trans
       <div class="step-desc">AI agent? Call the API. HTTP 402 → pay 10 USDC on Base → get session token. Fully autonomous, no UI required.</div>
     </div>
   </div>
+</section>
+
+<!-- ═══ PRICING ═══ -->
+<section class="sec" id="pricing">
+  <div class="sec-head"><span class="sec-title">Simple Pricing</span><span class="sec-line"></span></div>
+  <div class="pricing-grid">
+
+    <!-- Starter -->
+    <div class="plan-card">
+      <div class="plan-name">Starter</div>
+      <div class="plan-price">$20<span>/mo</span></div>
+      <div class="plan-sub">Everything you need to get started</div>
+      <div class="plan-features">
+        <div class="plan-feat"><span class="plan-feat-icon">✓</span><span><strong>20 AI bots</strong> running simultaneously</span></div>
+        <div class="plan-feat"><span class="plan-feat-icon">✓</span><span>50+ Hyperliquid perp pairs scanned every 30s</span></div>
+        <div class="plan-feat"><span class="plan-feat-icon">✓</span><span>Live P&amp;L dashboard with position cards</span></div>
+        <div class="plan-feat"><span class="plan-feat-icon">✓</span><span>Paper trading mode — test before going live</span></div>
+        <div class="plan-feat"><span class="plan-feat-icon">✓</span><span>Macro regime detection (Bull / Bear / Transition)</span></div>
+        <div class="plan-feat"><span class="plan-feat-icon">✓</span><span>Deposit &amp; withdraw USDC anytime</span></div>
+        <div class="plan-feat"><span class="plan-feat-icon dim">·</span><span style="color:var(--dim)">x402 API access</span></div>
+      </div>
+      <a href="/login" class="plan-cta sec">Get Started</a>
+    </div>
+
+    <!-- Pro -->
+    <div class="plan-card popular" style="position:relative">
+      <div class="plan-badge">MOST POPULAR</div>
+      <div class="plan-name">Pro</div>
+      <div class="plan-price">$40<span>/mo</span></div>
+      <div class="plan-sub">For serious traders who want full capacity</div>
+      <div class="plan-features">
+        <div class="plan-feat"><span class="plan-feat-icon">✓</span><span><strong>40 AI bots</strong> running simultaneously</span></div>
+        <div class="plan-feat"><span class="plan-feat-icon">✓</span><span>50+ Hyperliquid perp pairs scanned every 30s</span></div>
+        <div class="plan-feat"><span class="plan-feat-icon">✓</span><span>Live P&amp;L dashboard with position cards</span></div>
+        <div class="plan-feat"><span class="plan-feat-icon">✓</span><span>Paper trading mode — test before going live</span></div>
+        <div class="plan-feat"><span class="plan-feat-icon">✓</span><span>Macro regime detection (Bull / Bear / Transition)</span></div>
+        <div class="plan-feat"><span class="plan-feat-icon">✓</span><span>Deposit &amp; withdraw USDC anytime</span></div>
+        <div class="plan-feat"><span class="plan-feat-icon">✓</span><span><strong>x402 API access</strong> — machine-native trading</span></div>
+        <div class="plan-feat"><span class="plan-feat-icon">✓</span><span>Priority signal execution</span></div>
+      </div>
+      <a href="/login" class="plan-cta">Start Pro →</a>
+    </div>
+
+  </div>
+  <p style="text-align:center;margin-top:18px;font-size:.75rem;color:var(--dim)">Billed monthly · Cancel anytime · Capital always in your own Hyperliquid wallet</p>
 </section>
 
 <!-- ═══ RECENT CLOSED TRADES — compact list ═══ -->
@@ -8792,13 +8861,13 @@ th{padding:9px 14px;font-size:.65rem;font-weight:700;color:var(--dim);text-trans
 
 <!-- ═══ CTA BAND ═══ -->
 <div class="cta-band">
-  <h3>Get your bot trading today.</h3>
-  <p>Human: deposit USDC and watch it trade.<br>AI agent: call the x402 API and it handles everything — session, funding, positions.</p>
+  <h3>Let AI manage your trades. From $20/month.</h3>
+  <p>Start with paper trading — zero risk, full experience. Go live when you're ready.<br>Your capital stays in your own Hyperliquid wallet. Always.</p>
   <div class="hero-btns">
-    <a href="/login" class="btn-p" style="font-size:1rem;padding:14px 32px">Get Your Bot →</a>
-    <a href="/api/v1/status" class="btn-s" target="_blank">Try the API</a>
+    <a href="/login" class="btn-p" style="font-size:1rem;padding:14px 32px">Start Trading →</a>
+    <a href="#pricing" class="btn-s">View Plans</a>
   </div>
-  <p style="margin-top:14px;font-size:.72rem;color:var(--dim)">Arbitrum ↔ Hyperliquid bridge built-in · x402 pay-per-session · no lock-ups</p>
+  <p style="margin-top:14px;font-size:.72rem;color:var(--dim)">Arbitrum ↔ Hyperliquid bridge built-in · cancel anytime · no lock-ups</p>
 </div>
 
 </div><!-- /wrap -->
@@ -9047,6 +9116,12 @@ async function loadState() {
     }
     const posCountEl = document.getElementById('m-pos');
     if (posCountEl) posCountEl.textContent = s.positions?.length || '0';
+
+    // ── AUM fallback: if TVL DB has no history yet, show live equity ──
+    const aumEl = document.getElementById('hero-aum');
+    if (aumEl && (aumEl.textContent === '—' || aumEl.textContent === '') && s.current_equity > 0) {
+      aumEl.textContent = fmtUsd(s.current_equity);
+    }
 
     // ── Closed trades — compact wins list ──
     renderTicker(s.closed_trades);
