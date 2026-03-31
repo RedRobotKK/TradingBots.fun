@@ -1,0 +1,72 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-03-31T08:55:39Z",
+    "commit": "05e7fe3",
+    "commit_full": "05e7fe3aebf9adfae8fa04122aa318967114cbe1",
+    "commit_message": "chore: bump version 0.2.39 \u2192 0.2.40",
+    "branch": "master",
+    "overall_status": "ADVISORY",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.94.0 (4a4ef493e 2026-03-02)",
+    "cargo": "cargo 1.94.0 (85eff7c80 2026-01-15)",
+    "os_kernel": "6.8.0-106-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "PASSED",
+      "exit_code": 0,
+      "duration_seconds": 796,
+      "total_passed": 811,
+      "total_failed": 0,
+      "total_ignored": 4,
+      "failures": []
+    },
+    "clippy": {
+      "status": "PASSED",
+      "exit_code": 0,
+      "duration_seconds": 376,
+      "error_count": 0,
+      "errors": []
+    },
+    "audit": {
+      "status": "ADVISORY",
+      "exit_code": 1,
+      "duration_seconds": 3,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2023-0071",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2023-0071",
+          "severity": "5.9 (medium)",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "tradingbots",
+    "status": "active",
+    "active_since": "Tue 2026-03-31 08:54:37 UTC",
+    "recent_logs": [
+      "Mar 31 08:54:37 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: tradingbots.service: Deactivated successfully.",
+      "Mar 31 08:54:37 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Stopped tradingbots.service - TradingBots.fun.",
+      "Mar 31 08:54:37 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: tradingbots.service: Consumed 1.484s CPU time.",
+      "Mar 31 08:54:37 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Starting tradingbots.service - TradingBots.fun...",
+      "Mar 31 08:54:37 ubuntu-s-1vcpu-1gb-sgp1-01 systemd[1]: Started tradingbots.service - TradingBots.fun."
+    ]
+  }
+}
