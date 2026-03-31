@@ -3330,6 +3330,25 @@ async fn execute_paper_trade(
         // No existing: fall through to new entry
     }
 
+    // ── Directional concentration cap ────────────────────────────────────
+    // Hard limit: no more than 60% of the position cap can be the same direction.
+    // Without this, a 100% SHORT book gets wiped simultaneously on a market bounce
+    // (observed: 12+ SHORTs all stopped out in one 1-hour window = correlated ruin).
+    {
+        let s = bot_state.read().await;
+        let total_open = s.positions.len();
+        let same_dir = s.positions.iter().filter(|p| p.side == target_side).count();
+        let max_allowed = (MAX_OPEN_POSITIONS as f64 * 0.60).floor() as usize; // 60% of max slots = 12
+        if total_open >= 4 && same_dir >= max_allowed {
+            info!(
+                "🚦 {} {} blocked — directional cap: {}/{} open positions already {} (max {})",
+                symbol, target_side, same_dir, total_open, target_side, max_allowed
+            );
+            return;
+        }
+        drop(s);
+    }
+
     // ── Correlation filter ────────────────────────────────────────────────
     // Prevents stacking highly-correlated same-direction positions (e.g. BTC+ETH LONG
     // when corr=0.85 doubles macro exposure, not diversification).
@@ -3451,9 +3470,13 @@ async fn execute_paper_trade(
         }
         decision::MacroRegime::Bear if dec.action == "BUY" => {
             // Counter-trend long in bear macro: require strong confirmation.
-            // Mirror of pico-top: exhaustion down (large red candle, RSI oversold, at BB lower).
-            let rsi_oversold = ind.rsi < 32.0;
-            let at_bb_lower  = current_price <= ind.bollinger_lower * 1.002;
+            // Mirror of pico-top: exhaustion down (large red candle, RSI oversold, near BB lower).
+            // RSI < 40 (raised from 32 — alts in persistent downtrends rarely touch 32 on 1h
+            // candles, causing 0% LONG entries and a 100% correlated SHORT book that gets
+            // wiped simultaneously when the market bounces).
+            // BB lower within 1% (relaxed from 0.2% to allow pre-touch entries).
+            let rsi_oversold = ind.rsi < 40.0;
+            let at_bb_lower  = current_price <= ind.bollinger_lower * 1.010;
             if is_large_red && rsi_oversold && at_bb_lower {
                 info!(
                     "📍 {} BEAR bounce LONG: RSI={:.0} BB_lower={:.4}",

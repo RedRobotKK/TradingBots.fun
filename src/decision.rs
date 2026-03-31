@@ -1053,17 +1053,20 @@ pub fn make_decision(
 
     // Tighter stop in trending markets (momentum trades move faster);
     // wider stop in ranging markets (expected oscillation before reversal).
+    // Reduced from (1.8/2.2/2.0) → tighter multipliers to shrink per-trade loss
+    // when 30-second polling gaps allow price to blow through stops on volatile alts.
     let (stop_mult, tp_mult) = match regime {
-        Regime::Trending => (1.8, 3.6), // 1.8×ATR stop, 3.6×ATR target = 2:1 R:R
-        Regime::Ranging => (2.2, 3.3),  // 2.2×ATR stop, 3.3×ATR target = 1.5:1 R:R
-        Regime::Neutral => (2.0, 3.2),  // balanced
+        Regime::Trending => (1.4, 3.5), // 1.4×ATR stop, 3.5×ATR target = 2.5:1 R:R
+        Regime::Ranging => (1.7, 3.4),  // 1.7×ATR stop, 3.4×ATR target = 2:1 R:R
+        Regime::Neutral => (1.5, 3.5),  // balanced
     };
 
-    // Hard cap: stop-loss distance capped at 8% of entry price regardless of ATR.
-    // Without this, high-volatility assets (FET, DOGE at 5× leverage) produce
-    // stops so wide that a single fill can wipe 20-40% of margin.  At 8% cap
-    // the worst-case margin loss is 8% × leverage = 24% (at 3×), acceptable.
-    const MAX_STOP_DIST_PCT: f64 = 0.08;
+    // Hard cap: stop-loss distance capped at 5% of entry price regardless of ATR.
+    // Reduced from 8%: at 8% × 2× leverage worst-case = -16% margin per trade.
+    // At 5% × 2× leverage = -10% max, which is painful but survivable.
+    // Low-cap alts with high ATR (SKY, FOGO, BIGTIME) were hitting -14.8% losses
+    // because the 8% stop was bypassed by gap moves in a single 30s poll cycle.
+    const MAX_STOP_DIST_PCT: f64 = 0.05;
     let (stop_loss, take_profit) = match action.as_str() {
         "BUY" => {
             let raw_sl = close - atr * stop_mult;
