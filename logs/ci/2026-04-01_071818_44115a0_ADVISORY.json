@@ -1,0 +1,72 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-04-01T07:09:14Z",
+    "commit": "44115a0",
+    "commit_full": "44115a0942df1c385794d790ad449a0a8118149f",
+    "commit_message": "fix: 429 backoff + funding null crash + CoinGecko key + .env.example",
+    "branch": "master",
+    "overall_status": "ADVISORY",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.94.0 (4a4ef493e 2026-03-02)",
+    "cargo": "cargo 1.94.0 (85eff7c80 2026-01-15)",
+    "os_kernel": "6.8.0-106-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "PASSED",
+      "exit_code": 0,
+      "duration_seconds": 414,
+      "total_passed": 811,
+      "total_failed": 0,
+      "total_ignored": 4,
+      "failures": []
+    },
+    "clippy": {
+      "status": "PASSED",
+      "exit_code": 0,
+      "duration_seconds": 124,
+      "error_count": 0,
+      "errors": []
+    },
+    "audit": {
+      "status": "ADVISORY",
+      "exit_code": 1,
+      "duration_seconds": 4,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2023-0071",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2023-0071",
+          "severity": "5.9 (medium)",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "tradingbots",
+    "status": "active",
+    "active_since": "Wed 2026-04-01 07:07:43 UTC",
+    "recent_logs": [
+      "Apr 01 07:18:16 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[808237]: [2026-04-01T07:18:16.896Z INFO  tradingbots_fun] \ud83d\udeab FARTCOIN BUY blocked in BEAR macro (no exhaustion: RSI=66 red=false bb_lower=false)",
+      "Apr 01 07:18:16 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[808237]: [2026-04-01T07:18:16.896Z INFO  tradingbots_fun] \ud83d\udca1 FARTCOIN \u2192 BUY conf=56%",
+      "Apr 01 07:18:17 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[808237]: [2026-04-01T07:18:17.162Z WARN  tradingbots_fun::funding] \ud83d\udcb0 Funding fetch error: HL asset ctx parse: invalid type: null, expected a string \u2014 using stale cache",
+      "Apr 01 07:18:17 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[808237]: [2026-04-01T07:18:17.428Z WARN  tradingbots_fun::funding] \ud83d\udcb0 Funding fetch error: HL asset ctx parse: invalid type: null, expected a string \u2014 using stale cache",
+      "Apr 01 07:18:17 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[808237]: [2026-04-01T07:18:17.679Z INFO  tradingbots_fun::signal_engine] \ud83d\udcca SignalEngine cycle 21 done: 35 signals, 3162 ms"
+    ]
+  }
+}
