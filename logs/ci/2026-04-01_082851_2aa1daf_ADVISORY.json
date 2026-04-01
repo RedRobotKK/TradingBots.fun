@@ -1,0 +1,72 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-04-01T08:24:50Z",
+    "commit": "2aa1daf",
+    "commit_full": "2aa1dafca854333bc2ad31f964ab6caa82c68c48",
+    "commit_message": "ci-log: 2026-04-01_012337 27d23d0 \u274c UNKNOWN",
+    "branch": "master",
+    "overall_status": "ADVISORY",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.94.0 (4a4ef493e 2026-03-02)",
+    "cargo": "cargo 1.94.0 (85eff7c80 2026-01-15)",
+    "os_kernel": "6.8.0-106-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "PASSED",
+      "exit_code": 0,
+      "duration_seconds": 183,
+      "total_passed": 811,
+      "total_failed": 0,
+      "total_ignored": 4,
+      "failures": []
+    },
+    "clippy": {
+      "status": "PASSED",
+      "exit_code": 0,
+      "duration_seconds": 54,
+      "error_count": 0,
+      "errors": []
+    },
+    "audit": {
+      "status": "ADVISORY",
+      "exit_code": 1,
+      "duration_seconds": 3,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2023-0071",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2023-0071",
+          "severity": "5.9 (medium)",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "tradingbots",
+    "status": "active",
+    "active_since": "Wed 2026-04-01 08:22:47 UTC",
+    "recent_logs": [
+      "Apr 01 08:28:50 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[827119]: [2026-04-01T08:28:50.707Z INFO  tradingbots_fun::signal_watchlist] \ud83d\udc41  Watchlisting BUY GOAT conf=54% @ $0.0178 (below threshold)",
+      "Apr 01 08:28:50 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[827119]: [2026-04-01T08:28:50.783Z INFO  tradingbots_fun] \ud83d\udeab BLAST BUY blocked in BEAR macro (no exhaustion: RSI=85 red=false bb_lower=false)",
+      "Apr 01 08:28:50 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[827119]: [2026-04-01T08:28:50.783Z INFO  tradingbots_fun] \ud83d\udca1 BLAST \u2192 BUY conf=85%",
+      "Apr 01 08:28:50 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[827119]: [2026-04-01T08:28:50.858Z INFO  tradingbots_fun] \ud83d\udeab CELO BUY blocked in BEAR macro (no exhaustion: RSI=62 red=false bb_lower=false)",
+      "Apr 01 08:28:50 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[827119]: [2026-04-01T08:28:50.858Z INFO  tradingbots_fun] \ud83d\udca1 CELO \u2192 BUY conf=76%"
+    ]
+  }
+}
