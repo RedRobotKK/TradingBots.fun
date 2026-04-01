@@ -2991,7 +2991,11 @@ async fn analyse_symbol(
         let is_large_green = recent3.iter().any(|c| {
             c.close > c.open && (c.close - c.open) / c.open.max(1e-8) >= 0.02
         });
-        let is_large_red = recent3.iter().any(|c| {
+        // For BEAR bounce LONGs: look back 6 bars for the exhaustion candle, not 3.
+        // When a bounce is starting the most recent bars will be green — the
+        // capitulation sell candle was 3-6h ago, so a 3-bar window misses it.
+        let recent6 = &candles[candles.len().saturating_sub(6)..];
+        let is_large_red = recent6.iter().any(|c| {
             c.open > c.close && (c.open - c.close) / c.open.max(1e-8) >= 0.02
         });
 
@@ -3469,18 +3473,22 @@ async fn execute_paper_trade(
             0.00
         }
         decision::MacroRegime::Bear if dec.action == "BUY" => {
-            // Counter-trend long in bear macro: require strong confirmation.
-            // Mirror of pico-top: exhaustion down (large red candle, RSI oversold, near BB lower).
-            // RSI < 40 (raised from 32 — alts in persistent downtrends rarely touch 32 on 1h
-            // candles, causing 0% LONG entries and a 100% correlated SHORT book that gets
-            // wiped simultaneously when the market bounces).
-            // BB lower within 1% (relaxed from 0.2% to allow pre-touch entries).
+            // Counter-trend long in bear macro: require RSI oversold + at least one
+            // structural confirmation (exhaustion candle OR near BB lower).
+            //
+            // Fix #4: Triple-AND (red && rsi && bb_lower) was impossible in practice —
+            // when a bounce starts, the last bars are already green so is_large_red fires
+            // false at the exact right entry moment. Changed to:
+            //   RSI < 40 (always required) AND (is_large_red OR at_bb_lower)
+            // is_large_red now looks back 6 bars (not 3) so a capitulation candle from
+            // 3-6h ago still qualifies when the bounce is underway.
+            // BB lower tolerance widened from 1.010 → 1.025 (within 2.5% of lower band).
             let rsi_oversold = ind.rsi < 40.0;
-            let at_bb_lower  = current_price <= ind.bollinger_lower * 1.010;
-            if is_large_red && rsi_oversold && at_bb_lower {
+            let at_bb_lower  = current_price <= ind.bollinger_lower * 1.025;
+            if rsi_oversold && (is_large_red || at_bb_lower) {
                 info!(
-                    "📍 {} BEAR bounce LONG: RSI={:.0} BB_lower={:.4}",
-                    symbol, ind.rsi, ind.bollinger_lower
+                    "📍 {} BEAR bounce LONG: RSI={:.0} BB_lower={:.4} red={} bb={}",
+                    symbol, ind.rsi, ind.bollinger_lower, is_large_red, at_bb_lower
                 );
                 0.12
             } else {
