@@ -844,19 +844,24 @@ async fn main() -> Result<()> {
 
 /// Fetch live BTC market-cap dominance from CoinGecko's free /global endpoint.
 /// Returns `None` if the request fails or the field is missing.
+///
+/// Supports an optional `COINGECKO_API_KEY` env var (free Demo key from
+/// https://www.coingecko.com/en/api).  Without a key the free public tier
+/// allows ~30 calls/min and fails frequently.  A free Demo key raises the
+/// limit to 10 000 calls/month (~7/min sustained) with much more reliable
+/// availability.  Set via: `COINGECKO_API_KEY=CG-xxxxxxxxxxxxxxxxxxxx`
 async fn fetch_btc_dominance() -> Option<f64> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(6))
         .build()
         .ok()?;
-    let resp: serde_json::Value = client
-        .get("https://api.coingecko.com/api/v3/global")
-        .send()
-        .await
-        .ok()?
-        .json()
-        .await
-        .ok()?;
+    let mut req = client.get("https://api.coingecko.com/api/v3/global");
+    if let Ok(key) = std::env::var("COINGECKO_API_KEY") {
+        if !key.is_empty() {
+            req = req.header("x-cg-demo-api-key", key);
+        }
+    }
+    let resp: serde_json::Value = req.send().await.ok()?.json().await.ok()?;
     resp["data"]["market_cap_percentage"]["btc"].as_f64()
 }
 

@@ -293,9 +293,11 @@ struct HlUniverseItem {
 #[derive(serde::Deserialize)]
 struct HlAssetCtx {
     /// Current 8h funding rate (string float, e.g. "0.0000125").
-    funding: String,
+    /// Null for newly-listed or recently-delisted tokens — use Option to avoid
+    /// crashing the entire funding cache when one token returns JSON `null`.
+    funding: Option<String>,
     /// Predicted next-period funding = (mark − index) / index / 8 ≈ premium.
-    premium: String,
+    premium: Option<String>,
 }
 
 // ─────────────────────────── Cache ───────────────────────────────────────────
@@ -479,8 +481,8 @@ impl FundingCache {
 
         for (item, ctx) in meta.universe.iter().zip(ctxs.iter()) {
             let sym = item.name.clone();
-            let rate: f64 = ctx.funding.parse().unwrap_or(0.0);
-            let pred: f64 = ctx.premium.parse().unwrap_or(0.0);
+            let rate: f64 = ctx.funding.as_deref().unwrap_or("0").parse().unwrap_or(0.0);
+            let pred: f64 = ctx.premium.as_deref().unwrap_or("0").parse().unwrap_or(0.0);
 
             // Delta vs previous refresh (0 on first observation).
             let delta = prev.get(&sym).map(|&p| rate - p).unwrap_or(0.0);

@@ -188,11 +188,19 @@ impl MarketClient {
                 Err(e) => {
                     last_err = e;
                     if attempt + 1 < MAX_RETRIES {
-                        let delay_ms = RETRY_BASE_MS * (1 << attempt);
+                        // 429 rate-limit errors need a longer cool-down.
+                        // Retrying in 1-2 s just triggers another 429 immediately.
+                        let is_429 = last_err.to_string().contains("429");
+                        let delay_ms = if is_429 {
+                            15_000 // wait 15 s for HL's rate-limit window to reset
+                        } else {
+                            RETRY_BASE_MS * (1 << attempt)
+                        };
                         log::warn!(
-                            "HTTP attempt {}/{} failed — retrying in {}ms: {}",
+                            "HTTP attempt {}/{} failed ({}) — retrying in {}ms: {}",
                             attempt + 1,
                             MAX_RETRIES,
+                            if is_429 { "429 rate-limit" } else { "error" },
                             delay_ms,
                             last_err
                         );
