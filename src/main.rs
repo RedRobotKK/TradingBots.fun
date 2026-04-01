@@ -3479,13 +3479,19 @@ async fn execute_paper_trade(
             // Fix #4: Triple-AND (red && rsi && bb_lower) was impossible in practice —
             // when a bounce starts, the last bars are already green so is_large_red fires
             // false at the exact right entry moment. Changed to:
-            //   RSI < 40 (always required) AND (is_large_red OR at_bb_lower)
-            // is_large_red now looks back 6 bars (not 3) so a capitulation candle from
-            // 3-6h ago still qualifies when the bounce is underway.
-            // BB lower tolerance widened from 1.010 → 1.025 (within 2.5% of lower band).
-            let rsi_oversold = ind.rsi < 40.0;
+            //   RSI < 50 (below neutral) AND (is_large_red OR at_bb_lower)
+            // is_large_red looks back 6 bars so a capitulation candle from 3-6h ago
+            // still qualifies when the bounce is underway.
+            // BB lower tolerance 1.025 (within 2.5% of lower band).
+            //
+            // RSI threshold raised 40 → 50: live logs showed every blocked BUY had
+            // RSI 45-82 — RSI < 40 was never reached during bounces because recent
+            // candles are green. The signal engine already incorporates RSI into its
+            // confidence score (60-95% BUY outputs observed), so RSI < 40 on top was
+            // double-filtering to an extreme. RSI < 50 = "not overbought" is sufficient.
+            let rsi_below_neutral = ind.rsi < 50.0;
             let at_bb_lower  = current_price <= ind.bollinger_lower * 1.025;
-            if rsi_oversold && (is_large_red || at_bb_lower) {
+            if rsi_below_neutral && (is_large_red || at_bb_lower) {
                 info!(
                     "📍 {} BEAR bounce LONG: RSI={:.0} BB_lower={:.4} red={} bb={}",
                     symbol, ind.rsi, ind.bollinger_lower, is_large_red, at_bb_lower
