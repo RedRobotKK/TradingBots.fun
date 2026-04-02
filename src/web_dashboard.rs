@@ -1575,6 +1575,7 @@ body{{background:var(--bg);color:var(--text);
              font-size:.72em;font-weight:600;position:relative;
              box-shadow:0 0 0 0 rgba(63,185,80,0);transition:box-shadow .4s ease}}
 .win-ticker.wt-flash{{box-shadow:0 0 20px rgba(63,185,80,.55)!important}}
+.win-ticker.wt-flash-loss{{box-shadow:0 0 20px rgba(248,81,73,.55)!important}}
 .win-ticker-label{{flex-shrink:0;padding:0 14px;color:#fff;letter-spacing:.8px;
                    font-size:.9em;font-weight:700;display:flex;align-items:center;gap:7px;
                    background:linear-gradient(135deg,#1a7f37 0%,#238636 100%);
@@ -1824,18 +1825,20 @@ tr:hover td{{background:rgba(255,255,255,.025)}}
   </div>
 </div>
 
-<!-- ── Live Wins Stock-Market Ticker ─────────────────────────────────────── -->
+<!-- ── Recent Trades Ticker ───────────────────────────────────────────────
+     Seeded from closed_trades on every loadState() poll (4 s cadence).
+     Shows last 40 exits — wins in green, losses in red — never "waiting…"  -->
 <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
   <span style="font-size:.68em;color:#6e7681;font-weight:600;letter-spacing:.3px">SESSION</span>
   <span id="wt-ls-stats" style="font-size:.68em;font-family:'SF Mono','Courier New',monospace"></span>
 </div>
 <div class="win-ticker" id="win-ticker">
   <div class="win-ticker-label">
-    <span class="wt-dot"></span>LIVE WINS
+    <span class="wt-dot"></span>TRADES
   </div>
   <div class="win-ticker-scroll">
     <div class="win-ticker-inner" id="win-inner">
-      <span style="color:#484f58;padding:0 24px">Waiting for winning trades…</span>
+      <span style="color:#484f58;padding:0 24px">Loading trade history…</span>
     </div>
   </div>
 </div>
@@ -2031,92 +2034,94 @@ tr:hover td{{background:rgba(255,255,255,.025)}}
 </script>
 
 <script>
-/* ── Live Wins — Bloomberg-style continuous stock ticker (SSE) ────────── */
+/* ── Recent Trades Ticker ─────────────────────────────────────────────────
+   Replaces the old SSE-only "live wins" bar.
+   • Seeded from s.closed_trades on every loadState() call (4 s cadence).
+   • Shows last TICKER_MAX exits — wins green, losses red.
+   • Pure poll-based: no SSE, no "Waiting for winning trades…" dead state.
+   • Called as window._tickerUpdate(closedTrades) from loadState().        */
 (function(){{
-  var MAX_ITEMS = 60;
-  var PX_PER_SEC = 80;   // scroll speed pixels/second
-  var wins = [];
-  var longWins = 0, shortWins = 0;
+  var TICKER_MAX  = 40;   // max trades shown
+  var PX_PER_SEC  = 70;   // scroll speed
+  var _lastCount  = -1;   // detect new trades without re-rendering every 4 s
 
-  function fmtSym(s){{ return s.replace('-PERP','').replace('USDT',''); }}
+  function fmtSym(s){{ return (s||'').replace(/-PERP$/,'').replace(/USDT$/,''); }}
 
-  function fmtItem(w, idx){{
-    var isLong = w.side === 'LONG';
+  function fmtItem(t){{
+    var win    = (t.pnl||0) >= 0;
+    var isLong = t.side === 'LONG';
     var arrow  = isLong ? '▲' : '▼';
     var sideC  = isLong ? 'wt-long' : 'wt-short';
-    var pnlC   = w.pnl >= 0 ? 'wt-pnl-pos' : 'wt-pnl-neg';
-    var pnlStr = (w.pnl >= 0 ? '+$' : '-$') + Math.abs(w.pnl).toFixed(2);
-    var rStr   = w.r_mult > 0 ? '+' + w.r_mult.toFixed(2) + 'R' : '';
-    var sym    = fmtSym(w.symbol);
+    var pnlC   = win ? 'wt-pnl-pos' : 'wt-pnl-neg';
+    var pnl    = t.pnl||0;
+    var pnlStr = (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(0);
+    var r      = t.r_multiple;
+    var rStr   = (r != null && Math.abs(r) > 0.01) ? '&nbsp;<span class="wt-r">' + (r>=0?'+':'') + r.toFixed(2) + 'R</span>' : '';
     return '<span class="wt-item">'
       + '<span class="wt-sep">◆</span>'
-      + '<span class="wt-sym">' + sym + '</span>'
-      + '<span class="' + sideC + '">&nbsp;' + arrow + '&nbsp;</span>'
+      + '<span class="wt-sym">' + fmtSym(t.symbol) + '</span>'
+      + '<span class="' + sideC + '">&thinsp;' + arrow + '&thinsp;</span>'
       + '<span class="' + pnlC + '">' + pnlStr + '</span>'
-      + (rStr ? '&nbsp;<span class="wt-r">' + rStr + '</span>' : '')
-      + '&nbsp;<span class="wt-wlt">·&nbsp;' + w.wallet + '</span>'
+      + rStr
       + '</span>';
   }}
 
-  function renderTicker(){{
+  function renderTicker(trades){{
     var inner = document.getElementById('win-inner');
     if(!inner) return;
-    if(wins.length === 0){{
+    // Take last TICKER_MAX trades and reverse so newest is leftmost
+    var items = trades.slice(-TICKER_MAX).reverse();
+    if(items.length === 0){{
       inner.style.animation = 'none';
-      inner.innerHTML = '<span style="color:#484f58;padding:0 24px">Waiting for winning trades…</span>';
+      inner.innerHTML = '<span style="color:#484f58;padding:0 24px">No closed trades yet this session</span>';
       return;
     }}
-    // Duplicate content for seamless infinite loop
-    var html = wins.map(fmtItem).join('');
-    inner.innerHTML = html + html;
-    // Speed: base on content width, min 8s
+    var html = items.map(fmtItem).join('');
+    inner.innerHTML = html + html; // duplicate for seamless loop
     inner.style.animation = 'none';
     inner.offsetWidth; // force reflow
     var halfW = inner.scrollWidth / 2;
-    var dur   = Math.max(8, halfW / PX_PER_SEC);
+    var dur = Math.max(6, halfW / PX_PER_SEC);
     inner.style.animation = 'wt-scroll ' + dur.toFixed(1) + 's linear infinite';
   }}
 
-  function updateLSStats(){{
+  function updateStats(trades){{
     var el = document.getElementById('wt-ls-stats');
     if(!el) return;
-    var total = longWins + shortWins;
+    var wins  = trades.filter(function(t){{ return (t.pnl||0)>=0; }}).length;
+    var total = trades.length;
+    var losses = total - wins;
     if(total === 0){{ el.textContent = ''; return; }}
-    var lp = ((longWins/total)*100).toFixed(0);
-    var sp = ((shortWins/total)*100).toFixed(0);
-    el.innerHTML = '<span style="color:#3fb950">▲ ' + longWins + ' (' + lp + '%)</span>'
+    var longs  = trades.filter(function(t){{ return t.side==='LONG'; }}).length;
+    var shorts = total - longs;
+    el.innerHTML =
+      '<span style="color:#3fb950">+' + wins + 'W</span>'
       + '<span style="color:#6e7681"> · </span>'
-      + '<span style="color:#f85149">▼ ' + shortWins + ' (' + sp + '%)</span>';
+      + '<span style="color:#f85149">-' + losses + 'L</span>'
+      + '<span style="color:#6e7681"> &nbsp;|&nbsp; </span>'
+      + '<span style="color:#3fb950">▲' + longs + '</span>'
+      + '<span style="color:#6e7681"> · </span>'
+      + '<span style="color:#f85149">▼' + shorts + '</span>';
   }}
 
-  function addWin(w){{
-    wins.unshift(w);
-    if(wins.length > MAX_ITEMS) wins.pop();
-    if(w.side === 'LONG') longWins++; else shortWins++;
-    renderTicker();
-    updateLSStats();
-    // Glow flash
-    var el = document.getElementById('win-ticker');
-    if(el){{
-      el.classList.add('wt-flash');
-      setTimeout(function(){{ el.classList.remove('wt-flash'); }}, 900);
+  // Called by loadState() on every poll
+  window._tickerUpdate = function(closedTrades){{
+    var trades = closedTrades || [];
+    if(trades.length === _lastCount) return; // nothing new
+    var newTrade = trades.length > _lastCount && _lastCount >= 0;
+    _lastCount = trades.length;
+    renderTicker(trades);
+    updateStats(trades);
+    // Flash the ticker bar green (win) or red (loss) on new exit
+    if(newTrade){{
+      var last = trades[trades.length-1];
+      var el   = document.getElementById('win-ticker');
+      if(el){{
+        el.classList.add((last&&(last.pnl||0)>=0) ? 'wt-flash' : 'wt-flash-loss');
+        setTimeout(function(){{ el.classList.remove('wt-flash','wt-flash-loss'); }}, 900);
+      }}
     }}
-  }}
-
-  function connectStream(){{
-    if(!window.EventSource) return;
-    var es = new EventSource('/api/trade-stream');
-    es.addEventListener('trade_win', function(e){{
-      try{{ addWin(JSON.parse(e.data)); }}catch(err){{}}
-    }});
-    es.onerror = function(){{ es.close(); setTimeout(connectStream, 5000); }};
-  }}
-
-  if(document.readyState === 'loading'){{
-    document.addEventListener('DOMContentLoaded', connectStream);
-  }} else {{
-    connectStream();
-  }}
+  }};
 }})();
 </script>
 
@@ -9226,7 +9231,8 @@ async function loadState() {
       aumEl.textContent = fmtUsd(s.current_equity);
     }
 
-    // ── Closed trades — compact wins list ──
+    // ── Closed trades — top banner ticker + compact wins list ──
+    if (window._tickerUpdate) window._tickerUpdate(s.closed_trades);
     renderTicker(s.closed_trades);
     const winsSec  = document.getElementById('wins-sec');
     const winsList = document.getElementById('wins-list');
