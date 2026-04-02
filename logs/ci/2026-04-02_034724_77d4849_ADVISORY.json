@@ -1,0 +1,72 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-04-02T03:37:22Z",
+    "commit": "77d4849",
+    "commit_full": "77d484911e1710e24aa92c48aa840873f4bd26d0",
+    "commit_message": "chore: bump version 0.2.49 \u2192 0.2.50",
+    "branch": "master",
+    "overall_status": "ADVISORY",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.94.0 (4a4ef493e 2026-03-02)",
+    "cargo": "cargo 1.94.0 (85eff7c80 2026-01-15)",
+    "os_kernel": "6.8.0-106-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "PASSED",
+      "exit_code": 0,
+      "duration_seconds": 465,
+      "total_passed": 811,
+      "total_failed": 0,
+      "total_ignored": 4,
+      "failures": []
+    },
+    "clippy": {
+      "status": "PASSED",
+      "exit_code": 0,
+      "duration_seconds": 133,
+      "error_count": 0,
+      "errors": []
+    },
+    "audit": {
+      "status": "ADVISORY",
+      "exit_code": 1,
+      "duration_seconds": 3,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2023-0071",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2023-0071",
+          "severity": "5.9 (medium)",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "tradingbots",
+    "status": "active",
+    "active_since": "Thu 2026-04-02 03:38:30 UTC",
+    "recent_logs": [
+      "Apr 02 03:47:24 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[849917]: [2026-04-02T03:47:24.205Z INFO  tradingbots_fun] \ud83d\udca1 AERO \u2192 SELL conf=80%",
+      "Apr 02 03:47:24 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[849917]: [2026-04-02T03:47:24.287Z INFO  tradingbots_fun] \ud83d\udca1 ZORA \u2192 SELL conf=85%",
+      "Apr 02 03:47:24 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[849917]: [2026-04-02T03:47:24.303Z INFO  tradingbots_fun] \ud83d\udccd BTC BEAR bounce LONG: RSI=34 BB_lower=67010.2036 red=false bb=true",
+      "Apr 02 03:47:24 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[849917]: [2026-04-02T03:47:24.303Z INFO  tradingbots_fun] \u26a0 BTC skipped \u2014 confidence 74% below 84% minimum (macro=BEAR)",
+      "Apr 02 03:47:24 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[849917]: [2026-04-02T03:47:24.303Z INFO  tradingbots_fun] \ud83d\udca1 BTC \u2192 BUY conf=74%"
+    ]
+  }
+}
