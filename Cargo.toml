@@ -1,6 +1,10 @@
 [package]
 name = "tradingbots-fun"
-version = "0.2.48"
+<<<<<<< Updated upstream
+version = "0.2.49"
+=======
+version = "0.2.51"
+>>>>>>> Stashed changes
 edition = "2021"
 
 [dependencies]
