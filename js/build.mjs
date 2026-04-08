@@ -1,5 +1,3 @@
-/* eslint-disable no-console */
-// Build script — console output is intentional for build-time feedback
 import * as esbuild from 'esbuild';
 import { statSync } from 'fs';
 

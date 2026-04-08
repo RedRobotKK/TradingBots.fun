@@ -94,9 +94,8 @@ def dispatch_hyperliquid_alert(alert: Dict):
 
 
 def alert_if_changed(cache: dict):
-    # Read-only access to the JSON cache dict — not an HTTP GET route
-    cache_ts: Optional[str] = cache.get("updated_at")
-    if not cache_ts:
+    updated_at = cache.get("updated_at")
+    if not updated_at:
         print("⚠️ `updated_at` missing in pattern_cache.json", file=sys.stderr)
         sys.exit(1)
     last = LAST_MARKER.read_text().strip() if LAST_MARKER.exists() else ""
@@ -109,10 +108,10 @@ def alert_if_changed(cache: dict):
     combo_breakdown = top_combo.get("breakdown", "n/a")
     combo_context = top_combo.get("context", "n/a")
     combo_rate = top_combo.get("win_rate", 0.0) * 100.0
-    if cache_ts == last:
-        print(f"Pattern cache unchanged ({cache_ts}).")
+    if updated_at == last:
+        print(f"Pattern cache unchanged ({updated_at}).")
     else:
-        print(f"✔️ Pattern cache refreshed at {cache_ts} for {date}.")
+        print(f"✔️ Pattern cache refreshed at {updated_at} for {date}.")
         if winner:
             print(f"   Daily winner: {winner[0]} (${winner[1]:.2f})")
         if loser:
@@ -120,9 +119,9 @@ def alert_if_changed(cache: dict):
         print(
             f"   Top win combo: {combo_breakdown} @ {combo_context} ({combo_rate:.0f}% win rate)"
         )
-    LAST_MARKER.write_text(cache_ts)
+    LAST_MARKER.write_text(updated_at)
     payload = {
-        "updated_at": cache_ts,
+        "updated_at": updated_at,
         "date": date,
         "winner": winner,
         "loser": loser,

@@ -302,6 +302,9 @@ pub struct BotState {
     pub capital: f64,
     pub initial_capital: f64,
     pub peak_equity: f64, // all-time equity high (display only)
+    /// Internal-only: not serialised to the API (can reach 20 000+ entries over 7 days).
+    /// The frontend uses `equity_history` (capped at 288) for the sparkline.
+    #[serde(skip)]
     pub equity_window: std::collections::VecDeque<(i64, f64)>, // (unix_ts, equity) rolling 7-day
     pub cb_active: bool,  // true when rolling-equity CB is firing (set by main loop)
     pub pnl: f64,
@@ -312,6 +315,8 @@ pub struct BotState {
     pub recent_decisions: Vec<DecisionInfo>,
     pub signal_weights: SignalWeights,
     pub metrics: PerformanceMetrics,
+    /// Internal-only price baseline — not serialised to the API (500+ symbols × entry, unused by frontend).
+    #[serde(skip)]
     pub session_prices: HashMap<String, f64>, // first price seen per symbol this session
     pub status: String,
     pub last_update: String,
@@ -2913,6 +2918,13 @@ fn reason_class(r: &str) -> &'static str {
 async fn api_state_handler(State(app): State<AppState>) -> Json<BotState> {
     let mut state = app.bot_state.read().await.clone();
     state.hyperliquid_stats = app.hyperliquid_stats.snapshot().await;
+    // Trim closed_trades to the most recent 100 for the API response.
+    // The full 500-entry ring buffer is kept in memory for metrics; the
+    // frontend only renders the last 12–50 entries anyway.
+    if state.closed_trades.len() > 100 {
+        let drain_count = state.closed_trades.len() - 100;
+        state.closed_trades.drain(..drain_count);
+    }
     Json(state)
 }
 

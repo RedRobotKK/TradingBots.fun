@@ -62,5 +62,3 @@ fix_main.py
 # Production environment config (contains DO managed DB credentials)
 .tradingbots-prod.env
 .tradingbots-db.env
-tenant_credentials.json
-
