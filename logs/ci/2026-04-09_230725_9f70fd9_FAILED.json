@@ -1,0 +1,60 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-04-09T23:07:15Z",
+    "commit": "9f70fd9",
+    "commit_full": "9f70fd966e45b5f20f24463ab198379cd8eee8f7",
+    "commit_message": "fix: VibeDoctor pass 3 \u2014 nested ternaries, type safety, form labels, eslint",
+    "branch": "master",
+    "overall_status": "FAILED",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.94.0 (4a4ef493e 2026-03-02)",
+    "cargo": "cargo 1.94.0 (85eff7c80 2026-01-15)",
+    "os_kernel": "6.8.0-106-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 6,
+      "total_passed": 324,
+      "total_failed": 2,
+      "total_ignored": 0,
+      "failures": [
+        "ledger::tests::append_creates_file",
+        "ledger::tests::append_multiple_rows_one_header"
+      ]
+    },
+    "clippy": {
+      "status": "PASSED",
+      "exit_code": 0,
+      "duration_seconds": 2,
+      "error_count": 0,
+      "errors": []
+    },
+    "audit": {
+      "status": "ADVISORY",
+      "exit_code": 1,
+      "duration_seconds": 1,
+      "vulnerability_count": 0,
+      "vulnerabilities": []
+    }
+  },
+  "service": {
+    "name": "tradingbots",
+    "status": "active",
+    "active_since": "Thu 2026-04-09 08:23:49 UTC",
+    "recent_logs": [
+      "Apr 09 23:07:21 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[1047985]: [2026-04-09T23:07:21.207Z INFO  tradingbots_fun] \ud83d\udeab GRASS skipped \u2014 position cap reached (3/3 for $50 wallet)",
+      "Apr 09 23:07:21 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[1047985]: [2026-04-09T23:07:21.207Z INFO  tradingbots_fun] \ud83d\udca1 GRASS \u2192 BUY conf=100%",
+      "Apr 09 23:07:22 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[1047985]: [2026-04-09T23:07:22.065Z WARN  tradingbots_fun] Failed to write hyperliquid stats file reports/hyperliquid_stats.json: No space left on device (os error 28)",
+      "Apr 09 23:07:22 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[1047985]: [2026-04-09T23:07:22.939Z WARN  tradingbots_fun::data] HTTP attempt 1/5 failed (error) \u2014 retrying in 1000ms: No candle data for PIXEL 1h",
+      "Apr 09 23:07:24 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[1047985]: [2026-04-09T23:07:24.095Z WARN  tradingbots_fun::data] HTTP attempt 2/5 failed (error) \u2014 retrying in 2000ms: No candle data for PIXEL 1h"
+    ]
+  }
+}
