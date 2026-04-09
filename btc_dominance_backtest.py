@@ -30,7 +30,7 @@ def fetch(url, retries=3):
             r = requests.get(url, timeout=20,
                              headers={"User-Agent":"Mozilla/5.0"})
             if r.status_code == 429:
-                print(f"  Rate limited, waiting 30s...")
+                print("  Rate limited, waiting 30s...")
                 time.sleep(30)
                 continue
             r.raise_for_status()
@@ -675,8 +675,8 @@ out = "btc_dominance_report.html"
 with open(out, "w") as f:
     f.write(html)
 
-print(f"\n✅ Report saved: btc_dominance_report.html")
-print(f"   Open it in your browser to view the full analysis.")
-print(f"\nKey findings preview:")
+print("\n✅ Report saved: btc_dominance_report.html")
+print("   Open it in your browser to view the full analysis.")
+print("\nKey findings preview:")
 for b in bucket_stats:
     print(f"  {b['label']:30s}  corr={b['avg_corr']:.3f}  dir_match={b['avg_dir']:.1f}%  ({b['days']} days)")

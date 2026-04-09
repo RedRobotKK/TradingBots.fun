@@ -245,14 +245,14 @@ pub fn extract_session_cookie(cookie_header: &str) -> Option<&str> {
 pub fn set_session_header(tenant_id: &TenantId, secret: &str) -> String {
     let value = create_session(tenant_id, secret);
     format!(
-        "{}={}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}",
+        "{}={}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age={}",
         SESSION_COOKIE, value, SESSION_TTL_SECS
     )
 }
 
 /// `Set-Cookie` header value that immediately expires the session (logout).
 pub fn clear_session_header() -> &'static str {
-    "rr_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"
+    "rr_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0"
 }
 
 /// Convenience helper for API handlers: extract and verify the session cookie

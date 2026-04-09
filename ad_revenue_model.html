@@ -170,12 +170,12 @@ function fmtN(n) {
 }
 
 function calc() {
-  const dau     = parseFloat(document.getElementById('dau').value)     || 100;
-  const hours   = parseFloat(document.getElementById('hours').value)   || 4;
-  const refresh = parseFloat(document.getElementById('refresh').value);
-  const cpm     = parseFloat(document.getElementById('cpm').value)     || 1.20;
-  const fill    = parseFloat(document.getElementById('fill').value)    || 0.70;
-  const t1pct   = parseFloat(document.getElementById('tier1').value)   || 0.60;
+  const dau     = Number.parseFloat(document.getElementById('dau').value)     || 100;
+  const hours   = Number.parseFloat(document.getElementById('hours').value)   || 4;
+  const refresh = Number.parseFloat(document.getElementById('refresh').value);
+  const cpm     = Number.parseFloat(document.getElementById('cpm').value)     || 1.2;
+  const fill    = Number.parseFloat(document.getElementById('fill').value)    || 0.7;
+  const t1pct   = Number.parseFloat(document.getElementById('tier1').value)   || 0.6;
 
   // Impressions per user per hour
   const impPerHour = refresh >= 9999 ? (1/hours) : (3600/refresh);
@@ -224,7 +224,7 @@ function calc() {
   let crows = '';
   dauScenarios.forEach(d => {
     const adAnnual = (effectiveImpPerUserDay * d * 365 / 1000) * effectiveCpm;
-    const converters = Math.round(d * 0.10);
+    const converters = Math.round(d * 0.1);
     const subAnnual = converters * subPriceAnnual;
     const total = adAnnual + subAnnual;
     let cls = total > 100000 ? 'green' : total > 10000 ? 'yellow' : '';

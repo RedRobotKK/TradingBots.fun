@@ -1,6 +1,7 @@
 import * as esbuild from 'esbuild';
-import { statSync } from 'fs';
+import { statSync } from 'node:fs';
 
+// eslint-disable-next-line no-console
 console.log('Building Privy SDK bundle…');
 
 await esbuild.build({
@@ -22,5 +23,7 @@ await esbuild.build({
 });
 
 const { size } = statSync('../static/privy-login.js');
+// eslint-disable-next-line no-console
 console.log(`✓  static/privy-login.js  (${(size / 1024).toFixed(0)} KB)`);
+// eslint-disable-next-line no-console
 console.log('   Commit this file: git add static/privy-login.js');

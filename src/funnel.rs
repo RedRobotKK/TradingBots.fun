@@ -254,7 +254,7 @@ pub fn client_tracking_script() -> &'static str {
     localStorage.setItem('rr_anon_id', aid);
   }
   // Write as a first-party session cookie so server-side handlers can read it
-  document.cookie = 'rr_anon_id=' + aid + '; path=/; SameSite=Lax';
+  document.cookie = 'rr_anon_id=' + aid + '; path=/; SameSite=Lax; Secure';
 
   // Fire a funnel event via the lightweight POST endpoint
   function fire(event_type, extra) {

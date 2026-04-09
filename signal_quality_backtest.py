@@ -40,7 +40,7 @@ import sys
 import time
 import urllib.request
 import urllib.parse
-from collections import defaultdict
+
 from datetime import datetime, timezone
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -959,7 +959,7 @@ def main():
     run_time      = time.time()
 
     print(f"\n{'='*60}")
-    print(f"  TradingBots.fun Signal Quality Backtest")
+    print("  TradingBots.fun Signal Quality Backtest")
     print(f"  Symbols: {', '.join(SYMBOLS)}")
     print(f"  Interval: {INTERVAL}  |  Lookback: {YEARS} year(s)")
     print(f"{'='*60}\n")
@@ -1037,7 +1037,6 @@ def main():
     print(f"{'Signal':<22} {'IC':>7} {'HitRate':>8} {'T-Stat':>7} {'Grade':>6}")
     print("-" * 55)
     from itertools import chain  # noqa (stdlib)
-    combined_console = {}
     for sig in SIGNAL_NAMES:
         agg_ic, agg_hr, agg_t = [], [], []
         for sym_res in all_results.values():

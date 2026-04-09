@@ -126,8 +126,8 @@ const StrategyPerformanceDashboard: React.FC<StrategyPerformanceDashboardProps> 
               </tr>
             </thead>
             <tbody>
-              {sortedStrategies.slice(0, 12).map((strategy, idx) => (
-                <tr key={idx} className="strategy-row">
+              {sortedStrategies.slice(0, 12).map((strategy) => (
+                <tr key={strategy.strategy_name} className="strategy-row">
                   <td className="strategy-name">
                     <span className="status-icon">{getStatusIcon(strategy.viability_score)}</span>
                     <span>{strategy.strategy_name}</span>
@@ -196,8 +196,8 @@ const StrategyPerformanceDashboard: React.FC<StrategyPerformanceDashboardProps> 
             <ul>
               {sortedStrategies
                 .filter(s => s.viability_score >= 85)
-                .map((s, idx) => (
-                  <li key={idx}>
+                .map((s) => (
+                  <li key={s.strategy_name}>
                     <span className="name">{s.strategy_name}</span>
                     <span className="score">{s.viability_score.toFixed(0)}</span>
                   </li>
@@ -214,8 +214,8 @@ const StrategyPerformanceDashboard: React.FC<StrategyPerformanceDashboardProps> 
             <ul>
               {sortedStrategies
                 .filter(s => s.viability_score >= 70 && s.viability_score < 85)
-                .map((s, idx) => (
-                  <li key={idx}>
+                .map((s) => (
+                  <li key={s.strategy_name}>
                     <span className="name">{s.strategy_name}</span>
                     <span className="score">{s.viability_score.toFixed(0)}</span>
                   </li>
@@ -232,8 +232,8 @@ const StrategyPerformanceDashboard: React.FC<StrategyPerformanceDashboardProps> 
             <ul>
               {sortedStrategies
                 .filter(s => s.viability_score >= 50 && s.viability_score < 70)
-                .map((s, idx) => (
-                  <li key={idx}>
+                .map((s) => (
+                  <li key={s.strategy_name}>
                     <span className="name">{s.strategy_name}</span>
                     <span className="score">{s.viability_score.toFixed(0)}</span>
                   </li>
@@ -250,8 +250,8 @@ const StrategyPerformanceDashboard: React.FC<StrategyPerformanceDashboardProps> 
             <ul>
               {sortedStrategies
                 .filter(s => s.viability_score < 50)
-                .map((s, idx) => (
-                  <li key={idx}>
+                .map((s) => (
+                  <li key={s.strategy_name}>
                     <span className="name">{s.strategy_name}</span>
                     <span className="score">{s.viability_score.toFixed(0)}</span>
                   </li>

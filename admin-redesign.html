@@ -634,7 +634,7 @@
           resp.textContent = '✅ ' + d.message;
           btn.textContent = '✓ Done';
           toast('Stats reset successfully', '#22c55e');
-          setTimeout(function(){ window.location.reload(); }, 2000);
+          setTimeout(function(){ globalThis.location.reload(); }, 2000);
         } else {
           resp.style.background = 'var(--amber-dim)';
           resp.style.color = 'var(--amber)';

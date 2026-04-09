@@ -99,8 +99,8 @@ export const TradingDashboard: React.FC = () => {
   // Connect to WebSocket on mount
   useEffect(() => {
     const connectWebSocket = () => {
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}/ws/dashboard`;
+      const protocol = globalThis.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${globalThis.location.host}/ws/dashboard`;
 
       wsRef.current = new WebSocket(wsUrl);
 
@@ -348,7 +348,11 @@ const SentimentDisplay: React.FC<{ metrics: DashboardMetrics }> = ({ metrics }) 
         <div className="indicator-row">
           <span>RSI</span>
           <span className="indicator-value">{metrics.rsi.toFixed(0)}</span>
-          <span className="indicator-status">{metrics.rsi < 30 ? '📉 Oversold' : metrics.rsi > 70 ? '📈 Overbought' : '⚪ Neutral'}</span>
+          <span className="indicator-status">{
+            metrics.rsi < 30 ? '📉 Oversold' :
+            metrics.rsi > 70 ? '📈 Overbought' :
+            '⚪ Neutral'
+          }</span>
         </div>
         <div className="indicator-row">
           <span>MACD</span>
@@ -383,8 +387,8 @@ const AIThinking: React.FC<{ thoughts: AIThoughts }> = ({ thoughts }) => (
     <div className="reasoning">
       <h4>Reasoning</h4>
       <ul>
-        {thoughts.reasoning.map((reason, idx) => (
-          <li key={idx}>• {reason}</li>
+        {thoughts.reasoning.map((reason) => (
+          <li key={reason}>• {reason}</li>
         ))}
       </ul>
     </div>
@@ -393,8 +397,8 @@ const AIThinking: React.FC<{ thoughts: AIThoughts }> = ({ thoughts }) => (
       <div className="warnings">
         <h4>⚠️ Warnings</h4>
         <ul>
-          {thoughts.warnings.map((warning, idx) => (
-            <li key={idx}>⚠️ {warning}</li>
+          {thoughts.warnings.map((warning) => (
+            <li key={warning}>⚠️ {warning}</li>
           ))}
         </ul>
       </div>
@@ -446,8 +450,8 @@ const TradeHistory: React.FC<{ trades: RecentTrade[] }> = ({ trades }) => (
           </tr>
         </thead>
         <tbody>
-          {trades.slice(-10).reverse().map((trade, idx) => (
-            <tr key={idx} className={`trade-row ${trade.pnl >= 0 ? 'win' : 'loss'}`}>
+          {trades.slice(-10).reverse().map((trade) => (
+            <tr key={`${trade.timestamp}-${trade.strategy}`} className={`trade-row ${trade.pnl >= 0 ? 'win' : 'loss'}`}>
               <td className="time">{new Date(trade.timestamp).toLocaleTimeString()}</td>
               <td className="action">{trade.action}</td>
               <td className="price">${trade.entry_price.toFixed(2)}</td>
@@ -467,8 +471,8 @@ const TradeHistory: React.FC<{ trades: RecentTrade[] }> = ({ trades }) => (
 
 const AlertList: React.FC<{ alerts: SystemAlert[] }> = ({ alerts }) => (
   <div className="alert-list">
-    {alerts.slice(-5).reverse().map((alert, idx) => (
-      <div key={idx} className={`alert alert-${alert.level.toLowerCase()}`}>
+    {alerts.slice(-5).reverse().map((alert) => (
+      <div key={alert.timestamp} className={`alert alert-${alert.level.toLowerCase()}`}>
         <span className="alert-icon">
           {alert.level === 'Info' && 'ℹ️'}
           {alert.level === 'Warning' && '⚠️'}

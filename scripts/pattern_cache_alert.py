@@ -5,7 +5,7 @@ import pathlib
 import sys
 import urllib.error
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Optional
 
 ROOT = pathlib.Path(__file__).resolve().parent
@@ -59,7 +59,7 @@ def save_last_hits(count: int):
 def append_hyperliquid_alert_log(entry: Dict):
     try:
         HL_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-        log_entry = {"logged_at": datetime.utcnow().isoformat() + "Z", **entry}
+        log_entry = {"logged_at": datetime.now(timezone.utc).isoformat(), **entry}
         with HL_LOG_FILE.open("a") as fh:
             fh.write(json.dumps(log_entry) + "\n")
     except OSError as exc:
@@ -166,7 +166,7 @@ def append_alert_log(payload: dict):
     try:
         LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
         entry = {
-            "logged_at": datetime.utcnow().isoformat() + "Z",
+            "logged_at": datetime.now(timezone.utc).isoformat(),
             **payload,
         }
         with LOG_FILE.open("a") as fh:
