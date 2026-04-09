@@ -1019,12 +1019,3 @@ pub(crate) async fn api_public_stats_handler(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-
-// ═══════════════════════════════════════════════════════════════════════════════
-//  Bot API  — /api/v1/*   (x402 payment-gated, machine-readable)
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/// Generate a simple time-based unique ID.
-/// `GET /api/v1/status` — unauthenticated machine-readable bot status.
-/// Returns live AUM, P&L, win rate and x402 payment info.

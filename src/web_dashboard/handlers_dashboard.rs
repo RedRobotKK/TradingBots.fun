@@ -2482,6 +2482,3 @@ pub(crate) async fn api_state_handler(State(app): State<AppState>, headers: Head
     Json(state).into_response()
 }
 
-// ─────────────────────────── Consumer webapp ─────────────────────────────────
-
-/// Shared CSS + HTML boilerplate for all consumer pages.

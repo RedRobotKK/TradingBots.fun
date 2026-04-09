@@ -961,5 +961,3 @@ pub(crate) async fn admin_wallets_handler(
     axum::response::Html(html).into_response()
 }
 
-/// Google Pay requires no domain verification — it is automatically enabled
-/// in Stripe Checkout when the user's device supports it.

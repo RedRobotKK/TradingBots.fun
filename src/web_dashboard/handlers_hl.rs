@@ -1006,12 +1006,3 @@ pub(crate) async fn thesis_update_handler(
     .into_response()
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  Public landing page — tradingbots.fun
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/// `GET /` — public landing page showing aggregate AUM, positions, and returns.
-///
-/// Visible to any visitor — no authentication required.
-/// All numbers are live, fetched from `/api/public/tvl` and `/api/public/stats`
-/// via client-side JavaScript that auto-refreshes every 30 seconds.

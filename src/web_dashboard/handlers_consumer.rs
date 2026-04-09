@@ -710,8 +710,6 @@ pub(crate) async fn consumer_app_handler(
     axum::response::Html(html).into_response()
 }
 
-}
-
 pub(crate) async fn agent_app_handler(
     State(app): State<AppState>,
     headers: HeaderMap,
@@ -2679,12 +2677,3 @@ pub(crate) async fn consumer_settings_wallet_handler(
 
     axum::response::Redirect::to("/app/settings?ok=wallet_linked").into_response()
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-//  Admin panel  (/admin, /admin/users)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Verify HTTP Basic Auth for admin routes.
-///
-/// Returns `Some(())` when credentials are valid, `None` when they are missing
-/// or incorrect.  Username is always `"admin"`.

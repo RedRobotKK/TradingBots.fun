@@ -846,4 +846,3 @@ pub(crate) async fn bridge_status_handler(
     }
 }
 
-/// Minimal base64 encoder (no external dep) — only used for the Basic-Auth check above.
