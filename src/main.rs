@@ -3239,7 +3239,13 @@ async fn execute_paper_trade(
                 // Rationale: a strong confluence of signals screaming the same direction
                 // on a volatile asset like REZ/KAS deserves averaging down further.
                 // Upper bound kept at -0.85R — position must not be near stop before adding.
-                let dca_max = if dec.confidence >= 0.85 {
+                // Small-wallet DCA cap: a $200 account allowing 4 DCA add-ons on a
+                // single symbol can end up with one position consuming 50%+ of equity
+                // before the stop fires.  Cap at 1 add-on for accounts ≤$300 so the
+                // worst-case single-symbol exposure stays bounded.
+                let dca_max = if s.initial_capital <= 300.0 {
+                    1 // micro/small wallets: 1 DCA max → at most 1.5× initial margin
+                } else if dec.confidence >= 0.85 {
                     4
                 } else if dec.confidence >= 0.75 {
                     3
@@ -3458,12 +3464,14 @@ async fn execute_paper_trade(
             let at_bb_upper   = current_price >= ind.bollinger_upper * 0.998;
             let is_pico_top   = is_large_green && rsi_overbought && at_bb_upper;
             if is_pico_top {
-                // Valid pico-top scalp SHORT — raise floor slightly (scalps need conviction)
+                // Valid pico-top scalp SHORT — gate already validates structure.
+                // confidence_adjustment() already penalised this SELL by -10% in BULL
+                // macro, so no additional floor raise (avoids double-penalising).
                 info!(
                     "📍 {} BULL pico-top SHORT: RSI={:.0} BB_upper={:.4} green_candle=true",
                     symbol, ind.rsi, ind.bollinger_upper
                 );
-                0.12 // needs higher confidence than a trend short
+                0.00
             } else {
                 // Not a pico top — block the short in BULL macro
                 info!(
@@ -3494,6 +3502,13 @@ async fn execute_paper_trade(
             // candles are green. The signal engine already incorporates RSI into its
             // confidence score (60-95% BUY outputs observed), so RSI < 40 on top was
             // double-filtering to an extreme. RSI < 50 = "not overbought" is sufficient.
+            //
+            // Fix #6: Removed the +0.12 floor delta for gate-passing BEAR bounce LONGs.
+            // confidence_adjustment() already penalises BUY in BEAR macro by -10%.
+            // Adding another +12% floor raise on top creates a de-facto 94% raw
+            // confidence requirement (84% floor + 10% penalty) — impossible in practice.
+            // The structural gate (RSI < 50 + exhaustion/BB) is the quality filter;
+            // the -10% penalty is the counter-trend conviction filter. No floor delta needed.
             let rsi_below_neutral = ind.rsi < 50.0;
             let at_bb_lower  = current_price <= ind.bollinger_lower * 1.025;
             if rsi_below_neutral && (is_large_red || at_bb_lower) {
@@ -3501,7 +3516,7 @@ async fn execute_paper_trade(
                     "📍 {} BEAR bounce LONG: RSI={:.0} BB_lower={:.4} red={} bb={}",
                     symbol, ind.rsi, ind.bollinger_lower, is_large_red, at_bb_lower
                 );
-                0.12
+                0.00 // gate validates structure; -10% confidence penalty already applied
             } else {
                 info!(
                     "🚫 {} BUY blocked in BEAR macro (no exhaustion: RSI={:.0} red={} bb_lower={})",
@@ -3535,6 +3550,31 @@ async fn execute_paper_trade(
         );
         return;
     }
+    // ── Fee-edge floor (small wallets) ───────────────────────────────────────
+    // On accounts ≤$500, round-trip trading fees (builder ~0.03% + HL taker ~0.10%
+    // = ~0.13% round trip) are a meaningful fraction of any gain.  Once the bot has
+    // ≥20 trades of history, reject signals where the metrics-based expectancy is
+    // so low that fees will eat the edge entirely.
+    //
+    // The floor is 2× the round-trip fee expressed in the same % units as
+    // metrics.expectancy (% of position size per trade).  Below this the trade is
+    // expected to be fee-negative or at best break-even after costs.
+    //
+    // Not applied before 20 trades — early metrics are too noisy to trust.
+    if s.initial_capital <= 500.0 && metrics.total_trades >= 20 {
+        // Builder fee (bps) + HL taker (0.05% each leg = 0.10% round trip)
+        let round_trip_fee_pct = (fee_bps as f64 / 100.0) + 0.10; // in % units
+        let fee_edge_floor = round_trip_fee_pct * 2.0; // require 2× fee coverage
+        if metrics.expectancy < fee_edge_floor {
+            info!(
+                "⚠ {} skipped — expectancy {:.3}% below fee floor {:.3}% on small account \
+                   (2× round-trip; builder={} bps)",
+                symbol, metrics.expectancy, fee_edge_floor, fee_bps
+            );
+            return;
+        }
+    }
+
     s.cb_active = in_cb; // keep dashboard in sync with actual sizing CB
     if in_cb {
         info!(
@@ -3742,8 +3782,21 @@ async fn execute_paper_trade(
         pool_stake_usd = 0.0;
     }
 
-    // Apply confidence-scaled leverage — quantity based on notional, capital deducted at margin
-    let leverage = dec.leverage;
+    // Apply confidence-scaled leverage — quantity based on notional, capital deducted at margin.
+    //
+    // Small-wallet leverage cap: the decision engine returns 2–3× for all accounts,
+    // but on a $200 wallet that means 5 positions × 3× = 15× total notional exposure.
+    // A single correlated 10% move (common for altcoin shorts in a bear market bounce)
+    // can hit 30% equity loss in minutes.  Cap leverage to spot-equivalent (1×) below
+    // $300 and half-leverage (2×) below $500 so position sizing, not leverage, drives
+    // return — and the worst-case is the asset move itself, not a cascade.
+    let leverage = if s.initial_capital <= 300.0 {
+        dec.leverage.min(1.0) // spot-equivalent — no amplification for micro accounts
+    } else if s.initial_capital <= 500.0 {
+        dec.leverage.min(2.0) // half the decision-engine leverage for mid-tier accounts
+    } else {
+        dec.leverage // full leverage for $500+ accounts as designed
+    };
     let notional = size_usd * leverage;
     let qty = notional / dec.entry_price;
     let r_risk = (dec.entry_price - dec.stop_loss).abs() * qty; // dollars risked on notional
@@ -3757,7 +3810,12 @@ async fn execute_paper_trade(
     //   dca_max=2: budget cap = 1.0 × entry  (max 1 DCA → 1.5× total)
     //   dca_max=3: budget cap = 1.5 × entry  (max 2 DCAs → 2.25× total)
     // Previous values (3/4 max) produced $491k notional on a single altcoin (GRIFFAIN).
-    let entry_dca_max = if dec.confidence >= 0.85 {
+    // Small wallets get the same DCA cap applied at the budget-planning level:
+    // cap at 1 add-on (budget_mult = 1.0) so the pre-allocated budget doesn't
+    // over-reserve capital that a micro-account can't afford to commit.
+    let entry_dca_max = if s.initial_capital <= 300.0 {
+        2  // small wallets: 1 add-on max → budget cap = 1.0× entry (same as dca_max above)
+    } else if dec.confidence >= 0.85 {
         3  // was 4 — allows up to 2 DCA entries (1+0.5+0.75 = 2.25× initial)
     } else {
         2  // confidence <0.85: was 3 (1 DCA) or unchanged — capped at 1 DCA

@@ -18,6 +18,11 @@ pub struct PerformanceMetrics {
     pub avg_win_pct: f64,
     pub avg_loss_pct: f64,
     pub win_rate: f64,
+    /// Win rate over the most recent 20 closed trades only.
+    /// More reactive than the cumulative `win_rate` — catches intraday edge
+    /// degradation that gets diluted when early high-quality trades pad the
+    /// all-time count.
+    pub rolling_win_rate: f64,
 
     // Drawdown
     pub max_drawdown: f64, // peak-to-trough cumulative P&L %
@@ -83,6 +88,14 @@ impl PerformanceMetrics {
         let losses = loss_pcts.len();
 
         let win_rate = wins as f64 / n as f64;
+
+        // Rolling win rate — last 20 trades only.  More responsive than the
+        // cumulative figure: early high-quality trades can inflate win_rate for
+        // hundreds of cycles, masking a live edge collapse.
+        let rolling_window = 20_usize;
+        let recent: Vec<&ClosedTrade> = trades.iter().rev().take(rolling_window).collect();
+        let recent_wins = recent.iter().filter(|t| t.pnl > 0.0).count();
+        let rolling_win_rate = recent_wins as f64 / recent.len() as f64;
         let avg_win_pct = if wins > 0 {
             win_pcts.iter().sum::<f64>() / wins as f64
         } else {
@@ -131,6 +144,7 @@ impl PerformanceMetrics {
             avg_win_pct,
             avg_loss_pct,
             win_rate,
+            rolling_win_rate,
             max_drawdown: max_dd,
             current_dd,
             total_trades: n,
@@ -156,9 +170,18 @@ impl PerformanceMetrics {
         half_kelly.clamp(0.01, 0.15)
     }
 
-    /// True when drawdown from peak exceeds 8% — triggers defensive sizing.
+    /// True when the circuit breaker should be active — triggers defensive sizing.
+    ///
+    /// Two independent conditions:
+    /// 1. `current_dd > 8%` — active drawdown from the most recent equity peak.
+    ///    Recovers automatically once drawdown falls below `CB_RESET_THRESHOLD` (5%).
+    /// 2. `max_drawdown > 30%` — a historical peak-to-trough loss this large
+    ///    indicates a structural risk event occurred (e.g. the 73.93% spike seen
+    ///    in monitoring).  The breaker stays permanently on until the bot is
+    ///    manually reviewed and the stat is reset; `current_dd` recovering to 0
+    ///    does NOT clear this condition.
     pub fn in_circuit_breaker(&self) -> bool {
-        self.current_dd > 8.0
+        self.current_dd > 8.0 || self.max_drawdown > 30.0
     }
 
     /// Sharpe-based size multiplier. Layered on top of Kelly (or fallback tiers).
@@ -195,11 +218,20 @@ impl PerformanceMetrics {
     /// punishing early trades creates a self-fulfilling bad-data loop.
     ///
     /// Starts with `min_confidence` and adds penalties if metrics are weak:
-    /// - If profit_factor < 1.0: +0.05 (consistently losing)
-    /// - If expectancy < 0.001: +0.03 (near-zero expected return)
-    /// - If sortino < 0.3: +0.02 (very poor risk-adjusted return)
+    /// - If profit_factor < 1.0:      +0.05 (consistently losing)
+    /// - If expectancy < 0.001:       +0.03 (near-zero expected return)
+    /// - If sortino < 0.3:            +0.02 (very poor risk-adjusted return)
+    /// - If win_rate < 0.55:          +0.04 (cumulative edge below threshold)
+    /// - If rolling_win_rate < 0.50:  +0.04 (recent 20-trade window is coin-flip)
     ///
-    /// Total adjustment capped at 0.08, final result capped at 0.88.
+    /// Total adjustment capped at 0.12, final result capped at 0.88.
+    ///
+    /// Rationale for the new win-rate conditions: the existing penalties only
+    /// fired when profit_factor dropped below 1.0 (a loss-making bot).  Live
+    /// monitoring showed the bot's win rate collapsing from 84% → 50% over
+    /// ~19 hours while PF stayed above 2.7 the entire time — meaning the floor
+    /// mechanism never activated once.  The rolling_win_rate check catches
+    /// intraday degradation that cumulative win_rate masks due to early padding.
     pub fn confidence_floor(&self, min_confidence: f64) -> f64 {
         // Don't penalise until there's enough history for metrics to be meaningful
         if self.total_trades < 10 {
@@ -217,8 +249,18 @@ impl PerformanceMetrics {
         if self.sortino < 0.3 {
             adjustment += 0.02;
         }
+        // Win-rate gates — react to edge decay well before PF crosses 1.0.
+        // These are the conditions that were blind to the 84%→50% collapse seen
+        // in live monitoring: PF stayed above 2.7 the entire time so none of the
+        // above fired, but the edge had clearly degraded.
+        if self.win_rate < 0.55 {
+            adjustment += 0.04; // cumulative edge has decayed significantly
+        }
+        if self.rolling_win_rate < 0.50 {
+            adjustment += 0.04; // recent 20 trades are coin-flip or worse
+        }
 
-        adjustment = adjustment.min(0.08); // was 0.12
-        (min_confidence + adjustment).min(0.88) // was 0.92
+        adjustment = adjustment.min(0.12); // raised from 0.08 to cover new conditions
+        (min_confidence + adjustment).min(0.88)
     }
 }
