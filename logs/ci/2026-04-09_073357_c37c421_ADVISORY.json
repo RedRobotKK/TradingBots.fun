@@ -1,0 +1,72 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-04-09T07:14:26Z",
+    "commit": "c37c421",
+    "commit_full": "c37c4219d32f67a40aa837beb48de3d957d96f1e",
+    "commit_message": "feat: scale circuit-breaker thresholds by account size (v0.2.54)",
+    "branch": "master",
+    "overall_status": "ADVISORY",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.94.0 (4a4ef493e 2026-03-02)",
+    "cargo": "cargo 1.94.0 (85eff7c80 2026-01-15)",
+    "os_kernel": "6.8.0-106-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "PASSED",
+      "exit_code": 0,
+      "duration_seconds": 774,
+      "total_passed": 811,
+      "total_failed": 0,
+      "total_ignored": 4,
+      "failures": []
+    },
+    "clippy": {
+      "status": "PASSED",
+      "exit_code": 0,
+      "duration_seconds": 393,
+      "error_count": 0,
+      "errors": []
+    },
+    "audit": {
+      "status": "ADVISORY",
+      "exit_code": 1,
+      "duration_seconds": 4,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2023-0071",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2023-0071",
+          "severity": "5.9 (medium)",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "tradingbots",
+    "status": "active",
+    "active_since": "Thu 2026-04-09 04:36:05 UTC",
+    "recent_logs": [
+      "Apr 09 07:33:29 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[1030422]: [2026-04-09T07:33:29.507Z INFO  tradingbots_fun] \ud83d\udca1 IMX \u2192 BUY conf=91%",
+      "Apr 09 07:33:29 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[1030422]: [2026-04-09T07:33:29.507Z INFO  tradingbots_fun] \ud83d\udeab IMX skipped \u2014 position cap reached (2/2 for $25 wallet)",
+      "Apr 09 07:33:29 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[1030422]: [2026-04-09T07:33:29.507Z INFO  tradingbots_fun] \ud83d\udca1 IMX \u2192 BUY conf=91%",
+      "Apr 09 07:33:30 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[1030422]: [2026-04-09T07:33:30.191Z WARN  tradingbots_fun::ai_reviewer] \ud83e\udd16 AI review skipped: Claude API 400 Bad Request \u2014 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"You have reached your specified API usage limits. You will regain access on 2026-05-01 at 00:00 UTC.\"},\"request_id\":\"req_011CZsouemey",
+      "Apr 09 07:33:38 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[1030422]: [2026-04-09T07:33:38.940Z INFO  tradingbots_fun::signal_engine] \ud83d\udcca SignalEngine cycle 355 done: 36 signals, 2894 ms"
+    ]
+  }
+}
