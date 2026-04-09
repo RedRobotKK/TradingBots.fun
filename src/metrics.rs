@@ -185,8 +185,33 @@ impl PerformanceMetrics {
     ///    in monitoring).  The breaker stays permanently on until the bot is
     ///    manually reviewed and the stat is reset; `current_dd` recovering to 0
     ///    does NOT clear this condition.
+    ///
+    /// For dashboard display purposes only — uses the conservative $500+ thresholds.
+    /// For actual trading decisions use `in_circuit_breaker_for_capital()`.
     pub fn in_circuit_breaker(&self) -> bool {
-        self.current_dd > 8.0 || self.max_drawdown > 30.0
+        self.in_circuit_breaker_for_capital(1_000.0) // display: use standard thresholds
+    }
+
+    /// Circuit breaker check scaled to account size, matching `execute_paper_trade`.
+    ///
+    /// The `current_dd` check mirrors the scaled on/off thresholds used in the
+    /// trading loop.  The permanent `max_drawdown` flag is also scaled:
+    ///
+    ///  ≤ $25  : max_dd alarm at 60%  (30% = $3 on a $10 account — too noisy)
+    ///  $26–100: max_dd alarm at 50%
+    ///  $101–500: max_dd alarm at 40%
+    ///  $500+  : 30% — original conservative threshold unchanged
+    pub fn in_circuit_breaker_for_capital(&self, initial_capital: f64) -> bool {
+        let (current_dd_thresh, max_dd_thresh) = if initial_capital <= 25.0 {
+            (20.0, 60.0)
+        } else if initial_capital <= 100.0 {
+            (15.0, 50.0)
+        } else if initial_capital <= 500.0 {
+            (12.0, 40.0)
+        } else {
+            (8.0, 30.0)
+        };
+        self.current_dd > current_dd_thresh || self.max_drawdown > max_dd_thresh
     }
 
     /// Sharpe-based size multiplier. Layered on top of Kelly (or fallback tiers).

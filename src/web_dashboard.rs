@@ -685,6 +685,18 @@ async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
     // ── CB metric card extra class ─────────────────────────────────────────
     let cb_card_class = if cb_active { " metric-cb-active" } else { "" };
 
+    // Tooltip explaining which scaled CB threshold tier applies to this account.
+    // Mirrors the account-size tiers in execute_paper_trade / metrics.rs.
+    let cb_threshold_info = if s.initial_capital <= 25.0 {
+        "CB threshold: fires at 20% DD, resets at 12% (small account — scaled up from 8%)"
+    } else if s.initial_capital <= 100.0 {
+        "CB threshold: fires at 15% DD, resets at 9% (small account — scaled up from 8%)"
+    } else if s.initial_capital <= 500.0 {
+        "CB threshold: fires at 12% DD, resets at 7% (mid account — scaled up from 8%)"
+    } else {
+        "CB threshold: fires at 8% DD, resets at 5% (standard)"
+    };
+
     // ── Position cards ────────────────────────────────────────────────────
     let pos_cards: String = if s.positions.is_empty() {
         r#"<div class="empty-state"><div class="radar"></div><p>No open positions — scanning for signals…</p></div>"#.to_string()
@@ -1159,7 +1171,7 @@ async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
         if h.len() < 2 {
             // Not enough data yet — flat placeholder
             r##"<svg width="320" height="80" viewBox="0 0 320 80"
-     style="display:block;flex-shrink:0;overflow:visible;opacity:0.4">
+     style="display:block;max-width:100%;overflow:hidden;opacity:0.4">
   <text x="2" y="10" fill="#484f58" font-size="9" font-family="monospace">PORTFOLIO</text>
   <line x1="0" y1="46" x2="280" y2="46"
         stroke="#484f58" stroke-width="1.5" stroke-dasharray="4 4"/>
@@ -1235,7 +1247,7 @@ async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
             // colour codes, so all `"#rrggbb"` attributes are safely inside the string.
             format!(
                 r##"<svg width="320" height="80" viewBox="0 0 320 80"
-     style="display:block;flex-shrink:0;overflow:visible">
+     style="display:block;max-width:100%;overflow:hidden">
   <text x="2" y="10" fill="{m}" font-size="9" font-family="monospace">PORTFOLIO</text>
   <line x1="0" y1="{by:.1}" x2="{w:.1}" y2="{by:.1}"
         stroke="{c}" stroke-width="0.75" stroke-dasharray="3 3" stroke-opacity="0.5"/>
@@ -1620,7 +1632,7 @@ body{{background:var(--bg);color:var(--text);
               box-shadow:0 0 0 1px rgba(88,166,255,.04),0 8px 32px rgba(0,0,0,.4),
                          inset 0 1px 0 rgba(255,255,255,.04)}}
 .equity-hero .eq-left{{display:flex;flex-direction:column;gap:0;width:100%}}
-.eq-top-row{{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}}
+.eq-top-row{{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;min-width:0;overflow:hidden}}
 .eq-eyebrow{{font-size:.60em;color:var(--muted);letter-spacing:.9px;text-transform:uppercase;
              margin-bottom:4px;font-weight:500}}
 .equity-hero .eq-val{{font-size:2.1em;font-weight:800;line-height:1;letter-spacing:-.02em;
@@ -1642,11 +1654,27 @@ body{{background:var(--bg);color:var(--text);
                 font-family:ui-monospace,monospace}}
 .eq-wallet-row:hover{{border-color:rgba(88,166,255,.35);color:#58a6ff}}
 .eq-wallet-addr{{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
-.eq-right{{display:flex;align-items:flex-start;padding-top:4px;min-width:0}}
+.eq-right{{display:flex;align-items:flex-start;padding-top:4px;min-width:0;
+           max-width:min(320px,45vw);overflow:hidden;flex-shrink:1}}
+/* Sparkline SVG scales down on narrow viewports */
+.eq-right svg{{max-width:100%;height:auto}}
 /* ── Metric strip ── */
 .metrics{{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:12px}}
 @media(min-width:500px){{.metrics{{grid-template-columns:repeat(3,1fr)}}}}
 @media(min-width:700px){{.metrics{{grid-template-columns:repeat(6,1fr)}}}}
+/* ── Mobile fixes ── */
+@media(max-width:480px){{
+  /* Stack hero: sparkline goes full-width below the equity number */
+  .eq-top-row{{flex-direction:column;gap:8px}}
+  .eq-right{{max-width:100%;width:100%}}
+  .eq-right svg{{width:100%!important}}
+  /* Position flip-back chart: ensure canvas never overflows card */
+  .pos-flip-back{{overflow:hidden}}
+  .pos-flip-back canvas,.pos-flip-back>div{{max-width:100%!important;overflow:hidden}}
+  /* Stat bar: allow wrapping on very narrow screens */
+  .stat-bar{{flex-wrap:wrap}}
+  .stat-cell{{min-width:calc(50% - 1px)}}
+}}
 .metric{{background:var(--surface2);border:1px solid var(--border);border-radius:9px;
          padding:9px 11px;text-align:center;cursor:pointer;
          transition:border-color .2s,box-shadow .2s,background .2s}}
@@ -1940,7 +1968,7 @@ tr:hover td{{background:rgba(255,255,255,.025)}}
   <div class="metric" onclick="showMetric('kelly',{kelly_float:.6})">
     <div class="mv b">{kelly_str}</div>
     <div class="ml">Half-Kelly <span class="ml-hint">tap to explain</span></div></div>
-  <div class="metric{cbcc}" onclick="showMetric('cb',{cb_int})">
+  <div class="metric{cbcc}" onclick="showMetric('cb',{cb_int})" title="{cb_threshold_info}">
     <div class="mv" style="color:{cbc}">{cb_label}</div>
     <div class="ml">{cb_desc} <span class="ml-hint">tap to explain</span></div></div>
   <div class="metric" onclick="showMetric('openClosed',{open_n})">
@@ -2874,6 +2902,7 @@ window.doResetStats = function() {{
         cbcc = cb_card_class,
         cb_label = cb_label,
         cb_desc = cb_desc,
+        cb_threshold_info = cb_threshold_info,
         open_n = s.positions.len(),
         pos_cap = 20, // updated from 25 — matches MAX_OPEN_POSITIONS in main.rs
         total_closed = s.closed_trades.len(),

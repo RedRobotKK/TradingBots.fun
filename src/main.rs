@@ -3428,11 +3428,29 @@ async fn execute_paper_trade(
     } else {
         0.0
     };
+    // Scale CB thresholds by account size — small accounts have naturally higher
+    // return variance per trade (each position is a larger % of equity), so the
+    // flat 8% threshold fires the circuit breaker after just 2–3 normal losing
+    // trades on a $10–$50 account, which is not a risk event but ordinary noise.
+    //
+    //  ≤ $25  : CB fires at 20% DD, resets at 12%  (5-6 normal losses expected)
+    //  $26–100: CB fires at 15% DD, resets at  9%
+    //  $101–500: CB fires at 12% DD, resets at  7%
+    //  $500+  : 8% / 5% — original conservative thresholds unchanged
+    let (cb_on_thresh, cb_off_thresh) = if s.initial_capital <= 25.0 {
+        (0.20, 0.12)
+    } else if s.initial_capital <= 100.0 {
+        (0.15, 0.09)
+    } else if s.initial_capital <= 500.0 {
+        (0.12, 0.07)
+    } else {
+        (CB_DRAWDOWN_THRESHOLD, CB_RESET_THRESHOLD)
+    };
     let was_in_cb = s.cb_active;
     let in_cb = if was_in_cb {
-        drawdown > CB_RESET_THRESHOLD      // already in CB: stay until fully recovered
+        drawdown > cb_off_thresh      // already in CB: stay until fully recovered
     } else {
-        drawdown > CB_DRAWDOWN_THRESHOLD   // not in CB: only enter on new breach
+        drawdown > cb_on_thresh       // not in CB: only enter on new breach
     };
 
     // ── BTC swing timing gate ─────────────────────────────────────────────
