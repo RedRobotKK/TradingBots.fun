@@ -161,8 +161,13 @@ impl PerformanceMetrics {
     /// Returns −1.0 when insufficient data (<5 trades).
     /// Positive result = fraction of equity to size, clamped [1%, 15%].
     pub fn kelly_fraction(&self) -> f64 {
-        if self.total_trades < 5 || self.avg_loss_pct < 0.001 {
-            return -1.0; // sentinel: not enough history yet
+        // Guard covers two sentinel cases:
+        // 1. < 5 trades: not enough history for meaningful Kelly.
+        // 2. avg_loss_pct <= 0: either no losses yet (100% win rate, b = ∞) or
+        //    a degenerate edge case — clamp to the max half-Kelly cap instead
+        //    of dividing by zero and producing NaN/Infinity.
+        if self.total_trades < 5 || self.avg_loss_pct <= 0.0 {
+            return if self.total_trades < 5 { -1.0 } else { 0.15 }; // 100% WR → max cap
         }
         let b = self.avg_win_pct / self.avg_loss_pct; // win-to-loss size ratio
         let full_kelly = self.win_rate - (1.0 - self.win_rate) / b;

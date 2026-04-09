@@ -563,7 +563,7 @@ async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
     // BUG FIX: was using m.current_dd (P&L-curve drawdown from closed trades only).
     // The CB is driven by rolling_dd_pct (7-day equity window) — use that here.
     let cb_desc = if cb_active {
-        format!("0.35× sizes · 7d DD {:.1}%", rolling_dd_pct)
+        format!("0.50× sizes · 7d DD {:.1}%", rolling_dd_pct)
     } else {
         format!("Risk Normal · 7d DD {:.1}%", rolling_dd_pct)
     };
@@ -1190,11 +1190,13 @@ async fn dashboard_handler(State(app): State<AppState>) -> Html<String> {
             let to_y = |v: f64| -> f64 { h_px - pad_b - (v - min_v) / range * inner_h };
 
             let n = h.len() as f64;
+            // Guard: when only one point exists (n-1)==0, spread it across full width.
+            let x_scale = if h.len() > 1 { w_px / (n - 1.0) } else { 0.0 };
             let pts: String = h
                 .iter()
                 .enumerate()
                 .map(|(i, &v)| {
-                    let x = i as f64 / (n - 1.0) * w_px;
+                    let x = i as f64 * x_scale;
                     let y = to_y(v);
                     format!("{x:.1},{y:.1}")
                 })
@@ -1384,7 +1386,7 @@ var METRIC_INFO={
       if(v<4)return['#3fb950','🟢 Normal — small pullback from peak. Within expected variance for this trading style.'];
       if(v<6)return['#e3b341','🟡 Elevated — noticeable drop from peak. No circuit breaker yet, but the Sharpe multiplier has already softened new sizes.'];
       if(v<8)return['#e3b341','🟡 High — approaching the 8% circuit breaker threshold. New entries are already using reduced sizes via the Sharpe multiplier.'];
-      return['#f85149','🔴 Circuit Breaker Active — all new position sizes are scaled to 0.35× until equity recovers. This is the self-protection mechanism working exactly as designed.'];
+      return['#f85149','🔴 Circuit Breaker Active — all new position sizes are scaled to 0.50× until equity recovers. This is the self-protection mechanism working exactly as designed.'];
     }
   },
   kelly:{
@@ -1408,9 +1410,9 @@ var METRIC_INFO={
     fmt:function(v){return v>0?'⚡ CB ACTIVE':'● Normal';},
     no_gauge:true,
     formula:'7-day rolling drawdown > 8%  →  Circuit Breaker fires',
-    notes:['🟢 Normal mode: full Kelly × Sharpe multiplier × confidence = normal position sizes.','🔴 CB Active: ALL new position sizes × 0.35 and confidence floor raised +10%.','Auto-resets when rolling equity recovers to within 8% of the 7-day peak.','This is a hard, automatic rule — not a discretionary override.','The 7-day window prevents a single good week from permanently masking a losing streak.'],
+    notes:['🟢 Normal mode: full Kelly × Sharpe multiplier × confidence = normal position sizes.','🔴 CB Active: ALL new position sizes × 0.50 and confidence floor raised +10%.','Auto-resets when rolling equity recovers to within 8% of the 7-day peak.','This is a hard, automatic rule — not a discretionary override.','The 7-day window prevents a single good week from permanently masking a losing streak.'],
     verdict:function(v){
-      if(v>0)return['#f85149','🔴 Circuit Breaker is active. The 7-day rolling drawdown has exceeded 8%. All new position sizes are automatically 0.35× of normal and the minimum confidence required to open a trade is raised by 10 percentage points. This continues automatically until equity recovers.'];
+      if(v>0)return['#f85149','🔴 Circuit Breaker is active. The 7-day rolling drawdown has exceeded 8%. All new position sizes are automatically 0.50× of normal and the minimum confidence required to open a trade is raised by 10 percentage points. This continues automatically until equity recovers.'];
       return['#3fb950','🟢 Normal operating mode. The 7-day equity window shows no significant drawdown from its peak. Full Kelly-based position sizing is in effect across all signals.'];
     }
   },
@@ -2272,7 +2274,7 @@ function toggleDetail(id){{
        Skip on very first poll (_lastCycleAt == 0 means page just loaded). */
     var newCycleAt = s.next_cycle_at || 0;
     if(_lastCycleAt > 0 && newCycleAt > 0 && newCycleAt !== _lastCycleAt){{
-      if(s.macro_regime) updateMacroPill(s.macro_regime);
+      updateMacroPill(s.macro_regime || 'NEUTRAL');
       if(typeof loadState === 'function') loadState();
     }}
     if(newCycleAt > 0) _lastCycleAt = newCycleAt;
@@ -2494,9 +2496,25 @@ function toggleDetail(id){{
     }}
   }}
 
+  var _pollErrCount = 0;
   function poll(){{
-    fetch('/api/state').then(function(r){{return r.json();}}).then(applyPoll)
-      .catch(function(){{}});
+    fetch('/api/state').then(function(r){{return r.json();}}).then(function(s){{
+      _pollErrCount = 0;
+      applyPoll(s);
+    }}).catch(function(e){{
+      _pollErrCount++;
+      // After 3 consecutive failures show a subtle stale-data warning so the
+      // operator knows the numbers they're looking at may be out of date.
+      if (_pollErrCount === 3) {{
+        console.warn('[poll] /api/state unreachable after 3 attempts:', e);
+        var ev = document.getElementById('equity-val');
+        if (ev && !ev.dataset.staleMark) {{
+          ev.dataset.staleMark = '1';
+          ev.title = 'Warning: dashboard data may be stale (API unreachable)';
+          ev.style.opacity = '0.5';
+        }}
+      }}
+    }});
   }}
   /* First poll after 2s so data appears before the 10s page reload */
   setTimeout(poll,2000);
@@ -3610,7 +3628,7 @@ async fn consumer_app_handler(
     var posEl=$id('app-positions');if(posEl)posEl.textContent=(s.positions||[]).length;
     var clEl=$id('app-closed');if(clEl)clEl.textContent=(s.closed_trades||[]).length;
   }}
-  function poll(){{fetch('/api/state').then(function(r){{return r.json();}}).then(applyPoll).catch(function(){{}});}}
+  function poll(){{fetch('/api/state').then(function(r){{return r.json();}}).then(applyPoll).catch(function(e){{console.warn('[app-poll] /api/state error:',e);}});}}
   setTimeout(poll,2000);setInterval(poll,5000);
 }})();
 </script>
@@ -3896,7 +3914,10 @@ async fn agent_app_handler(
       if (!response.ok) throw new Error('state fetch failed');
       const data = await response.json();
       document.getElementById('capital-value').textContent = formatMoney(data.free_capital ?? data.capital ?? 0);
-      document.getElementById('equity-value').textContent = formatMoney(data.capital + (data.open_positions || 0));
+      // Equity = free cash + committed margin + unrealised P&L
+      const _committed   = (data.positions || []).reduce((s, p) => s + (p.size_usd        || 0), 0);
+      const _unrealised  = (data.positions || []).reduce((s, p) => s + (p.unrealised_pnl  || 0), 0);
+      document.getElementById('equity-value').textContent = formatMoney((data.capital || 0) + _committed + _unrealised);
       document.getElementById('pnl-value').textContent = formatMoney(data.pnl ?? 0);
       const list = document.getElementById('positions-list');
       list.innerHTML = '';
@@ -8828,6 +8849,10 @@ th{padding:9px 14px;font-size:.65rem;font-weight:700;color:var(--dim);text-trans
     <div class="stat-lbl">Win Rate</div>
   </div>
   <div class="stat-cell">
+    <div class="stat-val" id="m-rolling-wr" style="color:var(--muted)">—</div>
+    <div class="stat-lbl" id="m-rolling-wr-label" title="Rolling win rate over the last 20 closed trades">Recent WR (20)</div>
+  </div>
+  <div class="stat-cell">
     <div class="stat-val" id="m-pos" style="color:var(--blue)">—</div>
     <div class="stat-lbl">Live Positions</div>
   </div>
@@ -9209,6 +9234,13 @@ async function loadState() {
     }
     if (heroWR && m.win_rate > 0) heroWR.textContent = (m.win_rate*100).toFixed(0)+'%';
 
+    // ── Macro regime pill — keep in sync on every loadState() call ──
+    // applyPoll() only updates the pill on cycle-tick; loadState() runs every 30s
+    // independently, so we must also update it here to avoid stale display.
+    if (typeof updateMacroPill === 'function') {
+      updateMacroPill(s.macro_regime || 'NEUTRAL');
+    }
+
     // ── Stat bar ──
     const pnlEl = document.getElementById('m-pnl');
     if (pnlEl) {
@@ -9219,6 +9251,21 @@ async function loadState() {
     if (wr2El) wr2El.textContent = m.win_rate > 0 ? (m.win_rate*100).toFixed(0)+'%' : '—';
     const t2El = document.getElementById('m-trades2');
     if (t2El) t2El.textContent = m.total_trades || '0';
+
+    // ── Rolling win rate (last 20 trades) — edge decay indicator ──
+    // Only render once there are closed trades; default 0.0 is misleading before any trades.
+    const rwrEl = document.getElementById('m-rolling-wr');
+    if (rwrEl) {
+      if (m.total_trades > 0 && m.rolling_win_rate != null) {
+        const rwr = m.rolling_win_rate * 100;
+        rwrEl.textContent = rwr.toFixed(0) + '%';
+        // Colour: green ≥60%, yellow 50-60%, red <50% (edge degradation warning)
+        rwrEl.style.color = rwr >= 60 ? 'var(--green)' : rwr >= 50 ? '#e3b341' : 'var(--red)';
+      } else {
+        rwrEl.textContent = '—';
+        rwrEl.style.color = 'var(--muted)';
+      }
+    }
 
     // ── Signal weights ──
     renderWeights(s.signal_weights);
@@ -9259,9 +9306,13 @@ async function loadState() {
     if (posCountEl) posCountEl.textContent = s.positions?.length || '0';
 
     // ── AUM fallback: if TVL DB has no history yet, show live equity ──
+    // s.current_equity does NOT exist in BotState; compute equity from live fields.
     const aumEl = document.getElementById('hero-aum');
-    if (aumEl && (aumEl.textContent === '—' || aumEl.textContent === '') && s.current_equity > 0) {
-      aumEl.textContent = fmtUsd(s.current_equity);
+    if (aumEl && (aumEl.textContent === '—' || aumEl.textContent === '')) {
+      const _liveCommitted  = (s.positions||[]).reduce((acc,p) => acc + (p.size_usd       ||0), 0);
+      const _liveUnrealised = (s.positions||[]).reduce((acc,p) => acc + (p.unrealised_pnl ||0), 0);
+      const _liveEquity = (s.capital||0) + _liveCommitted + _liveUnrealised;
+      if (_liveEquity > 0) aumEl.textContent = fmtUsd(_liveEquity);
     }
 
     // ── Closed trades — compact wins list ──

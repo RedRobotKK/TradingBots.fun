@@ -7,7 +7,7 @@
 //!   • R-multiple exits: 1/3 at 2R, 1/3 at 4R, trail final 1/3 with no ceiling
 //!   • Trailing stop: breakeven at 1R, trail 1.2×ATR from HWM at 1.5R
 //!   • Time exit: close stale trades (<0.5R after 8 cycles)
-//!   • Circuit breaker: 0.35× size multiplier when equity drawdown >8%
+//!   • Circuit breaker: 0.50× size multiplier when equity drawdown >8%
 //!   • Pyramid: add to winners (existing >1R profit + new signal = +50% add-on)
 //!   • Online learning: signal weights updated after every close/partial
 
