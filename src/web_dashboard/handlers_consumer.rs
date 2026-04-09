@@ -1394,7 +1394,7 @@ pub(crate) async fn resolve_consumer_state(
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[derive(serde::Deserialize)]
-struct SessionRequest {
+pub(crate) struct SessionRequest {
     token: String,
     /// Invite code entered on the login page — required for new signups.
     /// Existing users who already have a session don't need to re-supply this.

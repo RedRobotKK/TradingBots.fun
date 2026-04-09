@@ -498,7 +498,7 @@ pub(crate) async fn hl_export_key_handler(
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[derive(serde::Deserialize)]
-struct CommandRequest {
+pub(crate) struct CommandRequest {
     command: String,
 }
 
@@ -790,7 +790,7 @@ pub(crate) async fn thesis_get_handler(
 }
 
 #[derive(serde::Deserialize)]
-struct ThesisCommand {
+pub(crate) struct ThesisCommand {
     command: String,
 }
 

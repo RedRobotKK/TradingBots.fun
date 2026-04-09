@@ -632,7 +632,7 @@ pub(crate) async fn funnel_event_handler(
 
 /// Payload for `POST /api/trade-note`.
 #[derive(Debug, Deserialize)]
-struct TradeNotePayload {
+pub(crate) struct TradeNotePayload {
     /// Index into `bot_state.closed_trades` (0 = most recent).
     index: usize,
     /// Operator's plain-text note — max 500 chars.
@@ -707,13 +707,13 @@ pub(crate) async fn trade_note_handler(
 }
 
 #[derive(Debug, Deserialize)]
-struct ReportQueryPayload {
+pub(crate) struct ReportQueryPayload {
     question: String,
     answer: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
-struct ReportQueryResponse {
+pub(crate) struct ReportQueryResponse {
     answer: Option<String>,
     cached: bool,
     report_hash: String,
@@ -787,7 +787,7 @@ pub(crate) async fn api_pattern_alert_handler(
 }
 
 #[derive(Debug, Deserialize)]
-struct BridgeWithdrawRequest {
+pub(crate) struct BridgeWithdrawRequest {
     amount_usd: f64,
     destination: String,
 }
