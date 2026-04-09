@@ -1330,16 +1330,6 @@ pub(crate) async fn consumer_tax_csv_handler(
         .into_response()
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  Privy auth helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Extract and verify the session cookie from request headers.
-///
-/// Returns `Some(TenantId)` if the `rr_session` cookie is present and its
-/// HMAC is valid; `None` otherwise (missing, tampered, or expired).
-}
-
 /// Result of resolving the consumer state for an incoming request.
 pub enum ConsumerStateResult {
     /// Authenticated and has accepted terms — ready to serve trading data.
