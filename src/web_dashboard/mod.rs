@@ -1,4 +1,5 @@
 // pub use so submodules can access via `use super::*;`
+#[allow(unused_imports)]
 pub use axum::{
     extract::{Path, Query, State},
     http::HeaderMap,
@@ -11,6 +12,7 @@ pub use axum::{
 };
 pub use futures_util::stream::StreamExt;
 pub use serde::{Deserialize, Serialize};
+#[allow(unused_imports)]
 pub use serde_json::{json, Value as JsonValue};
 pub use std::collections::HashMap;
 pub use std::fs;
@@ -25,12 +27,12 @@ pub use tokio::sync::{Mutex, RwLock};
 //   git add static/privy-login.js && git commit
 pub static PRIVY_BUNDLE_JS: &str = include_str!("../../static/privy-login.js");
 pub use crate::bridge::BridgeManager;
-pub use crate::coins;
-pub use crate::exchange;
+pub(crate) use crate::coins;
+pub(crate) use crate::exchange;
 pub use crate::learner::{SignalContribution, SignalWeights};
 pub use crate::metrics::PerformanceMetrics;
-pub use crate::pattern_insights;
-pub use crate::reporting;
+pub(crate) use crate::pattern_insights;
+pub(crate) use crate::reporting;
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Shared application state — passed to every Axum handler via State<AppState>
