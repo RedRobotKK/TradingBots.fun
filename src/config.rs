@@ -171,7 +171,7 @@ impl Config {
                 .ok()
                 .and_then(|v| v.parse::<f64>().ok())
                 .unwrap_or(0.05),
-            max_leverage: 10.0,
+            max_leverage: env::var("MAX_LEVERAGE").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(10.0),
             daily_loss_limit: env::var("DAILY_LOSS_LIMIT")
                 .ok()
                 .and_then(|v| v.parse::<f64>().ok())
@@ -209,11 +209,11 @@ impl Config {
             email_from: env::var("EMAIL_FROM").ok(),
             stripe_promo_price_id: env::var("STRIPE_PROMO_PRICE_ID").ok(),
             lunarcrush_api_key: env::var("LUNARCRUSH_API_KEY")
-                .unwrap_or_else(|_| "77c4fcm050bnxe49qo1h2n252umls0rrtkevh5uni".to_string()),
+                .unwrap_or_else(|_| "".to_string() /* removed hardcoded key — set LUNARCRUSH_API_KEY env var */),
             anthropic_api_key: env::var("ANTHROPIC_API_KEY").ok(),
             database_url: env::var("DATABASE_URL")
                 .unwrap_or_else(|_| "sqlite:///var/data/tradingbots.db".to_string()),
-            max_concurrent_trades: 3,
+            max_concurrent_trades: env::var("MAX_CONCURRENT_TRADES").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(3),
             bridge_min_withdraw_usd: env::var("BRIDGE_MIN_WITHDRAW_USD")
                 .ok()
                 .and_then(|v| v.parse::<f64>().ok())

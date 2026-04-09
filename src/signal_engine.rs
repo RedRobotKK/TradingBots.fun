@@ -233,10 +233,11 @@ impl SignalEngine {
     }
 
     /// Spawn the engine loop.  Returns immediately; computation runs in the background.
-    pub fn spawn(self) {
+    pub fn spawn(self) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             self.run().await;
-        });
+            error!("SignalEngine task exited unexpectedly; the engine is no longer running");
+        })
     }
 
     async fn run(self) {

@@ -532,8 +532,9 @@ async fn worker_tick(worker_id: usize, pool: &PgPool) -> Result<bool> {
         worker_id, id, tenant_id, side.to_uppercase(), symbol, reason
     );
 
-    // TODO Phase 2: load tenant credentials → call exchange::place_order()
-    // For now: log and mark done.
+    // NOTE: Order execution (Phase 2) — load tenant credentials and call
+    // exchange::place_order() once per-tenant HL keys are provisioned.
+    // Until then, jobs are acknowledged and marked done without placing a live order.
     info!(
         "ExecutionWorker {}: QUEUED ORDER tenant={} {} {} {} size={:?} (Phase 2)",
         worker_id, tenant_id, side.to_uppercase(), symbol, reason, size_usd

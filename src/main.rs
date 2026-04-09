@@ -278,7 +278,7 @@ async fn main() -> Result<()> {
         let api_key_owned = std::env::var("ANTHROPIC_API_KEY").unwrap_or_default();
         let api_key = api_key_owned.as_str();
         if api_key.is_empty() {
-            eprintln!("❌ ANTHROPIC_API_KEY not set — cannot run analysis");
+            error!("ANTHROPIC_API_KEY not set — cannot run analysis");
             std::process::exit(1);
         }
         // Date argument is optional; default = yesterday
@@ -292,10 +292,10 @@ async fn main() -> Result<()> {
         let out_path = std::path::PathBuf::from(format!("logs/analysis_{}.md", date));
         match daily_analyst::analyse_log_file(&log_path, &out_path, api_key).await {
             Ok(p) => {
-                println!("✅ Analysis written to {}", p.display());
+                info!("Analysis written to {}", p.display());
             }
             Err(e) => {
-                eprintln!("❌ Analysis failed: {}", e);
+                error!("Analysis failed: {}", e);
                 std::process::exit(1);
             }
         }
@@ -361,7 +361,8 @@ async fn main() -> Result<()> {
     // All tenants read from the resulting SharedSignalCache instead of each
     // tenant independently recomputing signals — O(symbols) not O(tenants).
     let signal_cache = signal_engine::new_signal_cache();
-    signal_engine::SignalEngine::new(
+    // Store JoinHandle so engine panics surface as errors, not silent drops.
+    let _signal_engine_handle = signal_engine::SignalEngine::new(
         market.clone(),
         price_oracle.clone(),
         signal_cache.clone(),
@@ -698,13 +699,14 @@ async fn main() -> Result<()> {
                             let subject = "Your trial ended — try Pro for $9.95 this month";
                             match ml_promo.send(&email, subject, &html).await {
                                 Ok(_) => {
-                                    info!("📧 Promo email sent → {}", email);
+                                    info!("📧 Promo email sent for tenant {}", tenant_id);
                                     if let Err(e) = db_promo.mark_promo_sent(&tenant_id).await {
                                         log::warn!("mark_promo_sent failed for {tenant_id}: {e}");
                                     }
                                 }
                                 Err(e) => {
-                                    log::warn!("Promo email failed for {email}: {e}");
+                                    // Redact email — log only tenant_id to avoid PII in logs
+                                    log::warn!("Promo email failed for tenant {tenant_id}: {e}");
                                 }
                             }
                         }

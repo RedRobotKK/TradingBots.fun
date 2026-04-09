@@ -185,6 +185,7 @@ pub struct TrialParams {
 /// back to `/app` with an explanatory message.
 pub async fn checkout_handler(
     State(app): State<AppState>,
+    headers: HeaderMap,
     Query(params): Query<CheckoutParams>,
 ) -> Response {
     let api_key = match &app.stripe_api_key {
@@ -210,7 +211,10 @@ pub async fn checkout_handler(
     };
 
     let tenant_id = params.tenant_id.unwrap_or_else(|| "default".to_string());
-    let host = "https://yourdomain.com"; // TODO: replace with req Host header
+    let host = headers.get("host").and_then(|v| v.to_str().ok())
+        .map(|h| { let s = headers.get("x-forwarded-proto").and_then(|v| v.to_str().ok()).unwrap_or("https"); format!("{}://{}", s, h) })
+        .or_else(|| std::env::var("APP_URL").ok())
+        .unwrap_or_else(|| "https://tradingbots.fun".to_string());
 
     let session_url = create_checkout_session(
         &api_key,

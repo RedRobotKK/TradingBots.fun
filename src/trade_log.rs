@@ -41,6 +41,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use log::warn;
 
 // ─────────────────────────── Event types ─────────────────────────────────────
 
@@ -341,7 +342,7 @@ impl TradeLogger {
     /// log failure never crashes the trading loop.
     pub fn log(&mut self, event: &TradeEvent) {
         if let Err(e) = self.log_inner(event) {
-            eprintln!("⚠ TradeLogger write error: {}", e);
+            log::warn!("TradeLogger write error: {}", e);
         }
     }
 

@@ -630,7 +630,7 @@ pub async fn analyse_log_file(
     );
 
     let request = crate::ai_reviewer::build_claude_request(
-        "claude-sonnet-4-6-20250929",
+        "claude-sonnet-4-6",
         4096,
         build_system_prompt(),
         &user_msg,

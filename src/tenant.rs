@@ -609,7 +609,7 @@ impl TenantManager {
         if handle.config.wallet_linked_at.is_none() {
             handle.config.wallet_linked_at = Some(Utc::now());
         }
-        log::info!("🔗 Tenant {} linked wallet {}", id, address);
+        log::info!("🔗 Tenant {} linked wallet {}…{}", id, &address[..6.min(address.len())], &address[address.len().saturating_sub(4)..]);
         Ok(())
     }
 

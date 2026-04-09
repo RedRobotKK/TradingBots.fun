@@ -2534,7 +2534,7 @@ function toggleDetail(id){{
       // After 3 consecutive failures show a subtle stale-data warning so the
       // operator knows the numbers they're looking at may be out of date.
       if (_pollErrCount === 3) {{
-        console.warn('[poll] /api/state unreachable after 3 attempts:', e);
+        // silently degrade
         var ev = document.getElementById('equity-val');
         if (ev && !ev.dataset.staleMark) {{
           ev.dataset.staleMark = '1';
@@ -2962,7 +2962,11 @@ fn reason_class(r: &str) -> &'static str {
     }
 }
 
-async fn api_state_handler(State(app): State<AppState>) -> Json<BotState> {
+async fn api_state_handler(State(app): State<AppState>, headers: HeaderMap) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let has_session = get_session_tenant_id(&headers, &app.session_secret).is_some();
+    let has_admin = app.admin_password.as_deref().map(|pw| check_admin_auth(&headers, pw)).unwrap_or(false);
+    if !has_session && !has_admin { return axum::http::StatusCode::UNAUTHORIZED.into_response(); }
     let mut state = app.bot_state.read().await.clone();
     state.hyperliquid_stats = app.hyperliquid_stats.snapshot().await;
     // Trim closed_trades to the most recent 100 for the API response.
@@ -2972,7 +2976,7 @@ async fn api_state_handler(State(app): State<AppState>) -> Json<BotState> {
         let drain_count = state.closed_trades.len() - 100;
         state.closed_trades.drain(..drain_count);
     }
-    Json(state)
+    Json(state).into_response()
 }
 
 // ─────────────────────────── Consumer webapp ─────────────────────────────────
@@ -3657,7 +3661,7 @@ async fn consumer_app_handler(
     var posEl=$id('app-positions');if(posEl)posEl.textContent=(s.positions||[]).length;
     var clEl=$id('app-closed');if(clEl)clEl.textContent=(s.closed_trades||[]).length;
   }}
-  function poll(){{fetch('/api/state').then(function(r){{return r.json();}}).then(applyPoll).catch(function(e){{console.warn('[app-poll] /api/state error:',e);}});}}
+  function poll(){{fetch('/api/state').then(function(r){{return r.json();}}).then(applyPoll).catch(function(e){{/* silently degrade */}});}}
   setTimeout(poll,2000);setInterval(poll,5000);
 }})();
 </script>
@@ -5655,7 +5659,7 @@ async fn consumer_settings_wallet_handler(
     {
         let mut tenants = app.tenants.write().await;
         match tenants.link_wallet(&tid, &address) {
-            Ok(_) => log::info!("🔗 Tenant {} updated wallet to {}", tid, address),
+            Ok(_) => log::info!("🔗 Tenant {} updated wallet to {}…{}", tid, &address[..6.min(address.len())], &address[address.len().saturating_sub(4)..]),
             Err(e) => {
                 log::warn!("⚠ Wallet link failed for tenant {}: {}", tid, e);
                 return axum::response::Redirect::to("/app/settings?error=invalid_address")
@@ -6237,7 +6241,7 @@ async fn admin_create_session_handler(
     use axum::response::IntoResponse;
 
     // ── Validate admin key ────────────────────────────────────────────────
-    let expected_key = std::env::var("ADMIN_KEY").unwrap_or_else(|_| "dev-admin-key".to_string());
+    let expected_key = std::env::var("ADMIN_KEY").map_err(|_| ()).and_then(|k| if k.is_empty() { Err(()) } else { Ok(k) }).unwrap_or_else(|_| { panic!("ADMIN_KEY env var not set") });
     let provided_key = headers
         .get("x-admin-key")
         .and_then(|v| v.to_str().ok())
@@ -7389,19 +7393,20 @@ struct ReportQueryResponse {
     report_hash: String,
 }
 
-async fn api_report_latest_handler(
-    State(_app): State<AppState>,
-) -> Result<Json<reporting::ReportSummary>, axum::http::StatusCode> {
+async fn api_report_latest_handler(State(app): State<AppState>, headers: HeaderMap) -> Result<Json<reporting::ReportSummary>, axum::http::StatusCode> {
+    let has_session = get_session_tenant_id(&headers, &app.session_secret).is_some();
+    let has_admin = app.admin_password.as_deref().map(|pw| check_admin_auth(&headers, pw)).unwrap_or(false);
+    if !has_session && !has_admin { return Err(axum::http::StatusCode::UNAUTHORIZED); }
     match reporting::load_summary() {
         Ok(summary) => Ok(Json(summary)),
         Err(_) => Err(axum::http::StatusCode::NOT_FOUND),
     }
 }
 
-async fn api_report_query_handler(
-    State(app): State<AppState>,
-    Json(payload): Json<ReportQueryPayload>,
-) -> Result<Json<ReportQueryResponse>, axum::http::StatusCode> {
+async fn api_report_query_handler(State(app): State<AppState>, headers: HeaderMap, Json(payload): Json<ReportQueryPayload>) -> Result<Json<ReportQueryResponse>, axum::http::StatusCode> {
+    let has_session = get_session_tenant_id(&headers, &app.session_secret).is_some();
+    let has_admin = app.admin_password.as_deref().map(|pw| check_admin_auth(&headers, pw)).unwrap_or(false);
+    if !has_session && !has_admin { return Err(axum::http::StatusCode::UNAUTHORIZED); }
     if payload.question.trim().is_empty() {
         return Err(axum::http::StatusCode::BAD_REQUEST);
     }
@@ -7586,7 +7591,7 @@ async fn hl_setup_handler(
         match crate::hl_wallet::decrypt_key(&key_enc_str, &app.session_secret, tid.as_str()) {
             Ok(k) => k,
             Err(e) => {
-                log::error!("❌ HL wallet key decrypt failed for {}: {}", tid, e);
+                log::error!("❌ HL wallet key decrypt failed for tenant {}", tid);
                 return (
                     axum::http::StatusCode::INTERNAL_SERVER_ERROR,
                     "Key decryption failed — please contact support",
@@ -8007,7 +8012,7 @@ async fn hl_export_key_handler(
     let private_key = match crate::hl_wallet::decrypt_key(&enc, &app.session_secret, tid.as_str()) {
         Ok(k) => k,
         Err(e) => {
-            log::error!("❌ HL key export decrypt failed for {}: {}", tid, e);
+            log::error!("❌ HL key export decrypt failed for tenant {}", tid);
             return (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
                 "Key decryption failed",
@@ -9369,7 +9374,7 @@ async function loadState() {
         winsSec.style.display = 'none';
       }
     }
-  } catch(e) { console.warn('state fetch failed', e); }
+  } catch(_e) { /* silently degrade */ }
 }
 
 // ═══════════════════════════════════════════════════════
@@ -9387,7 +9392,7 @@ async function loadTvl() {
       document.getElementById('footer-aum').textContent = aumStr;
     }
     if (d.points && d.points.length > 1) drawChart(d.points);
-  } catch(e) { console.warn('tvl failed', e); }
+  } catch(_e) { /* silently degrade */ }
 }
 
 // ═══════════════════════════════════════════════════════
@@ -9408,7 +9413,7 @@ async function loadWallets() {
       const total = d.accounts.reduce((s, a) => s + (a.current_equity || 0), 0);
       if (total > 0) fAum.textContent = fmtUsd(total);
     }
-  } catch(e) { console.warn('wallets failed', e); }
+  } catch(_e) { /* silently degrade */ }
 }
 
 // ═══════════════════════════════════════════════════════
@@ -9876,7 +9881,7 @@ async fn api_v1_session_handler(
         ).into_response();
     }
 
-    let tx_hash = payment_header.unwrap();
+    let tx_hash = match payment_header { Some(h) => h, None => return axum::http::StatusCode::BAD_REQUEST.into_response() };
     // Basic format check
     if !tx_hash.starts_with("0x") || tx_hash.len() < 66 {
         return (

@@ -2,6 +2,9 @@
 .env
 .env.local
 .env.*.local
+.env.testnet
+.env.mainnet
+.env.production
 
 # Configuration files with secrets
 deployment.toml
