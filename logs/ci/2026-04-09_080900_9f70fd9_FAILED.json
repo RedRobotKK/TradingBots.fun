@@ -1,0 +1,74 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-04-09T08:02:34Z",
+    "commit": "9f70fd9",
+    "commit_full": "9f70fd966e45b5f20f24463ab198379cd8eee8f7",
+    "commit_message": "fix: VibeDoctor pass 3 \u2014 nested ternaries, type safety, form labels, eslint",
+    "branch": "master",
+    "overall_status": "FAILED",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.94.0 (4a4ef493e 2026-03-02)",
+    "cargo": "cargo 1.94.0 (85eff7c80 2026-01-15)",
+    "os_kernel": "6.8.0-106-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 302,
+      "total_passed": 810,
+      "total_failed": 1,
+      "total_ignored": 0,
+      "failures": [
+        "crate_version_is_021"
+      ]
+    },
+    "clippy": {
+      "status": "PASSED",
+      "exit_code": 0,
+      "duration_seconds": 80,
+      "error_count": 0,
+      "errors": []
+    },
+    "audit": {
+      "status": "ADVISORY",
+      "exit_code": 1,
+      "duration_seconds": 4,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2023-0071",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2023-0071",
+          "severity": "5.9 (medium)",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "tradingbots",
+    "status": "active",
+    "active_since": "Thu 2026-04-09 08:01:08 UTC",
+    "recent_logs": [
+      "Apr 09 08:08:57 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[1045102]: [2026-04-09T08:08:57.458Z INFO  tradingbots_fun] \ud83d\udca1 WLFI \u2192 SELL conf=53%",
+      "Apr 09 08:08:57 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[1045102]: [2026-04-09T08:08:57.766Z INFO  tradingbots_fun] \ud83d\udeab WCT SELL blocked in BULL macro (no pico-top: RSI=46 green=false bb_upper=false)",
+      "Apr 09 08:08:57 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[1045102]: [2026-04-09T08:08:57.766Z INFO  tradingbots_fun] \ud83d\udca1 WCT \u2192 SELL conf=49%",
+      "Apr 09 08:08:57 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[1045102]: [2026-04-09T08:08:57.919Z INFO  tradingbots_fun] \ud83d\udeab ONDO SELL blocked in BULL macro (no pico-top: RSI=35 green=false bb_upper=false)",
+      "Apr 09 08:08:57 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[1045102]: [2026-04-09T08:08:57.919Z INFO  tradingbots_fun] \ud83d\udca1 ONDO \u2192 SELL conf=58%"
+    ]
+  }
+}
