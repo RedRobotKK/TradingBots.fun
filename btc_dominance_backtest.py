@@ -270,11 +270,19 @@ btc_price_chart = list(zip(dates, btc_p))
 
 def cc(v):
     """Correlation → color."""
-    return "#3fb950" if v > 0.7 else "#e3b341" if v > 0.5 else "#f85149"
+    if v > 0.7:
+        return "#3fb950"
+    if v > 0.5:
+        return "#e3b341"
+    return "#f85149"
 
 def lc(v):
     """Lag value → color."""
-    return "#3fb950" if v > 0.5 else "#e3b341" if v > 0.3 else "#8b949e"
+    if v > 0.5:
+        return "#3fb950"
+    if v > 0.3:
+        return "#e3b341"
+    return "#8b949e"
 
 def coin_corr_cells(coins):
     return "".join(f'<td style="color:{cc(c["corr"])}">{c["corr"]:.3f}</td>' for c in coins)
@@ -289,8 +297,18 @@ def lag_rows(regime):
 def bucket_rows_html():
     rows = []
     for b in bucket_stats:
-        corr_cls  = "corr-high" if b["avg_corr"] > 0.7 else "corr-med" if b["avg_corr"] > 0.5 else "corr-low"
-        dir_col   = "#3fb950" if b["avg_dir"] > 70 else "#e3b341" if b["avg_dir"] > 55 else "#f85149"
+        if b["avg_corr"] > 0.7:
+            corr_cls = "corr-high"
+        elif b["avg_corr"] > 0.5:
+            corr_cls = "corr-med"
+        else:
+            corr_cls = "corr-low"
+        if b["avg_dir"] > 70:
+            dir_col = "#3fb950"
+        elif b["avg_dir"] > 55:
+            dir_col = "#e3b341"
+        else:
+            dir_col = "#f85149"
         ccells    = coin_corr_cells(b["coins"])
         rows.append(
             f'<tr>'
@@ -387,9 +405,24 @@ HTML_CODE_BLOCK = (
 )
 
 # Current state values (pre-computed to avoid complex inline ternaries in f-string)
-dom_color      = "#ef4444" if cur_dom > 60 else "#f97316" if cur_dom > 55 else "#eab308" if cur_dom > 48 else "#22c55e"
-dom_regime     = ("⚡ High" if cur_dom > 60 else "↑ Elevated" if cur_dom > 55
-                  else "≈ Medium" if cur_dom > 48 else "↓ Low (Altseason)")
+if cur_dom > 60:
+    dom_color = "#ef4444"
+elif cur_dom > 55:
+    dom_color = "#f97316"
+elif cur_dom > 48:
+    dom_color = "#eab308"
+else:
+    dom_color = "#22c55e"
+
+if cur_dom > 60:
+    dom_regime = "⚡ High"
+elif cur_dom > 55:
+    dom_regime = "↑ Elevated"
+elif cur_dom > 48:
+    dom_regime = "≈ Medium"
+else:
+    dom_regime = "↓ Low (Altseason)"
+
 dom_regime_col = "#ef4444" if cur_dom > 55 else "#22c55e"
 btc_price_now  = f"{btc_p[-1]:,.0f}" if btc_p else "N/A"
 date_range     = f"{dates[0]} → {cur_date}" if dates else "N/A"

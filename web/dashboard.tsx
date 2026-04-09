@@ -316,6 +316,12 @@ const SentimentDisplay: React.FC<{ metrics: DashboardMetrics }> = ({ metrics }) 
     return '#388e3c'; // Extreme greed - green
   };
 
+  const getRsiStatus = (rsi: number) => {
+    if (rsi < 30) return '📉 Oversold';
+    if (rsi > 70) return '📈 Overbought';
+    return '⚪ Neutral';
+  };
+
   const getSentimentLabel = (index: number) => {
     if (index < 25) return 'EXTREME FEAR';
     if (index < 45) return 'FEAR';
@@ -348,11 +354,7 @@ const SentimentDisplay: React.FC<{ metrics: DashboardMetrics }> = ({ metrics }) 
         <div className="indicator-row">
           <span>RSI</span>
           <span className="indicator-value">{metrics.rsi.toFixed(0)}</span>
-          <span className="indicator-status">{
-            metrics.rsi < 30 ? '📉 Oversold' :
-            metrics.rsi > 70 ? '📈 Overbought' :
-            '⚪ Neutral'
-          }</span>
+          <span className="indicator-status">{getRsiStatus(metrics.rsi)}</span>
         </div>
         <div className="indicator-row">
           <span>MACD</span>

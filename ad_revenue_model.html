@@ -45,15 +45,15 @@
   <h2>Inputs — adjust to your situation</h2>
   <div class="assumptions">
     <div class="asm">
-      <label>Free/Trial Active Users (DAU)</label>
+      <label for="dau">Free/Trial Active Users (DAU)</label>
       <input type="number" id="dau" value="100" min="1" max="100000">
     </div>
     <div class="asm">
-      <label>Avg hours dashboard open / day</label>
+      <label for="hours">Avg hours dashboard open / day</label>
       <input type="number" id="hours" value="4" min="0.25" max="16" step="0.25">
     </div>
     <div class="asm">
-      <label>Ad refresh interval (seconds)</label>
+      <label for="refresh">Ad refresh interval (seconds)</label>
       <select id="refresh">
         <option value="30" selected>30s — Coinzilla refreshable</option>
         <option value="60">60s</option>
@@ -62,7 +62,7 @@
       </select>
     </div>
     <div class="asm">
-      <label>CPM (USD per 1,000 impressions)</label>
+      <label for="cpm">CPM (USD per 1,000 impressions)</label>
       <select id="cpm">
         <option value="0.50">$0.50 — new publisher, low traffic</option>
         <option value="1.20" selected>$1.20 — established, crypto audience</option>
@@ -71,7 +71,7 @@
       </select>
     </div>
     <div class="asm">
-      <label>Coinzilla fill rate</label>
+      <label for="fill">Coinzilla fill rate</label>
       <select id="fill">
         <option value="0.55">55% — first month</option>
         <option value="0.70" selected>70% — after 4–6 weeks</option>
@@ -80,7 +80,7 @@
       </select>
     </div>
     <div class="asm">
-      <label>% users in Tier 1 countries</label>
+      <label for="tier1">% users in Tier 1 countries</label>
       <select id="tier1">
         <option value="0.40">40%</option>
         <option value="0.60" selected>60% (typical crypto)</option>
@@ -207,7 +207,8 @@ function calc() {
   dauScenarios.forEach(d => {
     const di = effectiveImpPerUserDay * d;
     const mr = (di * 30 / 1000) * effectiveCpm;
-    let cls = mr > 10000 ? 'green' : mr > 1000 ? 'yellow' : '';
+    let cls = '';
+    if (mr > 10000) { cls = 'green'; } else if (mr > 1000) { cls = 'yellow'; }
     let tag = d === Math.round(dau) ? '<span class="tag tag-blue" style="color:#58a6ff;border-color:#58a6ff50;background:#58a6ff10">← you</span>' : '';
     rows += `<tr>
       <td>${d.toLocaleString()} free users${tag}</td>
@@ -227,7 +228,8 @@ function calc() {
     const converters = Math.round(d * 0.1);
     const subAnnual = converters * subPriceAnnual;
     const total = adAnnual + subAnnual;
-    let cls = total > 100000 ? 'green' : total > 10000 ? 'yellow' : '';
+    let cls = '';
+    if (total > 100000) { cls = 'green'; } else if (total > 10000) { cls = 'yellow'; }
     crows += `<tr>
       <td>${d.toLocaleString()}</td>
       <td>${fmt(adAnnual)}</td>

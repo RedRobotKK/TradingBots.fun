@@ -91,7 +91,7 @@ def fetch_klines(symbol: str, interval: str, start_ms: int, end_ms: int) -> list
             f"&startTime={cur}&endTime={end_ms}&limit={LIMIT_PER_CALL}"
         )
         data = _get_json(url)
-        if not data:
+        if not data or not isinstance(data, list):
             break
         for d in data:
             bars.append({
@@ -127,7 +127,7 @@ def fetch_funding_history(symbol: str, start_ms: int, end_ms: int) -> dict:
         except Exception as e:
             print(f"  ⚠ Funding history unavailable for {symbol}: {e}")
             return rates
-        if not data:
+        if not data or not isinstance(data, list):
             break
         for d in data:
             rates[int(d["fundingTime"])] = float(d["fundingRate"])
@@ -371,6 +371,17 @@ def adx_series(bars: list, period: int = 14) -> list:
 # Signal conditions  (mirror decision.rs signal logic)
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _adx_regime(adx_val: float) -> str:
+    """Map an ADX value to a regime string."""
+    if math.isnan(adx_val):
+        return "ranging"
+    if adx_val > 27:
+        return "trending"
+    if adx_val > 19:
+        return "neutral"
+    return "ranging"
+
+
 def compute_signals(bars: list) -> list:
     """
     Returns list of dicts, one per bar, with signal fields.
@@ -405,11 +416,7 @@ def compute_signals(bars: list) -> list:
             "adx":     adx[i],
             "funding": bars[i].get("funding", 0.0),
             # regime
-            "regime":  "ranging" if math.isnan(adx[i]) else (
-                "trending" if adx[i] > 27 else
-                "neutral"  if adx[i] > 19 else
-                "ranging"
-            ),
+            "regime":  _adx_regime(adx[i]),
         }
 
         # ── 1. RSI ────────────────────────────────────────────────────────────
@@ -841,12 +848,27 @@ def build_html(all_results: dict, meta: dict) -> str:
         st = combined[sig].get("all", {})
         g  = st.get("grade", "?")
         gc = GRADE_COLOUR.get(g, "#6b7280")
-        ic_col  = "good" if not math.isnan(st.get("ic", float("nan"))) and st["ic"] > 0.03 else \
-                  "warn" if not math.isnan(st.get("ic", float("nan"))) and st["ic"] > 0.01 else "bad"
-        hr_col  = "good" if not math.isnan(st.get("hit_rate", float("nan"))) and st["hit_rate"] > 0.52 else \
-                  "warn" if not math.isnan(st.get("hit_rate", float("nan"))) and st["hit_rate"] > 0.50 else "bad"
-        t_col   = "good" if not math.isnan(st.get("t_stat", float("nan"))) and st["t_stat"] > 2.0 else \
-                  "warn" if not math.isnan(st.get("t_stat", float("nan"))) and st["t_stat"] > 1.0 else "bad"
+        _ic = st.get("ic", float("nan"))
+        _hr = st.get("hit_rate", float("nan"))
+        _ts = st.get("t_stat", float("nan"))
+        if not math.isnan(_ic) and _ic > 0.03:
+            ic_col = "good"
+        elif not math.isnan(_ic) and _ic > 0.01:
+            ic_col = "warn"
+        else:
+            ic_col = "bad"
+        if not math.isnan(_hr) and _hr > 0.52:
+            hr_col = "good"
+        elif not math.isnan(_hr) and _hr > 0.50:
+            hr_col = "warn"
+        else:
+            hr_col = "bad"
+        if not math.isnan(_ts) and _ts > 2.0:
+            t_col = "good"
+        elif not math.isnan(_ts) and _ts > 1.0:
+            t_col = "warn"
+        else:
+            t_col = "bad"
         html += f"""
 <tr>
   <td>{rank}</td>
@@ -875,10 +897,18 @@ def build_html(all_results: dict, meta: dict) -> str:
             st = combined[sig].get(reg, {})
             ic = st.get("ic", float("nan"))
             hr = st.get("hit_rate", float("nan"))
-            ic_col = "good" if not math.isnan(ic) and ic > 0.03 else \
-                     "warn" if not math.isnan(ic) and ic > 0.01 else "bad"
-            hr_col = "good" if not math.isnan(hr) and hr > 0.52 else \
-                     "warn" if not math.isnan(hr) and hr > 0.50 else "bad"
+            if not math.isnan(ic) and ic > 0.03:
+                ic_col = "good"
+            elif not math.isnan(ic) and ic > 0.01:
+                ic_col = "warn"
+            else:
+                ic_col = "bad"
+            if not math.isnan(hr) and hr > 0.52:
+                hr_col = "good"
+            elif not math.isnan(hr) and hr > 0.50:
+                hr_col = "warn"
+            else:
+                hr_col = "bad"
             cells += f'<td class="{ic_col}">{fmt(ic,4)}</td>'
             cells += f'<td class="{hr_col}">{fmt(hr,3) if not math.isnan(hr) else "—"}</td>'
         html += f"<tr><td><strong>{SIGNAL_LABELS.get(sig, sig)}</strong></td>{cells}</tr>\n"
@@ -1054,7 +1084,12 @@ def main():
         ic_str = f"{ic:.4f}" if not math.isnan(ic) else "  n/a "
         hr_str = f"{hr:.3f}" if not math.isnan(hr) else " n/a "
         t_str  = f"{t:.2f}"  if not math.isnan(t)  else " n/a "
-        flag   = " ✓" if g in ("A","B") else (" ✗" if g in ("D","F") else "  ")
+        if g in ("A", "B"):
+            flag = " ✓"
+        elif g in ("D", "F"):
+            flag = " ✗"
+        else:
+            flag = "  "
         print(f"{SIGNAL_LABELS.get(sig,sig):<22} {ic_str:>7} {hr_str:>8} {t_str:>7} {g:>5}{flag}")
 
 
