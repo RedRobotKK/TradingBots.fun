@@ -21,10 +21,12 @@ RETAIN_COMPRESSED_DAYS=30
 MAX_HOUSEKEEPING_LOG_LINES=500
 
 log() {
-    echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] $*" | tee -a "$HOUSEKEEPING_LOG"
+    # stdout only — cron redirects stdout >> housekeeping.log so we never double-write.
+    # Manual SSH runs print to terminal. Stderr goes to 2>> housekeeping.log in cron.
+    echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] $*"
 }
 
-# Trim the housekeeping log itself so it doesn't grow unbounded.
+# Trim the housekeeping log so it doesn't grow unbounded over months.
 trim_own_log() {
     if [ -f "$HOUSEKEEPING_LOG" ]; then
         local lines
@@ -44,7 +46,12 @@ log "Disk before: $(df -h /dev/vda1 | awk 'NR==2{print $3"/"$2" ("$5" used)"}')"
 COMPRESS_MINUTES=$(( COMPRESS_AFTER_HOURS * 60 ))
 compressed_count=0
 while IFS= read -r -d '' f; do
-    gzip "$f" && log "Compressed: $(basename "$f")" && (( compressed_count++ )) || log "WARNING: failed to compress $f"
+    if gzip "$f"; then
+        log "Compressed: $(basename "$f")"
+        compressed_count=$(( compressed_count + 1 ))
+    else
+        log "WARNING: failed to compress $f"
+    fi
 done < <(find "$LOGS_DIR" -maxdepth 1 -name "*.jsonl" -not -name "*.gz" -mmin "+${COMPRESS_MINUTES}" -print0 2>/dev/null)
 
 if [ "$compressed_count" -eq 0 ]; then
@@ -56,7 +63,12 @@ fi
 # ── Step 2: Delete compressed logs older than 30 days ─────────────────────────
 deleted_count=0
 while IFS= read -r -d '' f; do
-    rm -f "$f" && log "Deleted old log: $(basename "$f")" && (( deleted_count++ )) || log "WARNING: failed to delete $f"
+    if rm -f "$f"; then
+        log "Deleted old log: $(basename "$f")"
+        deleted_count=$(( deleted_count + 1 ))
+    else
+        log "WARNING: failed to delete $f"
+    fi
 done < <(find "$LOGS_DIR" -maxdepth 1 \( -name "*.jsonl.gz" -o -name "*.jsonl.1.gz" \) -mtime "+${RETAIN_COMPRESSED_DAYS}" -print0 2>/dev/null)
 
 if [ "$deleted_count" -eq 0 ]; then
