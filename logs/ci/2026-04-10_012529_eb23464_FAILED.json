@@ -1,0 +1,98 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-04-10T01:10:54Z",
+    "commit": "eb23464",
+    "commit_full": "eb234642853df8cbf894e8230e134adcb43a30c9",
+    "commit_message": "ops: disk hygiene \u2014 cargo clean trap in CI gate, daily log compression cron",
+    "branch": "master",
+    "overall_status": "FAILED",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.94.0 (4a4ef493e 2026-03-02)",
+    "cargo": "cargo 1.94.0 (85eff7c80 2026-01-15)",
+    "os_kernel": "6.8.0-106-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 598,
+      "total_passed": 0,
+      "total_failed": 0,
+      "total_ignored": 0,
+      "failures": []
+    },
+    "clippy": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 273,
+      "error_count": 4,
+      "errors": [
+        {
+          "code": "E",
+          "message": "unused import: `log::warn`",
+          "file": "src/trade_log.rs",
+          "line": 44,
+          "col": 5
+        },
+        {
+          "code": "E",
+          "message": "unused variable: `e`",
+          "file": "src/web_dashboard/handlers_hl.rs",
+          "line": 42,
+          "col": 17
+        },
+        {
+          "code": "E",
+          "message": "unused variable: `e`",
+          "file": "src/web_dashboard/handlers_hl.rs",
+          "line": 463,
+          "col": 13
+        },
+        {
+          "code": "E",
+          "message": "could not compile `tradingbots-fun` (lib) due to 3 previous errors"
+        }
+      ]
+    },
+    "audit": {
+      "status": "ADVISORY",
+      "exit_code": 1,
+      "duration_seconds": 3,
+      "vulnerability_count": 2,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2023-0071",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2023-0071",
+          "severity": "5.9 (medium)",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "tradingbots",
+    "status": "active",
+    "active_since": "Thu 2026-04-09 08:23:49 UTC",
+    "recent_logs": [
+      "Apr 10 01:25:03 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[1047985]: [2026-04-10T01:25:03.472Z INFO  tradingbots_fun] \ud83d\udca1 PYTH \u2192 BUY conf=81%",
+      "Apr 10 01:25:09 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[1047985]: [2026-04-10T01:25:09.603Z INFO  tradingbots_fun::signal_engine] \ud83d\udcca SignalEngine cycle 2042 done: 40 signals, 19775 ms",
+      "Apr 10 01:25:22 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[1047985]: [2026-04-10T01:25:22.791Z WARN  tradingbots_fun::data] HTTP attempt 1/5 failed (error) \u2014 retrying in 1000ms: No candle data for PIXEL 1h",
+      "Apr 10 01:25:23 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[1047985]: [2026-04-10T01:25:23.874Z WARN  tradingbots_fun::data] HTTP attempt 2/5 failed (error) \u2014 retrying in 2000ms: No candle data for PIXEL 1h",
+      "Apr 10 01:25:25 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[1047985]: [2026-04-10T01:25:25.958Z WARN  tradingbots_fun::data] HTTP attempt 3/5 failed (error) \u2014 retrying in 4000ms: No candle data for PIXEL 1h"
+    ]
+  }
+}
