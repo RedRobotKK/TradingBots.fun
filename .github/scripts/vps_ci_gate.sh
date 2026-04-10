@@ -8,6 +8,23 @@ export PATH="$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 source "$HOME/.cargo/env" 2>/dev/null || true
 swapon /swapfile 2>/dev/null || true
 
+# ── Build-cache cleanup trap ───────────────────────────────────────────────────
+# Runs on script exit (success or failure). Only cleans the build cache when
+# disk usage exceeds 70% — preserving incremental compilation when disk is healthy,
+# preventing the disk-full CI failures we saw when artifacts accumulated unchecked.
+cleanup_build_cache() {
+    local disk_pct
+    disk_pct=$(df /tradingbots-fun --output=pcent 2>/dev/null | tail -1 | tr -d '% ' || echo "0")
+    if [ "${disk_pct:-0}" -gt 70 ]; then
+        echo "=== Post-CI cleanup: disk ${disk_pct}% full — running cargo clean ==="
+        cargo clean 2>/dev/null || true
+        echo "=== Disk after clean: $(df -h /dev/vda1 | awk 'NR==2{print $3"/"$2" ("$5")"}') ==="
+    else
+        echo "=== Post-CI cleanup: disk ${disk_pct}% — build cache retained for next run ==="
+    fi
+}
+trap cleanup_build_cache EXIT
+
 # ── Pull latest code so CI tests what was just pushed ─────────────────────────
 git fetch origin master 2>&1
 git reset --hard origin/master 2>&1
@@ -25,6 +42,8 @@ OS_INFO=$(uname -r)
 ARCH=$(uname -m)
 RAM=$(free -h | awk '/^Mem:/{print $2}')
 SWAP_ACTIVE=$(swapon --show --noheadings 2>/dev/null | grep -q . && echo "true" || echo "false")
+DISK_USED=$(df -h /dev/vda1 2>/dev/null | awk 'NR==2{print $3"/"$2" ("$5")"}' || echo "unknown")
+DISK_PCT=$(df /tradingbots-fun --output=pcent 2>/dev/null | tail -1 | tr -d '% ' || echo "0")
 
 echo "=== META ==="
 echo "commit=${COMMIT}"
@@ -38,6 +57,8 @@ echo "os=${OS_INFO}"
 echo "arch=${ARCH}"
 echo "ram=${RAM}"
 echo "swap_active=${SWAP_ACTIVE}"
+echo "disk_used=${DISK_USED}"
+echo "disk_pct=${DISK_PCT}"
 echo "=== META END ==="
 
 # ── Step 1: Tests ─────────────────────────────────────────────────────────────
