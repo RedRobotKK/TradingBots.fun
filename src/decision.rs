@@ -1051,14 +1051,15 @@ pub fn make_decision(
     // Floor ATR at 0.2% of price to avoid zero-ATR edge cases.
     let atr = ind.atr.max(close * 0.002);
 
-    // Tighter stop in trending markets (momentum trades move faster);
-    // wider stop in ranging markets (expected oscillation before reversal).
-    // Reduced from (1.8/2.2/2.0) → tighter multipliers to shrink per-trade loss
-    // when 30-second polling gaps allow price to blow through stops on volatile alts.
+    // ATR stop multipliers widened from (1.4/1.7/1.5) → (1.8/2.2/2.0).
+    // Live data (29,634 trades): 8,554 StopLoss exits, 18.1% WR, -$2,000,302.
+    // ~82% of stop-outs recovered after triggering — stops were inside volatility noise.
+    // ⚠️  SIZING DEPENDENCY: position sizing must use risk/stop_dist so wider stops
+    //    automatically shrink size and keep per-trade risk constant.
     let (stop_mult, tp_mult) = match regime {
-        Regime::Trending => (1.4, 3.5), // 1.4×ATR stop, 3.5×ATR target = 2.5:1 R:R
-        Regime::Ranging => (1.7, 3.4),  // 1.7×ATR stop, 3.4×ATR target = 2:1 R:R
-        Regime::Neutral => (1.5, 3.5),  // balanced
+        Regime::Trending => (1.8, 3.5), // widened 1.4→1.8
+        Regime::Ranging => (2.2, 3.4),  // widened 1.7→2.2: mean-rev needs oscillation room
+        Regime::Neutral => (2.0, 3.5),  // widened 1.5→2.0
     };
 
     // Hard cap: stop-loss distance capped at 5% of entry price regardless of ATR.

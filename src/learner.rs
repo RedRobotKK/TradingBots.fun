@@ -132,11 +132,15 @@ impl Default for SignalWeights {
 }
 
 impl SignalWeights {
-    /// Load from disk, or return defaults if the file is missing or corrupt.
+    /// Load from disk, or return defaults if the file is missing, empty, or corrupt.
     /// Automatically re-normalises to handle old 6-field files.
     pub fn load() -> Self {
-        if let Ok(data) = std::fs::read_to_string(WEIGHTS_FILE) {
-            match serde_json::from_str::<SignalWeights>(&data) {
+        match std::fs::read_to_string(WEIGHTS_FILE) {
+            Ok(data) if data.trim().is_empty() => {
+                log::warn!("⚠️  {} is empty (crash mid-write?) — rebuilding from defaults", WEIGHTS_FILE);
+                let d = Self::default(); d.save(); d
+            }
+            Ok(data) => match serde_json::from_str::<SignalWeights>(&data) {
                 Ok(mut w) => {
                     w.clamp_and_normalise();
                     log::info!(
@@ -144,19 +148,32 @@ impl SignalWeights {
                         w.rsi, w.bollinger, w.macd, w.ema_cross, w.order_flow,
                         w.z_score, w.volume, w.sentiment, w.funding_rate, w.trend
                     );
-                    return w;
+                    w
                 }
-                Err(e) => log::warn!("signal_weights.json parse error: {} — using defaults", e),
-            }
+                Err(e) => {
+                    log::warn!("signal_weights.json parse error: {} — rebuilding", e);
+                    let d = Self::default(); d.save(); d
+                }
+            },
+            Err(_) => { log::info!("📚 Using default signal weights"); Self::default() }
         }
-        log::info!("📚 Using default signal weights (10 signals)");
-        Self::default()
     }
 
     pub fn save(&self) {
-        if let Ok(json) = serde_json::to_string_pretty(self) {
-            if let Err(e) = std::fs::write(WEIGHTS_FILE, json) {
-                log::warn!("Could not save signal weights: {}", e);
+        let json = match serde_json::to_string_pretty(self) {
+            Ok(j) => j,
+            Err(e) => { log::warn!("Could not serialise signal weights: {}", e); return; }
+        };
+        // Atomic write: .tmp → rename so a crash mid-write never leaves a 0-byte file.
+        let tmp = format!("{}.tmp", WEIGHTS_FILE);
+        if let Err(e) = std::fs::write(&tmp, &json) {
+            log::warn!("Could not write signal weights tmp {}: {}", tmp, e);
+            return;
+        }
+        if let Err(e) = std::fs::rename(&tmp, WEIGHTS_FILE) {
+            log::warn!("rename {} → {} failed ({}); falling back", tmp, WEIGHTS_FILE, e);
+            if let Err(e2) = std::fs::write(WEIGHTS_FILE, json) {
+                log::warn!("Could not save signal weights (fallback): {}", e2);
             }
         }
     }

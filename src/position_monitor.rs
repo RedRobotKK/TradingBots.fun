@@ -359,8 +359,11 @@ impl PositionMonitor {
             }
         }
 
-        // ── Time exit: stale position (>8 cycles, <0.5R profit) ───────────
-        // R-size = |entry - stop| if stop is known, else 1% of entry as proxy.
+        // ── Time exit: stale AND clearly losing (>30 cycles AND < -0.5R) ──
+        // Old: pnl_r < 0.5 fired on anything below +0.5R after 8 cycles (4 min).
+        // Result: 2,153 exits, 0% WR, -$158K — cut flat and mildly-negative trades
+        // before they had any chance to develop.
+        // New: only exit when clearly underwater (-0.5R) after 30+ cycles.
         if cycles_held_stale(pos) {
             let r_size = pos.stop_price
                 .map(|s| (pos.entry_price - s).abs())
@@ -374,7 +377,7 @@ impl PositionMonitor {
             } else {
                 0.0
             };
-            if pnl_r < 0.5 {
+            if pnl_r < -0.5 {
                 return Some(QueuedExit {
                     tenant_id: pos.tenant_id,
                     symbol: pos.id.split_once(':').map(|x| x.1).unwrap_or("").to_string(),
@@ -407,14 +410,17 @@ impl PositionMonitor {
     }
 }
 
+/// Raised from 8 → 30 cycles (4 min → 15 min).
+/// Old 4-min window: 2,153 exits, 0% WR, -$158K — cut every trade before
+/// it had a chance to develop.
+const STALE_CYCLES: i32 = 30;
+
 fn cycles_held_stale(pos: &OpenPosition) -> bool {
-    // Primary: cycles_held counter from DB
-    if pos.cycles_held > 8 {
+    if pos.cycles_held > STALE_CYCLES {
         return true;
     }
-    // Fallback: wall-clock time (8 cycles × 30s = 4 minutes)
     let age = chrono::Utc::now() - pos.opened_at;
-    age.num_seconds() > 8 * 30
+    age.num_seconds() > STALE_CYCLES as i64 * 30
 }
 
 // ─────────────────────────── Queue writer ────────────────────────────────────

@@ -1258,8 +1258,35 @@ async fn run_cycle(
     // ── Investment thesis: read current constraints (lock-free snapshot) ──
     let thesis_snap = global_thesis.read().await.clone();
 
-    // Priority coins always analysed FIRST so they get slot priority
-    const PRIORITY: &[&str] = &["SOL", "BTC", "ETH", "BNB", "AVAX"];
+    // Priority coins always analysed FIRST so they get slot priority.
+    // Removed ETH and SOL from priority — their high volume was forcing
+    // over-trading despite poor performance (ETH 31.9% WR -$35K, SOL -$19K
+    // on 1,099 trades; Jan–May 2026 live data).
+    const PRIORITY: &[&str] = &["BTC", "BNB", "AVAX"];
+
+    // Static exclusion list — confirmed chronic underperformers from live data.
+    // These symbols had > $25K losses with < 40% WR over 5-month sample.
+    // Review quarterly; remove symbols if market conditions change.
+    const EXCLUDED_SYMBOLS: &[&str] = &[
+        "ENA",   // -$37K, low WR
+        "SKY",   // -$35K, high ATR gap-downs
+        "ETH",   // -$35K, 31.9% WR on 730 trades — mean-rev strategy mismatch
+        "SOL",   // -$19K, 1,099 trades — high volume noise drowns signal
+        "CELO",  // -$32K, delisted/low liquidity risk
+        "TNSR",  // -$30K
+        "PUMP",  // -$29K, meme token
+        "PENGU", // -$29K, meme token
+    ];
+
+    // Apply static exclusions first (before thesis filter)
+    let candidates_raw: Vec<String> = candidates_raw
+        .into_iter()
+        .filter(|sym| !EXCLUDED_SYMBOLS.contains(&sym.as_str()))
+        .collect();
+    if candidates_raw.len() < candidates_raw.len() { // log if anything was dropped
+        info!("🚫 Symbol exclusion list filtered candidates");
+    }
+
     let mut candidates: Vec<String> = PRIORITY
         .iter()
         .filter_map(|&p| candidates_raw.iter().find(|s| s.as_str() == p).cloned())
@@ -1599,10 +1626,14 @@ async fn run_cycle(
             //   • Has since reversed into a loss (r_mult < −0.05R)
             //   • Still within the first 60 min — rapid reversal = failed signal
             //   • No DCA taken yet — DCA means we chose to double down; let that play
-            let false_breakout = peak_r >= 0.30   // was 0.10 — higher bar prevents cheap exits
-                && r_mult < -0.05
-                && pos.cycles_held >= 30   // at least 15 min before declaring failure
-                && pos.cycles_held < 120   // still within the 60-min "fresh" window
+            // FalseBreakout: loss threshold raised -0.05R→-0.15R.
+            // Old -0.05R fired on any micro-pullback from a 0.30R peak.
+            // -0.15R requires a real reversal (gave back 0.45R from peak).
+            // Live data: 2,267 exits, 0% WR, -$94K (Jan–May 2026).
+            let false_breakout = peak_r >= 0.30
+                && r_mult < -0.15             // raised from -0.05: needs real reversal
+                && pos.cycles_held >= 30
+                && pos.cycles_held < 120
                 && pos.dca_count == 0;
 
             // TimeExit windows scale with DCA count — each add-on earns the position
@@ -2649,7 +2680,8 @@ fn evaluate_ai_close_guard(pos: &PaperPosition) -> GuardrailOutcome {
         0.0
     };
     let false_breakout =
-        peak_r >= 0.10 && r < -0.05 && (15..60).contains(&hold_mins) && pos.dca_count == 0;
+        // Aligned with main loop: peak_r 0.10→0.30, loss -0.05→-0.15
+        peak_r >= 0.30 && r < -0.15 && (15..60).contains(&hold_mins) && pos.dca_count == 0;
     let momentum_stall = hold_mins >= 60 && r.abs() < 0.10 && pos.dca_count >= 1;
     // Reduced max DCA 2→1: live data showed DCA×2/×3 building $50k+ positions
     // (POPCAT DCA×3 = $63k, AIXBT DCA×2 = $53k).  One add-on is enough to
@@ -2698,7 +2730,12 @@ fn evaluate_ai_close_guard(pos: &PaperPosition) -> GuardrailOutcome {
     let base = loss_score * 0.55 + hold_score * 0.25 + deep_loss;
     let modifier = (1.0 - 0.08 * dca_remaining as f64).clamp(0.6, 1.0);
     let score = (base * modifier).clamp(0.0, 1.2);
-    let allow_close = score >= SCORE_THRESHOLD || (dca_remaining == 0 && r < -0.05);
+    // AI-close fast path: only triggers when DCA is exhausted AND position is deeply
+    // underwater (-0.75R+).  The old threshold (-0.05R) was hair-trigger — any
+    // post-DCA position with even a tiny loss got immediately closed.
+    // Live data: 1,080 AI-Close exits, 3.4% WR, -$204K (Jan–May 2026).
+    // At -0.75R the trade has genuinely failed; at -0.05R it's just noise.
+    let allow_close = score >= SCORE_THRESHOLD || (dca_remaining == 0 && r < -0.75);
     let note = if !allow_close && dca_remaining > 0 && r < -0.15 {
         Some(format!("waiting for {} DCA slot(s)", dca_remaining))
     } else {
@@ -3563,10 +3600,18 @@ async fn execute_paper_trade(
     if macro_regime_floor_delta > 0.0 {
         effective_floor = (effective_floor + macro_regime_floor_delta).min(0.95);
     }
+    // Raise floor for SHORT entries — alts bounce fast, shorts lose 50% WR vs 57% for longs.
+    // Additive to macro regime penalty already applied above.
+    // Live data: 11,603 SHORT trades, 50.0% WR, -$282K (Jan–May 2026).
+    const MIN_SHORT_CONFIDENCE: f64 = 0.76;
+    if dec.action == "SELL" {
+        effective_floor = effective_floor.max(MIN_SHORT_CONFIDENCE);
+    }
+
     if dec.confidence < effective_floor {
         info!(
-            "⚠ {} skipped — confidence {:.0}% below {:.0}% minimum (macro={})",
-            symbol, dec.confidence * 100.0, effective_floor * 100.0, macro_regime.label()
+            "⚠ {} skipped — confidence {:.0}% below {:.0}% minimum (macro={} action={})",
+            symbol, dec.confidence * 100.0, effective_floor * 100.0, macro_regime.label(), dec.action
         );
         return;
     }

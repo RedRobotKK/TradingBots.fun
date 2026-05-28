@@ -42,18 +42,23 @@ impl Account {
 
 // ─────────────────────────── Live-mode gate ───────────────────────────────────
 
+/// Minimum confidence for a LONG entry in live mode.
+const MIN_LONG_CONFIDENCE: f64 = 0.72;  // matches paper-mode MIN_CONFIDENCE in main.rs
+
+/// Minimum confidence for a SHORT entry in live mode.
+/// Raised vs LONG: alts bounce fast, catching shorts wrong-footed.
+/// Live data: 11,603 SHORT trades, 50.0% WR, -$282K (Jan–May 2026).
+const MIN_SHORT_CONFIDENCE: f64 = 0.76;
+
 /// Final pre-order gate for live (non-paper) trading.
 ///
 /// Returns `Ok(true)` only when ALL of the following hold:
-///   - Signal confidence ≥ 0.68 (matches the paper-mode threshold in `main.rs`)
-///   - Account health factor > `account.min_health_factor` (from `MIN_HEALTH_FACTOR` env var)
+///   - Confidence ≥ MIN_LONG_CONFIDENCE (BUY) or MIN_SHORT_CONFIDENCE (SELL)
+///   - Account health factor > `account.min_health_factor`
 ///   - Daily loss limit has NOT been breached
-///
-/// On `Ok(false)` the caller should silently skip the order.
 pub fn should_trade(decision: &Decision, account: &Account) -> Result<bool> {
-    // Confidence gate — must match the paper-mode threshold in execute_paper_trade().
-    // Historical back-test: signals below 0.68 yielded 0W/14L in choppy markets.
-    if decision.confidence < 0.68 {
+    let min_conf = if decision.action == "SELL" { MIN_SHORT_CONFIDENCE } else { MIN_LONG_CONFIDENCE };
+    if decision.confidence < min_conf {
         return Ok(false);
     }
 
