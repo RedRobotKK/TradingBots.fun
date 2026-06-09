@@ -39,7 +39,7 @@ pub(crate) async fn hl_setup_handler(
     let private_key =
         match crate::hl_wallet::decrypt_key(&key_enc_str, &app.session_secret, tid.as_str()) {
             Ok(k) => k,
-            Err(e) => {
+            Err(_e) => {
                 log::error!("❌ HL wallet key decrypt failed for tenant {}", tid);
                 return (
                     axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -460,7 +460,7 @@ pub(crate) async fn hl_export_key_handler(
 
     let private_key = match crate::hl_wallet::decrypt_key(&enc, &app.session_secret, tid.as_str()) {
         Ok(k) => k,
-        Err(e) => {
+        Err(_e) => {
             log::error!("❌ HL key export decrypt failed for tenant {}", tid);
             return (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
