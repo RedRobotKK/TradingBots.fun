@@ -1,0 +1,105 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-06-09T13:20:00Z",
+    "commit": "86df01c",
+    "commit_full": "86df01c55d38a8934a57412dbd03328632d5b9a0",
+    "commit_message": "fix: pool-funded losses, equity calc, UI simplification + new-paper-session endpoint",
+    "branch": "master",
+    "overall_status": "FAILED",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.94.0 (4a4ef493e 2026-03-02)",
+    "cargo": "cargo 1.94.0 (85eff7c80 2026-01-15)",
+    "os_kernel": "6.8.0-111-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 307,
+      "total_passed": 0,
+      "total_failed": 0,
+      "total_ignored": 0,
+      "failures": []
+    },
+    "clippy": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 742,
+      "error_count": 4,
+      "errors": [
+        {
+          "code": "E",
+          "message": "unused import: `log::warn`",
+          "file": "src/trade_log.rs",
+          "line": 44,
+          "col": 5
+        },
+        {
+          "code": "E",
+          "message": "unused variable: `e`",
+          "file": "src/web_dashboard/handlers_hl.rs",
+          "line": 42,
+          "col": 17
+        },
+        {
+          "code": "E",
+          "message": "unused variable: `e`",
+          "file": "src/web_dashboard/handlers_hl.rs",
+          "line": 463,
+          "col": 13
+        },
+        {
+          "code": "E",
+          "message": "could not compile `tradingbots-fun` (lib) due to 3 previous errors"
+        }
+      ]
+    },
+    "audit": {
+      "status": "ADVISORY",
+      "exit_code": 1,
+      "duration_seconds": 5,
+      "vulnerability_count": 3,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2023-0071",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2023-0071",
+          "severity": "5.9 (medium)",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "rand",
+          "version": "0.8.5",
+          "title": "Rand is unsound with a custom logger using `rand::rng()`"
+        },
+        {
+          "id": "RUSTSEC-2026-0097",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2026-0097",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "tradingbots",
+    "status": "active",
+    "active_since": "Tue 2026-06-09 13:23:41 UTC",
+    "recent_logs": [
+      "Jun 09 13:37:29 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[821112]: [2026-06-09T13:37:29.400Z INFO  tradingbots_fun::signal_watchlist] \ud83d\udc41  Watchlisting SELL NEAR conf=57% @ $2.1399 (below threshold)",
+      "Jun 09 13:37:29 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[821112]: [2026-06-09T13:37:29.627Z INFO  tradingbots_fun] \ud83d\udd34 CB ACTIVE \u2014 7d drawdown 102.6% (>8%), sizing \u00d70.50",
+      "Jun 09 13:37:29 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[821112]: [2026-06-09T13:37:29.627Z INFO  tradingbots_fun] \u26a0 HEMI skipped \u2014 insufficient capital ($-286.08, min=$2.00)",
+      "Jun 09 13:37:29 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[821112]: [2026-06-09T13:37:29.627Z INFO  tradingbots_fun] \ud83d\udca1 HEMI \u2192 SELL conf=99%",
+      "Jun 09 13:37:31 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[821112]: [2026-06-09T13:37:31.798Z WARN  tradingbots_fun::data] HTTP attempt 4/5 failed (error) \u2014 retrying in 8000ms: No candle data for STRAX 1h"
+    ]
+  }
+}
