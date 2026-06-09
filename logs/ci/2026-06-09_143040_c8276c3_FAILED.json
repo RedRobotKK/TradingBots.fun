@@ -1,0 +1,91 @@
+{
+  "schema_version": "1.0",
+  "meta": {
+    "run_at": "2026-06-09T14:12:54Z",
+    "commit": "c8276c3",
+    "commit_full": "c8276c38f8663fb0d7327547cd412a20ea7b62fd",
+    "commit_message": "fix: resolve clippy errors blocking CI",
+    "branch": "master",
+    "overall_status": "FAILED",
+    "triggered_by": "push"
+  },
+  "environment": {
+    "rustc": "rustc 1.94.0 (4a4ef493e 2026-03-02)",
+    "cargo": "cargo 1.94.0 (85eff7c80 2026-01-15)",
+    "os_kernel": "6.8.0-111-generic",
+    "arch": "x86_64",
+    "ram_total": "961Mi",
+    "swap_active": true
+  },
+  "steps": {
+    "tests": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 674,
+      "total_passed": 0,
+      "total_failed": 0,
+      "total_ignored": 0,
+      "failures": []
+    },
+    "clippy": {
+      "status": "FAILED",
+      "exit_code": 101,
+      "duration_seconds": 386,
+      "error_count": 2,
+      "errors": [
+        {
+          "code": "E0603",
+          "message": "struct `SessionCreateRequest` is private",
+          "file": "tests/v021_features.rs",
+          "line": 648,
+          "col": 41
+        },
+        {
+          "code": "E",
+          "message": "could not compile `tradingbots-fun` (test \"v021_features\") due to 1 previous error"
+        }
+      ]
+    },
+    "audit": {
+      "status": "ADVISORY",
+      "exit_code": 1,
+      "duration_seconds": 3,
+      "vulnerability_count": 3,
+      "vulnerabilities": [
+        {
+          "id": "RUSTSEC-2023-0071",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2023-0071",
+          "severity": "5.9 (medium)",
+          "crate": "rustls-pemfile",
+          "version": "1.0.4",
+          "title": "rustls-pemfile is unmaintained"
+        },
+        {
+          "id": "RUSTSEC-2025-0134",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2025-0134",
+          "crate": "rand",
+          "version": "0.8.5",
+          "title": "Rand is unsound with a custom logger using `rand::rng()`"
+        },
+        {
+          "id": "RUSTSEC-2026-0097",
+          "url": "https://rustsec.org/advisories/RUSTSEC-2026-0097",
+          "crate": "wasm-bindgen",
+          "version": "0.2.111"
+        }
+      ]
+    }
+  },
+  "service": {
+    "name": "tradingbots",
+    "status": "active",
+    "active_since": "Tue 2026-06-09 13:23:41 UTC",
+    "recent_logs": [
+      "Jun 09 14:30:28 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[821112]: [2026-06-09T14:30:28.022Z INFO  tradingbots_fun] \u26a0 TIA skipped \u2014 confidence 65% below 92% minimum (macro=BEAR action=SELL)",
+      "Jun 09 14:30:28 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[821112]: [2026-06-09T14:30:28.022Z INFO  tradingbots_fun] \ud83d\udca1 TIA \u2192 SELL conf=65%",
+      "Jun 09 14:30:28 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[821112]: [2026-06-09T14:30:28.578Z INFO  tradingbots_fun] \u26a0 CRV skipped \u2014 confidence 62% below 92% minimum (macro=BEAR action=SELL)",
+      "Jun 09 14:30:28 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[821112]: [2026-06-09T14:30:28.578Z INFO  tradingbots_fun] \ud83d\udca1 CRV \u2192 SELL conf=62%",
+      "Jun 09 14:30:30 ubuntu-s-1vcpu-1gb-sgp1-01 tradingbots[821112]: [2026-06-09T14:30:30.013Z WARN  tradingbots_fun::data] HTTP attempt 4/5 failed (error) \u2014 retrying in 8000ms: No candle data for STRAX 1h"
+    ]
+  }
+}
