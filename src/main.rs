@@ -1317,7 +1317,9 @@ async fn run_cycle(
         let mut s = bot_state.write().await;
         let committed: f64 = s.positions.iter().map(|p| p.size_usd).sum();
         let unrealised: f64 = s.positions.iter().map(|p| p.unrealised_pnl).sum();
-        let equity = s.capital + committed + unrealised;
+        // house_money_pool is uninvested profit sitting free — include it in equity
+        // so the total accurately reflects all owned value, not just base capital.
+        let equity = s.capital + s.house_money_pool + committed + unrealised;
 
         // All-time peak (for display)
         if equity > s.peak_equity {
@@ -3445,6 +3447,7 @@ async fn execute_paper_trade(
     let mut s = bot_state.write().await;
     let metrics = s.metrics.clone();
     let equity = s.capital
+        + s.house_money_pool
         + s.positions
             .iter()
             .map(|p| p.size_usd + p.unrealised_pnl)
@@ -4260,12 +4263,15 @@ async fn take_partial(
         } else {
             s.capital += close_size; // margin fraction back to capital
         }
-        // Profit (positive P&L) always goes to house_money_pool regardless
+        // Profit always goes to pool. Loss is charged to whoever funded the position.
         if trade_pnl > 0.0 {
             s.house_money_pool += trade_pnl;
+        } else if funded {
+            // Pool-funded loss: pool already had its stake returned above — now deduct
+            // the loss from the pool so pool capital, not own capital, absorbs the hit.
+            s.house_money_pool += trade_pnl; // negative — reduces the returned stake
         } else {
-            // Loss is absorbed from capital (even on pool-funded, the pool is already returned)
-            s.capital += trade_pnl; // negative amount
+            s.capital += trade_pnl; // own-capital trade loss
         }
         s.pnl += trade_pnl;
 
@@ -4442,8 +4448,12 @@ async fn close_paper_position(
         if trade_pnl > 0.0 {
             // Profit → pool (available for the next move)
             s.house_money_pool += trade_pnl;
+        } else if pos.funded_from_pool {
+            // Pool-funded loss: pool already had its stake returned above — deduct
+            // the loss from the pool so own capital is not charged.
+            s.house_money_pool += trade_pnl; // negative — net return = stake - loss
         } else {
-            // Loss → deducted from capital
+            // Own-capital loss → charged to capital
             s.capital += trade_pnl;
         }
         s.pnl += trade_pnl;

@@ -12,7 +12,8 @@ pub(crate) async fn dashboard_handler(State(app): State<AppState>) -> Html<Strin
     // ── Core financials ───────────────────────────────────────────────────
     let unrealised: f64 = s.positions.iter().map(|p| p.unrealised_pnl).sum();
     let committed: f64 = s.positions.iter().map(|p| p.size_usd).sum();
-    let equity = s.capital + committed + unrealised;
+    // house_money_pool is uninvested profit — include so equity reflects full account value.
+    let equity = s.capital + s.house_money_pool + committed + unrealised;
     let total_pnl = s.pnl + unrealised;
     let total_pnl_pct = if s.initial_capital > 0.0 {
         total_pnl / s.initial_capital * 100.0
@@ -1146,6 +1147,7 @@ body{{background:var(--bg);color:var(--text);
 .eq-breakdown{{display:flex;flex-direction:column;gap:4px;margin-top:13px;
                border-top:1px solid rgba(255,255,255,.07);padding-top:11px}}
 .eq-row{{display:flex;align-items:center;gap:8px;font-size:.74em;padding:2px 0}}
+.eq-subrow{{padding-left:18px;opacity:.8}}
 .eq-row-icon{{font-size:.95em;line-height:1;width:18px;text-align:center;flex-shrink:0}}
 .eq-row-label{{color:#8b949e;flex:1;letter-spacing:.1px}}
 .eq-row-val{{font-weight:700;color:#e6edf3;font-variant-numeric:tabular-nums;
@@ -1399,22 +1401,23 @@ tr:hover td{{background:rgba(255,255,255,.025)}}
       <span>{pnl_sign}{total_pnl_pct:.2}% all-time</span>
     </div>
 
-    <!-- Three-row capital breakdown -->
+    <!-- Capital breakdown: 2 rows + profit sub-line -->
     <div class="eq-breakdown">
-      <div class="eq-row" title="Cash sitting idle — not in any open trade. This is what you can withdraw right now without closing anything.">
+      <div class="eq-row" title="Free cash available to withdraw or deploy. Includes your original capital plus any accumulated profits not currently in a trade.">
         <span class="eq-row-icon">💵</span>
-        <span class="eq-row-label">Withdrawable</span>
+        <span class="eq-row-label">Free Cash</span>
         <span class="eq-row-val" id="equity-free">${capital:.2}</span>
       </div>
-      <div class="eq-row" title="Margin locked in open positions plus unrealised P&L. This becomes withdrawable when positions close.">
+      <!-- Profit sub-line: shows how much of free cash came from profits -->
+      <div class="eq-row eq-subrow" style="color:{pool_col_op}" title="Of the free cash above, this much came from closed-trade profits. The bot deploys this first so it risks earned profits before your original capital.">
+        <span class="eq-row-icon" style="font-size:.7em">↳</span>
+        <span class="eq-row-label" style="font-size:.88em">of which profits</span>
+        <span class="eq-row-val" style="font-size:.88em" id="op-pool">${pool_bal:.2}</span>
+      </div>
+      <div class="eq-row" title="Margin locked in open positions plus unrealised P&L. Returns to free cash when positions close.">
         <span class="eq-row-icon">📊</span>
         <span class="eq-row-label">In Trades</span>
         <span class="eq-row-val" id="equity-in-trades">${in_trades:.2}</span>
-      </div>
-      <div class="eq-row" style="color:{pool_col_op}" title="Profits accumulated from closed trades. The bot uses this pool first for new entries — so it risks the market's money before your original capital.">
-        <span class="eq-row-icon">🏦</span>
-        <span class="eq-row-label">Profit Pool</span>
-        <span class="eq-row-val" id="op-pool">${pool_bal:.2}</span>
       </div>
     </div>
 
@@ -1813,18 +1816,20 @@ function toggleDetail(id){{
     /* Equity hero */
     var unrealised=0,committed=0;
     (s.positions||[]).forEach(function(p){{unrealised+=p.unrealised_pnl;committed+=p.size_usd;}});
-    var equity=s.capital+committed+unrealised;
+    var pool=s.house_money_pool||0;
+    var equity=s.capital+pool+committed+unrealised;
     var total_pnl=s.pnl+unrealised;
     var pnl_pct=s.initial_capital>0?(total_pnl/s.initial_capital*100):0;
 
     var ev=$id('equity-val');
     if(ev)ev.textContent='$'+equity.toFixed(2);
 
+    // Free cash = idle capital + uninvested pool profit — both are withdrawable
     var ef=$id('equity-free');
-    if(ef)ef.textContent='$'+s.capital.toFixed(2);
+    if(ef)ef.textContent='$'+(s.capital+pool).toFixed(2);
     var it=$id('equity-in-trades');
     if(it)it.textContent='$'+(committed+unrealised).toFixed(2);
-    var op=$id('op-pool');if(op){{op.textContent='$'+(s.house_money_pool||0).toFixed(2);op.closest('.eq-row').style.color=(s.house_money_pool||0)>0?'#3fb950':'#8b949e';}}
+    var op=$id('op-pool');if(op){{op.textContent='$'+pool.toFixed(2);op.closest('.eq-row').style.color=pool>0?'#3fb950':'#8b949e';}}
 
     var pb=$id('pnl-badge');
     if(pb){{
@@ -2361,7 +2366,7 @@ window.doResetStats = function() {{
 </body></html>"#,
         last_update = s.last_update,
         equity = equity,
-        capital = s.capital,
+        capital = s.capital + s.house_money_pool, // free cash = base capital + uninvested profits
         in_trades = committed + unrealised,
         pool_bal = s.house_money_pool,
         wallet_label = wallet_label,

@@ -466,12 +466,12 @@ pub(crate) async fn admin_reset_stats_handler(
     {
         let mut s = app.bot_state.write().await;
         let ic = s.initial_capital;
-        // Recalculate equity including any open positions so capital is correct
+        // Recalculate equity including pool and open positions so capital is correct.
         let committed: f64 = s.positions.iter().map(|p| p.size_usd).sum();
         let unrealised: f64 = s.positions.iter().map(|p| p.unrealised_pnl).sum();
-        let current_equity = s.capital + committed + unrealised;
-        // Reset financials — keep current equity as new starting point
-        s.capital = current_equity - committed; // free cash only
+        let current_equity = s.capital + s.house_money_pool + committed + unrealised;
+        // Reset financials — free cash = equity minus what's locked in trades.
+        s.capital = current_equity - committed;
         s.initial_capital = ic; // keep original for context
         s.pnl = 0.0;
         s.peak_equity = current_equity;
@@ -499,6 +499,95 @@ pub(crate) async fn admin_reset_stats_handler(
     axum::response::Json(serde_json::json!({
         "ok":      true,
         "message": "Stats reset — P&L, metrics and trade history cleared. Open positions kept. Bot continues from current equity.",
+    })).into_response()
+}
+
+/// `POST /api/admin/new-paper-session` — full wipe and restart with a specified capital amount.
+///
+/// Closes ALL open positions, resets capital to the requested amount, and clears
+/// all history. Use this to start a completely fresh paper-trading session.
+///
+/// Body:
+/// ```json
+/// { "capital_usd": 2000.0 }
+/// ```
+///
+/// Requires HTTP Basic Auth (same as /admin).
+pub(crate) async fn admin_new_paper_session_handler(
+    State(app): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Json(body): axum::extract::Json<serde_json::Value>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let password = match &app.admin_password {
+        Some(p) => p.clone(),
+        None => {
+            return (
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                "Admin panel not configured.",
+            )
+                .into_response()
+        }
+    };
+    if !check_admin_auth(&headers, &password) {
+        return www_authenticate_response();
+    }
+
+    let capital_usd = body
+        .get("capital_usd")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(2000.0);
+
+    if capital_usd < 1.0 || capital_usd > 1_000_000.0 {
+        return axum::response::Json(serde_json::json!({
+            "ok": false,
+            "message": "capital_usd must be between 1 and 1,000,000"
+        })).into_response();
+    }
+
+    let positions_closed;
+    {
+        let mut s = app.bot_state.write().await;
+        positions_closed = s.positions.len();
+
+        // Full wipe — close all positions, reset everything
+        s.positions = vec![];
+        s.candidates = vec![];
+        s.closed_trades = vec![];
+        s.recent_decisions = vec![];
+        s.metrics = crate::metrics::PerformanceMetrics::default();
+        s.equity_window = std::collections::VecDeque::new();
+        s.equity_history = vec![];
+        s.recently_closed = std::collections::VecDeque::new();
+        s.session_prices = std::collections::HashMap::new();
+        s.pending_cmds = std::collections::VecDeque::new();
+
+        // Reset all financial state to the new starting capital
+        s.capital = capital_usd;
+        s.initial_capital = capital_usd;
+        s.pnl = 0.0;
+        s.peak_equity = capital_usd;
+        s.house_money_pool = 0.0;
+        s.pool_deployed_usd = 0.0;
+        s.cb_active = false;
+        s.ai_status = String::new();
+        s.status = "Running — new session started".to_string();
+    }
+
+    log::info!(
+        "🆕 Admin: new paper session started — capital=${:.2}, {} positions cleared",
+        capital_usd,
+        positions_closed
+    );
+
+    axum::response::Json(serde_json::json!({
+        "ok": true,
+        "message": format!(
+            "New paper session started with ${:.2}. {} open positions cleared. All history reset.",
+            capital_usd, positions_closed
+        ),
+        "capital_usd": capital_usd,
     })).into_response()
 }
 

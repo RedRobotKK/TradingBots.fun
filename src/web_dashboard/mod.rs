@@ -670,6 +670,7 @@ pub async fn serve(
         .route("/admin/users", get(admin_users_handler))
         .route("/admin/wallets", get(admin_wallets_handler))
         .route("/api/admin/reset-stats", post(admin_reset_stats_handler))
+        .route("/api/admin/new-paper-session", post(admin_new_paper_session_handler))
         .route("/api/admin/session", post(admin_create_session_handler))
         // ── Apple Pay domain verification ───────────────────────────────────
         .route(
